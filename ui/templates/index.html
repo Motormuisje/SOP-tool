@@ -1478,7 +1478,7 @@
     <div id="planTooltip"></div>
     <div id="valueTooltip"></div>
     <div id="ltInfoTooltip"></div>
-<script src="{{ url_for('static', filename='sop_planning.js') }}?v=20260412w"></script>
+<script src="{{ url_for('static', filename='sop_planning.js') }}?v=20260711a"></script>
 <script>
 let state = { periods: [], results: null, lineTypes: [], valueResults: null, valueLineTypes: [], consolidation: [], cellEdits: {}, valueAuxEdits: {}, valueRowDeltas: {}, demandTurnoverDeltas: {}, top10Overstocks: [], activeSessionId: null, dashboardDirty: false, moqRawNeeds: {}, machineDeltaSummary: null, machineDeltaSummaries: {} };
 // Resize all Chart.js charts when window is restored from minimized state
@@ -2698,7 +2698,7 @@ function _setupVPDelegation() {
         cell.removeAttribute('data-original');
         delete cell.dataset.displayOriginal;
         if (!editMode || isNaN(origVal)) return;
-        const newValue = parseFloat(cell.textContent.trim());
+        const newValue = parseLocaleNumber(cell.textContent);
         if (isNaN(newValue) || Math.abs(newValue - origVal) < 0.0001) {
             cell.textContent = fmtVal(origVal); return;
         }
@@ -5116,7 +5116,7 @@ async function _executeLongPressPaste(cell) {
     } catch {
         clipText = prompt('Plak waarde (clipboard niet toegankelijk):') ?? '';
     }
-    const newValue = parseFloat(clipText.replace(',', '.').trim());
+    const newValue = parseLocaleNumber(clipText);
     if (isNaN(newValue)) {
         cell.classList.add('cell-lp-flash');
         setTimeout(() => cell.classList.remove('cell-lp-flash'), 400);
@@ -5281,7 +5281,7 @@ function _setupPlanTableDelegation() {
         cell.removeAttribute('data-original');
         delete cell.dataset.displayOriginal;
         if (!editMode || isNaN(origVal)) return; // mode was turned off â€” don't commit
-        const newValue = parseFloat(cell.textContent.trim());
+        const newValue = parseLocaleNumber(cell.textContent);
         if (isNaN(newValue) || Math.abs(newValue - origVal) < 0.0001) {
             cell.textContent = fmt(origVal); return;
         }
@@ -6374,7 +6374,7 @@ async function _applyPapResult(data) {
 
 async function savePapRow(mat, btn) {
     const row = btn.closest('tr[data-pap-mat]');
-    const frac = parseFloat(row.querySelector('.pap-frac-input').value);
+    const frac = parseLocaleNumber(row.querySelector('.pap-frac-input').value);
     if (isNaN(frac)) { alert('Invalid fraction'); return; }
     try {
         const res = await fetch('/api/pap', {
@@ -6404,7 +6404,7 @@ async function deletePapRow(mat) {
 
 async function addPapRow() {
     const mat = document.getElementById('papNewMat').value.trim();
-    const frac = parseFloat(document.getElementById('papNewFrac').value);
+    const frac = parseLocaleNumber(document.getElementById('papNewFrac').value);
     if (!mat) { alert('Material number is required'); return; }
     if (isNaN(frac)) { alert('Fraction is required'); return; }
     try {
@@ -7451,8 +7451,7 @@ async function saveMachineEdit(td) {
     }
     const mc = td.dataset.mc;
     const field = td.dataset.field;
-    const raw = (td.textContent || '').trim().replace('%', '').replace(',', '.');
-    const num = parseFloat(raw);
+    const num = parseLocaleNumber((td.textContent || '').replace('%', ''));
     if (!isFinite(num)) {
         td.textContent = td.dataset.currentDisplay || td.dataset._orig || '';
         return;
@@ -8980,7 +8979,7 @@ async function saveConfigSettings({ skipDeltaRecording = false } = {}) {
     for (let i = 1; i <= 8; i++) {
         const el = document.getElementById('vp' + i);
         const rawStr = el ? el.value.trim() : '';
-        vp[String(i)] = rawStr !== '' ? parseFloat(rawStr) : null;
+        vp[String(i)] = rawStr !== '' ? parseLocaleNumber(rawStr) : null;
     }
     const payload = {
         site: document.getElementById('cfgSite').value.trim(),

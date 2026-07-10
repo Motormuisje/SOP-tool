@@ -3,6 +3,34 @@
 // All tooltip and cell-dependency features for Planning + Values Planning tables.
 // Depends on globals resolved at call-time: state, fmt, fmtVal
 
+// ===== LOCALE-AWARE NUMBER PARSING =====
+// Accepts both Dutch ("1.234,5") and English ("1,234.5") notation.
+// Rule: when both separators occur, the LAST one is the decimal separator
+// and the other is stripped as thousands grouping. A repeated single
+// separator is thousands grouping ("1,234,567" / "1.234.567"). A single
+// comma is a decimal separator (Dutch client: "2,5" means 2.5); a single
+// dot keeps its plain-JS meaning ("2.5" stays 2.5).
+function parseLocaleNumber(value) {
+  if (typeof value === 'number') return value;
+  let s = String(value == null ? '' : value).trim();
+  if (!s) return NaN;
+  const commas = (s.match(/,/g) || []).length;
+  const dots = (s.match(/\./g) || []).length;
+  if (commas && dots) {
+    s = (s.lastIndexOf(',') > s.lastIndexOf('.'))
+      ? s.replace(/\./g, '').replace(',', '.')
+      : s.replace(/,/g, '');
+  } else if (commas > 1) {
+    s = s.replace(/,/g, '');
+  } else if (dots > 1) {
+    s = s.replace(/\./g, '');
+  } else if (commas === 1) {
+    s = s.replace(',', '.');
+  }
+  return parseFloat(s);
+}
+window.parseLocaleNumber = parseLocaleNumber;
+
 // ===== LINE TYPE INFO =====
 const LT_INFO = {
   '01. Demand forecast': {
@@ -1634,7 +1662,7 @@ function setupVPDelegation() {
         cell.removeAttribute('data-original');
         delete cell.dataset.displayOriginal;
         if (!editMode || isNaN(origVal)) return;
-        const newValue = parseFloat(cell.textContent.trim());
+        const newValue = parseLocaleNumber(cell.textContent);
         if (isNaN(newValue) || Math.abs(newValue - origVal) < 0.0001) {
             cell.textContent = fmtVal(origVal);
             return;
