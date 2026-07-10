@@ -1,4 +1,5 @@
 import io
+import sys
 from datetime import date as _date
 from types import SimpleNamespace
 
@@ -1116,3 +1117,107 @@ def test_calculate_returns_500_when_active_session_has_no_workbook_path(
     payload = response.get_json()
     assert "file_path" in payload["error"]
     assert "trace" in payload
+
+
+# ---------------------------------------------------------------------------
+# Bug 4: path traversal via upload filename must not escape the upload dir
+# ---------------------------------------------------------------------------
+
+
+def _assert_all_files_inside(root):
+    """Every file that exists under root (if any) must resolve inside root."""
+    if not root.exists():
+        return
+    resolved_root = root.resolve()
+    for saved in root.rglob("*"):
+        assert resolved_root in saved.resolve().parents, (
+            f"{saved} escaped upload dir {resolved_root}"
+        )
+
+
+@pytest.mark.no_fixture
+def test_upload_traversal_filename_stays_inside_upload_dir(workflow_error_app, tmp_path):
+    upload_path = tmp_path / "uploads"
+    response = workflow_error_app.client.post(
+        "/api/upload",
+        data={"file": (io.BytesIO(b"fake"), "..\\..\\escape.xlsm")},
+        content_type="multipart/form-data",
+    )
+
+    # The fake bytes fail DataLoader parsing, so a 400 is expected — the point
+    # of this test is WHERE the bytes landed, not the response body.
+    assert response.status_code == 400
+    assert not (tmp_path / "escape.xlsm").exists()
+    assert not (tmp_path.parent / "escape.xlsm").exists()
+    _assert_all_files_inside(upload_path)
+
+
+@pytest.mark.no_fixture
+def test_multi_upload_traversal_extract_filename_stays_inside_upload_dir(
+    workflow_multi_app, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(data_loader_module, "DataLoader", _make_good_loader())
+    upload_path = tmp_path / "uploads"
+
+    response = workflow_multi_app.client.post(
+        "/api/upload",
+        data={
+            # Keyword check runs on the ORIGINAL filename (contains "bom"),
+            # while the saved path must use the sanitized name.
+            "bom_file": (io.BytesIO(b"bom"), "..\\..\\bom.xlsx"),
+            "routing_file": (io.BytesIO(b"routing"), "routing.xlsx"),
+            "stock_file": (io.BytesIO(b"stock"), "stock.xlsx"),
+            "forecast_file": (io.BytesIO(b"forecast"), "forecast.xlsx"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    assert not (tmp_path / "bom.xlsx").exists()
+    assert not (tmp_path.parent / "bom.xlsx").exists()
+    assert (upload_path / "bom.xlsx").exists()
+    _assert_all_files_inside(upload_path)
+
+
+# ---------------------------------------------------------------------------
+# Bug 3: sys.stdout must survive failing requests (no manual stdout swaps)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.no_fixture
+def test_calculate_exception_restores_stdout(flask_test_app, tmp_path):
+    orig = sys.stdout
+    session_id = "stdout-restore-session"
+    flask_test_app.sessions[session_id] = {
+        "id": session_id,
+        "file_path": str(tmp_path / "does-not-exist.xlsm"),
+        "filename": "does-not-exist.xlsm",
+        "metadata": {"planning_month": "2025-12"},
+        "pending_edits": {},
+        "value_aux_overrides": {},
+        "machine_overrides": {},
+    }
+    flask_test_app.set_active_session_id(session_id)
+
+    response = flask_test_app.client.post("/api/calculate", json={})
+
+    assert response.status_code == 500
+    payload = response.get_json()
+    assert "error" in payload
+    assert "trace" in payload
+    assert sys.stdout is orig
+
+
+@pytest.mark.no_fixture
+def test_failing_upload_restores_stdout(workflow_error_app):
+    orig = sys.stdout
+
+    response = workflow_error_app.client.post(
+        "/api/upload",
+        data={"file": (io.BytesIO(b"not a workbook"), "workbook.xlsm")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert sys.stdout is orig

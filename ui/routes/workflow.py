@@ -1,15 +1,20 @@
 """Top-level UI, upload, and calculation routes."""
 
+import contextlib
 import io
-import sys
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from flask import Blueprint, jsonify, render_template, request
+from werkzeug.utils import secure_filename
 
 from modules.planning_engine import PlanningEngine
+
+# Concurrent calculates mutate shared cycle-manager state; serialize them.
+_calculate_lock = threading.Lock()
 
 
 def create_workflow_blueprint(
@@ -84,71 +89,72 @@ def create_workflow_blueprint(
             return jsonify({'error': 'No file uploaded'}), 400
 
         log_buf = io.StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = log_buf
+        with _calculate_lock:
+            try:
+                with contextlib.redirect_stdout(log_buf):
+                    if request.is_json:
+                        req_data = request.get_json() or {}
+                    else:
+                        req_data = request.form.to_dict() or {}
 
-        try:
-            if request.is_json:
-                req_data = request.get_json() or {}
-            else:
-                req_data = request.form.to_dict() or {}
+                    planning_month = req_data.get('planning_month', None)
+                    months_actuals = int(req_data.get('months_actuals', 0) or 0)
+                    months_forecast = int(req_data.get('months_forecast', 12) or 12)
 
-            planning_month = req_data.get('planning_month', None)
-            months_actuals = int(req_data.get('months_actuals', 0) or 0)
-            months_forecast = int(req_data.get('months_forecast', 12) or 12)
+                    print("\nUser Input Parameters:")
+                    print(f"  Planning Month: {planning_month}")
+                    print(f"  Months of Actuals: {months_actuals}")
+                    print(f"  Months of Forecast: {months_forecast}")
 
-            print("\nUser Input Parameters:")
-            print(f"  Planning Month: {planning_month}")
-            print(f"  Months of Actuals: {months_actuals}")
-            print(f"  Months of Forecast: {months_forecast}")
+                    cm = cycle_manager()
+                    existing_engine = sess.get('engine')
+                    bootstrap_snapshot = existing_engine is None and not cm.has_previous_cycle()
+                    if existing_engine is not None:
+                        try:
+                            previous_planning_month = (sess.get('parameters') or {}).get('planning_month')
+                            cm.save_current_as_previous(
+                                existing_engine.to_dataframe(),
+                                planning_month=previous_planning_month,
+                            )
+                            print('[cycle_manager] pre-run: saved existing engine as previous cycle snapshot')
+                        except Exception as exc:
+                            import traceback
+                            print(f'[cycle_manager] pre-run snapshot ERROR (MoM will not work): {exc}\n{traceback.format_exc()}')
 
-            cm = cycle_manager()
-            existing_engine = sess.get('engine')
-            bootstrap_snapshot = existing_engine is None and not cm.has_previous_cycle()
-            if existing_engine is not None:
-                try:
-                    previous_planning_month = (sess.get('parameters') or {}).get('planning_month')
-                    cm.save_current_as_previous(
-                        existing_engine.to_dataframe(),
-                        planning_month=previous_planning_month,
+                    engine = PlanningEngine(
+                        sess['file_path'],
+                        planning_month=planning_month,
+                        months_actuals=months_actuals,
+                        months_forecast=months_forecast,
+                        extract_files=sess.get('extract_files'),
+                        config_overrides=get_config_overrides(),
                     )
-                    print('[cycle_manager] pre-run: saved existing engine as previous cycle snapshot')
-                except Exception as exc:
-                    import traceback
-                    print(f'[cycle_manager] pre-run snapshot ERROR (MoM will not work): {exc}\n{traceback.format_exc()}')
+                    engine.run()
+                    install_clean_engine_baseline(sess, engine)
+                    with app_context():
+                        replay_pending_edits(sess, engine)
+                    sess['engine'] = engine
+                    sess['parameters'] = {
+                        'planning_month': planning_month,
+                        'months_actuals': months_actuals,
+                        'months_forecast': months_forecast,
+                    }
+                    if planning_month and sess.get('metadata') is not None:
+                        sess['metadata']['planning_month'] = planning_month
 
-            engine = PlanningEngine(
-                sess['file_path'],
-                planning_month=planning_month,
-                months_actuals=months_actuals,
-                months_forecast=months_forecast,
-                extract_files=sess.get('extract_files'),
-                config_overrides=get_config_overrides(),
-            )
-            engine.run()
-            install_clean_engine_baseline(sess, engine)
-            with app_context():
-                replay_pending_edits(sess, engine)
-            sess['engine'] = engine
-            sess['parameters'] = {
-                'planning_month': planning_month,
-                'months_actuals': months_actuals,
-                'months_forecast': months_forecast,
-            }
-            if planning_month and sess.get('metadata') is not None:
-                sess['metadata']['planning_month'] = planning_month
+                    if bootstrap_snapshot:
+                        try:
+                            cm.save_current_as_previous(engine.to_dataframe(), planning_month=planning_month)
+                            print('[cycle_manager] bootstrap: saved first-ever snapshot')
+                        except Exception as exc:
+                            import traceback
+                            print(f'[cycle_manager] bootstrap snapshot ERROR (MoM will not work): {exc}\n{traceback.format_exc()}')
 
-            if bootstrap_snapshot:
-                try:
-                    cm.save_current_as_previous(engine.to_dataframe(), planning_month=planning_month)
-                    print('[cycle_manager] bootstrap: saved first-ever snapshot')
-                except Exception as exc:
-                    import traceback
-                    print(f'[cycle_manager] bootstrap snapshot ERROR (MoM will not work): {exc}\n{traceback.format_exc()}')
+                    save_sessions_to_disk()
+            except Exception as exc:
+                import traceback
+                return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
 
-            save_sessions_to_disk()
-
-            sys.stdout = old_stdout
             return jsonify({
                 'success': True,
                 'summary': engine.get_summary(),
@@ -159,10 +165,6 @@ def create_workflow_blueprint(
                     'months_forecast': months_forecast,
                 }
             })
-        except Exception as exc:
-            sys.stdout = old_stdout
-            import traceback
-            return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
 
     return bp
 
@@ -218,7 +220,10 @@ def _upload_multi_file(
 ):
     if 'base_file' in request.files and request.files['base_file'].filename != '':
         base_file = request.files['base_file']
-        base_file_path = out_upload_dir / base_file.filename
+        safe_base_name = secure_filename(base_file.filename)
+        if not safe_base_name:
+            return jsonify({'error': f'Invalid filename for base file: "{base_file.filename}"'}), 400
+        base_file_path = out_upload_dir / safe_base_name
         try:
             base_file.save(str(base_file_path))
         except Exception as exc:
@@ -264,7 +269,10 @@ def _upload_multi_file(
                 upload_warnings.append(message)
             else:
                 return jsonify({'error': message}), 400
-        file_path = out_upload_dir / upload.filename
+        safe_name = secure_filename(upload.filename)
+        if not safe_name:
+            return jsonify({'error': f'Invalid filename for {form_key}: "{upload.filename}"'}), 400
+        file_path = out_upload_dir / safe_name
         try:
             upload.save(str(file_path))
         except Exception as exc:
@@ -272,9 +280,7 @@ def _upload_multi_file(
         saved_paths[dict_key] = str(file_path)
 
     try:
-        devnull = io.StringIO()
-        sys.stdout, saved_stdout = devnull, sys.stdout
-        try:
+        with contextlib.redirect_stdout(io.StringIO()):
             from modules.data_loader import DataLoader
             loader = DataLoader(
                 excel_file=str(base_file_path),
@@ -282,8 +288,6 @@ def _upload_multi_file(
                 config_overrides=get_config_overrides(),
             )
             loader.load_all()
-        finally:
-            sys.stdout = saved_stdout
     except Exception as exc:
         import traceback
         print(f'[upload-multi] load error: {traceback.format_exc()}')
@@ -352,21 +356,20 @@ def _upload_single_file(
     if upload.filename == '':
         return jsonify({'error': 'No file selected'}), 400
 
-    file_path = out_upload_dir / upload.filename
+    safe_name = secure_filename(upload.filename)
+    if not safe_name:
+        return jsonify({'error': f'Invalid filename: "{upload.filename}"'}), 400
+    file_path = out_upload_dir / safe_name
     try:
         upload.save(str(file_path))
     except Exception as exc:
         return jsonify(classify_upload_exception(exc, 'opslaan upload')), 400
 
     try:
-        devnull = io.StringIO()
-        sys.stdout, saved_stdout = devnull, sys.stdout
-        try:
+        with contextlib.redirect_stdout(io.StringIO()):
             from modules.data_loader import DataLoader
             loader = DataLoader(str(file_path))
             loader.load_all()
-        finally:
-            sys.stdout = saved_stdout
     except Exception as exc:
         import traceback
         print(f'[upload-single] load error: {traceback.format_exc()}')
