@@ -46,6 +46,11 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
     pap = getattr(engine_data, 'purchased_and_produced', None)
     if pap is not None:
         ov['purchased_and_produced'] = format_purchased_and_produced(pap)
+    elif sess.get('purchased_and_produced'):
+        # Cold rebuild (restart/warmup): use the session's persisted PAP
+        # instead of falling through to the last-active session's value in
+        # the shared global config.
+        ov['purchased_and_produced'] = sess['purchased_and_produced']
     return ov
 
 

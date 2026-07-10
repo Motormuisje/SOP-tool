@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
+from ui.parsers import format_purchased_and_produced
+
 
 def save_sessions_to_disk(
     sessions: dict,
@@ -36,6 +38,18 @@ def save_sessions_to_disk(
             }
         else:
             sess_vp = (sess.get('reset_baseline') or {}).get('valuation_params') or sess.get('valuation_params')
+        # Persist purchased_and_produced per-session for the same reason as
+        # valuation_params: cold rebuilds after restart must not inherit the
+        # last-active session's PAP from the shared global config. Stored in
+        # the string format config_overrides accepts ("MAT:0.5, ...").
+        pap_obj = getattr(getattr(engine, 'data', None), 'purchased_and_produced', None)
+        if pap_obj is not None:
+            sess_pap = format_purchased_and_produced(pap_obj)
+        else:
+            sess_pap = sess.get('purchased_and_produced')
+            if not sess_pap:
+                baseline_pap = (sess.get('reset_baseline') or {}).get('purchased_and_produced')
+                sess_pap = format_purchased_and_produced(baseline_pap) if baseline_pap else None
         serializable[sid] = {
             'id': sess.get('id', sid),
             'file_path': sess.get('file_path', ''),
@@ -58,6 +72,7 @@ def save_sessions_to_disk(
             'inventory_overrides': sess.get('inventory_overrides', {}),
             'capacity_overrides': sess.get('capacity_overrides', {}),
             'valuation_params': sess_vp,
+            'purchased_and_produced': sess_pap,
         }
     store = {
         'active_session_id': active_session_id,
@@ -102,6 +117,8 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 'inventory_overrides': data.get('inventory_overrides') or {},
                 'capacity_overrides': data.get('capacity_overrides') or {},
                 'valuation_params': data.get('valuation_params'),
+                # None for store files written before this field existed.
+                'purchased_and_produced': data.get('purchased_and_produced'),
                 'undo_stack': [],
                 'redo_stack': [],
                 'restore_status': 'cold' if data.get('parameters') is not None else 'pending',

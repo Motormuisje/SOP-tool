@@ -266,3 +266,50 @@ def test_load_sessions_from_disk_moves_corrupt_store_aside(tmp_path):
     assert active is None
     assert not store_path.exists()
     assert list(tmp_path.glob("sessions_store.json.corrupt-*"))
+
+
+def test_pap_persisted_per_session_and_wins_over_global_on_cold_rebuild(tmp_path):
+    """H6: purchased_and_produced must survive save/load per session so cold
+    rebuilds do not inherit the last-active session PAP from global config."""
+    from types import SimpleNamespace
+
+    from ui.engine_rebuild import get_session_config_overrides
+    from ui.parsers import parse_purchased_and_produced
+    from ui.session_store import load_sessions_from_disk, save_sessions_to_disk
+
+    engine = SimpleNamespace(data=SimpleNamespace(
+        purchased_and_produced={"MAT-1": 0.25},
+        valuation_params=None,
+    ))
+    sessions = {"s1": {"id": "s1", "engine": engine, "parameters": {"planning_month": "2025-12"}}}
+    store = tmp_path / "sessions_store.json"
+    save_sessions_to_disk(sessions, "s1", store, lambda sess, eng: {})
+
+    loaded, _active = load_sessions_from_disk(store)
+    sess = loaded["s1"]
+    assert parse_purchased_and_produced(sess["purchased_and_produced"]) == {"MAT-1": 0.25}
+
+    global_config = {"purchased_and_produced": "OTHER-MAT:1"}
+    ov = get_session_config_overrides(sess, global_config)
+    assert parse_purchased_and_produced(ov["purchased_and_produced"]) == {"MAT-1": 0.25}
+
+
+def test_old_store_without_pap_field_loads_and_falls_back_to_global(tmp_path):
+    import json
+
+    from ui.engine_rebuild import get_session_config_overrides
+    from ui.session_store import load_sessions_from_disk
+
+    store = tmp_path / "sessions_store.json"
+    store.write_text(json.dumps({
+        "active_session_id": "s1",
+        "sessions": {"s1": {"id": "s1", "parameters": {"planning_month": "2025-12"}}},
+    }), encoding="utf-8")
+
+    loaded, _active = load_sessions_from_disk(store)
+    sess = loaded["s1"]
+    assert sess["purchased_and_produced"] is None
+
+    global_config = {"purchased_and_produced": "GLOBAL-MAT:1"}
+    ov = get_session_config_overrides(sess, global_config)
+    assert ov["purchased_and_produced"] == "GLOBAL-MAT:1"

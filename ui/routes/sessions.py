@@ -9,6 +9,33 @@ from typing import Callable
 
 from flask import Blueprint, jsonify, request
 
+from ui.parsers import format_purchased_and_produced
+
+
+def _valuation_params_dict_from_engine(engine) -> dict | None:
+    """Serializable VP dict from a live engine, or None when unavailable."""
+    vp = getattr(getattr(engine, 'data', None), 'valuation_params', None)
+    if vp is None:
+        return None
+    return {
+        '1': vp.direct_fte_cost_per_month,
+        '2': vp.indirect_fte_cost_per_month,
+        '3': vp.overhead_cost_per_month,
+        '4': vp.sga_cost_per_month,
+        '5': vp.depreciation_per_year,
+        '6': vp.net_book_value,
+        '7': vp.days_sales_outstanding,
+        '8': vp.days_payable_outstanding,
+    }
+
+
+def _pap_string_from_engine(engine) -> str | None:
+    """Formatted purchased_and_produced string from a live engine, or None."""
+    pap = getattr(getattr(engine, 'data', None), 'purchased_and_produced', None)
+    if pap is None:
+        return None
+    return format_purchased_and_produced(pap)
+
 
 def create_sessions_blueprint(
     sessions: dict,
@@ -102,9 +129,20 @@ def create_sessions_blueprint(
             'parameters': copy.deepcopy(sess.get('parameters')),
             'pending_edits': copy.deepcopy(sess.get('pending_edits', {})),
             'value_aux_overrides': copy.deepcopy(sess.get('value_aux_overrides', {})),
-            'valuation_params': copy.deepcopy(
-                sess.get('valuation_params')
-                or (sess.get('reset_baseline') or {}).get('valuation_params')
+            # Prefer the LIVE engine values: uploads never set the session
+            # fields, so falling back to sess/baseline would silently drop
+            # edits made in the current run (same pattern as machine_overrides
+            # below).
+            'valuation_params': (
+                _valuation_params_dict_from_engine(sess.get('engine'))
+                or copy.deepcopy(
+                    sess.get('valuation_params')
+                    or (sess.get('reset_baseline') or {}).get('valuation_params')
+                )
+            ),
+            'purchased_and_produced': (
+                _pap_string_from_engine(sess.get('engine'))
+                or sess.get('purchased_and_produced')
             ),
             'machine_overrides': (
                 machine_overrides_from_engine(sess, sess.get('engine'))
