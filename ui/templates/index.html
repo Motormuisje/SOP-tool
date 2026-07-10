@@ -2351,6 +2351,11 @@ async function uploadFile(e) {
 
 async function runCalc() {
     if (isBusy()) return;
+    // Let in-flight plan edits finish first: a recalculate rebuilds the
+    // engine, and an edit cascade racing that rebuild hits undefined state.
+    if (typeof planEditsBusy === 'function' && planEditsBusy()) {
+        await _planEditQueue.catch(() => {});
+    }
     // --- Validation ---
     const pmRaw = document.getElementById('planningMonth').value; // YYYY-MM
     if (!pmRaw) { notify('Please select a Planning Month before calculating.', 'error'); return; }
@@ -5302,7 +5307,35 @@ function _setupPlanTableDelegation() {
     });
 }
 
-async function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key) {
+// Plan edits are serialized through a promise queue: two rapid cell commits
+// (blur cell A, immediately edit cell B) previously fired overlapping
+// /api/update_volume cascades that mutated engine.results concurrently
+// server-side, while client-side the last response to ARRIVE overwrote
+// state wholesale. The queue guarantees commit order = apply order.
+let _planEditQueue = Promise.resolve();
+let _planEditsInFlight = 0;
+function planEditsBusy() { return _planEditsInFlight > 0; }
+
+function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key) {
+    _planEditsInFlight++;
+    _planEditQueue = _planEditQueue
+        .then(() => _commitPlanEditNow(cell, matNum, lt, period, newValue, origVal, key))
+        .catch(() => {})
+        .finally(() => { _planEditsInFlight--; });
+    return _planEditQueue;
+}
+
+async function _commitPlanEditNow(cell, matNum, lt, period, newValue, origVal, key) {
+    if (_isSwitchingSession) {
+        // A session switch is running: applying this edit now could hit the
+        // wrong session server-side. Revert the cell instead of guessing.
+        cell.textContent = fmt(origVal);
+        return;
+    }
+    // Capture the session BEFORE the await: if the user switches instance
+    // while the cascade runs, this edit belongs to the session that was
+    // active when it was made — never to the newly selected one.
+    const sessionAtCommit = state.activeSessionId;
     cell.textContent = fmt(newValue); // optimistic
     const auxCol = cell.dataset.aux ?? (key.split('||')[2] || '');
     const prevValueSnapshot = _snapshotValueRows(state.valueResults || {});
@@ -5315,6 +5348,19 @@ async function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key)
         });
         const data = await res.json();
         if (data.error) { alert(data.error); cell.textContent = fmt(origVal); return; }
+        if (state.activeSessionId !== sessionAtCommit) {
+            // The user switched instance while this edit was in flight. The
+            // server applied it to the then-active session; persist it THERE
+            // and do not paint its results over the newly loaded session.
+            if (sessionAtCommit) {
+                fetch('/api/sessions/edits/persist', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionAtCommit, key, original: data.edit_meta.original_value, new_value: data.edit_meta.new_value })
+                }).catch(() => {});
+            }
+            console.warn('Edit committed during session switch; results not applied to new session.');
+            return;
+        }
         state.results = data.results; state.valueResults = data.value_results; state.consolidation = data.consolidation;
         _recordValueResultDeltas(prevValueSnapshot, data.value_results, 'plan');
         if (isMachineImpact && beforeImpact) {
@@ -5334,7 +5380,7 @@ async function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key)
         state.cellEdits[key] = { original: editOriginal, new: data.edit_meta.new_value, delta_pct: data.edit_meta.delta_pct };
         cell.dataset.original = String(newValue);
         // Persist this edit to the server so it survives page refresh and session switches
-        if (state.activeSessionId) {
+        if (sessionAtCommit) {
             const rowData = data.results[lt] && data.results[lt].find(
                 r => String(r.material_number) === String(matNum) && String(r.aux_column ?? '') === String(auxCol ?? '')
             );
@@ -5346,7 +5392,7 @@ async function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key)
                     : data.edit_meta.old_value);
             fetch('/api/sessions/edits/persist', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: state.activeSessionId, key, original: trueOriginal, new_value: data.edit_meta.new_value })
+                body: JSON.stringify({ session_id: sessionAtCommit, key, original: trueOriginal, new_value: data.edit_meta.new_value })
             }).catch(() => {});
         }
         updateTableFromResults(data.results, data.value_results);
@@ -8545,6 +8591,13 @@ async function switchSession(sessionId) {
     _isSwitchingSession = true;
     status('Switching session...');
     try {
+        // Drain in-flight plan edits first so their cascades finish against
+        // the CURRENT session before the server switches the active one.
+        if (planEditsBusy()) {
+            status('Bezig met opslaan van wijzigingen...');
+            await _planEditQueue.catch(() => {});
+            status('Switching session...');
+        }
         const res = await fetch('/api/sessions/switch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
