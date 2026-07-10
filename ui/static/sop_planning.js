@@ -31,6 +31,13 @@ function parseLocaleNumber(value) {
 }
 window.parseLocaleNumber = parseLocaleNumber;
 
+// Escape workbook-derived strings before they enter tooltip innerHTML.
+function _escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // ===== LINE TYPE INFO =====
 const LT_INFO = {
   '01. Demand forecast': {
@@ -793,7 +800,7 @@ function _getLtCalcExample(lt, matNum, p, rowCtx) {
         if (!lt02row || !lt02row.values) return null;
         const val = lt02row.values[p] || 0;
         const parent = _normKey(lt02row.aux_column);
-        if (parent) return `${p}: ${fmt1(val)} (bijdrage van parent ${parent})`;
+        if (parent) return `${p}: ${fmt1(val)} (bijdrage van parent ${_escHtml(parent)})`;
         return `${p}: ${fmt1(val)} (afhankelijke vraag voor deze rij)`;
     }
 
@@ -926,7 +933,7 @@ function _buildTooltipForCell(type, lt, mat, period, sheet, rowCtx, cellCtx) {
             const driverLabel = rowInfo.driverLabel || 'Aux 1';
             html += `<div class="tt-calc">Berekening: ${qtyLabel} ${Number(qty).toLocaleString(undefined, {maximumFractionDigits:1})} x ${driverLabel} ${fmtVal(factor)} = ${fmtVal(rawVal)}</div>`;
         }
-        html += `<div class="tt-aux">${rowInfo.driverLabel || 'Aux 1'}: ${aux1}<br>Aux 2: ${aux2}</div>`;
+        html += `<div class="tt-aux">${rowInfo.driverLabel || 'Aux 1'}: ${aux1}<br>Aux 2: ${_escHtml(aux2)}</div>`;
         if (VALUE_AUX_INFO[lt] && VALUE_AUX_INFO[lt].aux1) {
             html += `<div class="tt-aux" style="margin-top:6px">Uitleg: ${VALUE_AUX_INFO[lt].aux1}</div>`;
         }

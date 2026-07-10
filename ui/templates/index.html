@@ -2539,16 +2539,16 @@ function loadValuePlanningData() {
         }
         const isAuxEditable = VALUE_AUX_EDITABLE.has(item.line_type) && !isConsol && item.aux_column != null && !isNaN(auxRaw);
         const auxCell = isAuxEditable
-            ? `<td class="${auxCls} editable-cell" data-sheet="values" data-edit-kind="value-aux" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${auxVal}${auxIndicator}${auxDeltaHtml}</td>`
-            : `<td class="${auxCls}" data-sheet="values" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${auxVal}${auxIndicator}${auxDeltaHtml}</td>`;
+            ? `<td class="${auxCls} editable-cell" data-sheet="values" data-edit-kind="value-aux" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(auxVal)}${auxIndicator}${auxDeltaHtml}</td>`
+            : `<td class="${auxCls}" data-sheet="values" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(auxVal)}${auxIndicator}${auxDeltaHtml}</td>`;
         const rowKeyBase = `${item.line_type}||${item.material_number}||${item.aux_column || ''}`;
         const searchHaystack = `${item.material_number || ''} ${item.material_name || ''} ${item.line_type || ''} ${item.aux_column || ''} ${item.aux_2_column || ''}`.toLowerCase();
         return `<tr class="${cls}" data-material="${esc(item.material_number)}" data-linetype="${esc(item.line_type)}" data-aux="${esc(item.aux_column || '')}" data-aux2="${esc(item.aux_2_column || '')}" data-has-edits="${rowHasEdits ? '1' : '0'}" data-search="${esc(searchHaystack)}">`
-            + `<td class="font-mono text-xs">${item.material_number}</td>`
-            + `<td>${(item.material_name || '').substring(0, 20)}</td>`
-            + `<td class="text-xs" data-sheet="values" data-tt="lt" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${item.line_type}</td>`
+            + `<td class="font-mono text-xs">${esc(item.material_number)}</td>`
+            + `<td>${esc((item.material_name || '').substring(0, 20))}</td>`
+            + `<td class="text-xs" data-sheet="values" data-tt="lt" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(item.line_type)}</td>`
             + auxCell
-            + `<td class="text-blue-400" data-sheet="values" data-tt="aux2" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}"${aux2Style}>${aux2Disp}</td>`
+            + `<td class="text-blue-400" data-sheet="values" data-tt="aux2" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}"${aux2Style}>${esc(aux2Disp)}</td>`
             + `<td class="text-right" data-sheet="values" data-tt="start" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${item.starting_stock ? fmtVal(item.starting_stock) : '-'}</td>`
             + periods.map(p => {
                 const v = Number(item.values[p] || 0);
@@ -3089,7 +3089,7 @@ function renderInventoryHeatmap(invQuality, periods) {
     for (const mat of invQuality) {
         html += '<tr>';
         const shortName = ((mat.material_name || mat.material_number) + '').substring(0, 18);
-        html += `<td class="hm-mat" title="${mat.material_number} - ${mat.material_name || ''}">${shortName}</td>`;
+        html += `<td class="hm-mat" title="${escapeHtml(mat.material_number)} - ${escapeHtml(mat.material_name || '')}">${escapeHtml(shortName)}</td>`;
         for (const p of periods) {
             const pData = (mat.periods && mat.periods[p]) || {};
             const dom = dominant(pData);
@@ -5013,11 +5013,11 @@ function renderPlanningTable(results, periods) {
         }).join('');
         const searchHaystack = `${item.material_number || ''} ${item.material_name || ''} ${item.line_type || ''}`.toLowerCase();
         return `<tr data-material="${esc(item.material_number)}" data-linetype="${esc(item.line_type)}" data-aux="${esc(item.aux_column || '')}" data-aux2="${esc(item.aux_2_column || '')}" data-has-edits="${rowHasEdits ? '1' : '0'}" data-search="${esc(searchHaystack)}">`
-            + `<td class="font-mono text-xs">${item.material_number}</td>`
-            + `<td>${(item.material_name||'').substring(0,20)}</td>`
-            + `<td class="text-xs" style="white-space:nowrap" data-tt="lt" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${item.line_type}</td>`
-            + `<td class="text-yellow-400" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${_formatPlanningAux1(item)}</td>`
-            + `<td class="text-blue-400" data-tt="aux2" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}"${a2style}>${a2disp}</td>`
+            + `<td class="font-mono text-xs">${esc(item.material_number)}</td>`
+            + `<td>${esc((item.material_name||'').substring(0,20))}</td>`
+            + `<td class="text-xs" style="white-space:nowrap" data-tt="lt" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(item.line_type)}</td>`
+            + `<td class="text-yellow-400" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(_formatPlanningAux1(item))}</td>`
+            + `<td class="text-blue-400" data-tt="aux2" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}"${a2style}>${esc(a2disp)}</td>`
             + (() => {
                 // L4 starting stock cell is editable; backend uses sentinel period 'starting_stock'.
                 const ssDisp = item.starting_stock ? fmt(item.starting_stock) : '-';
@@ -7664,7 +7664,7 @@ async function loadInventoryData() {
         document.getElementById('inv-high').textContent = data.summary.high;
         const periods = data.periods;
         document.getElementById('invHead').innerHTML = `<tr class="text-slate-400"><th>Material</th><th>Name</th><th>Status</th>${periods.map(p => `<th class="text-right">${p}</th>`).join('')}</tr>`;
-        let html = data.data.map(item => { const cls = item.status === 'LOW' ? 'text-red-400' : item.status === 'HIGH' ? 'text-yellow-400' : 'text-green-400'; return `<tr><td class="font-mono">${item.material_number}</td><td>${(item.material_name || '').substring(0, 18)}</td><td class="font-bold ${cls}">${item.status}</td>${periods.map(p => `<td class="text-right">${fmt(item.values[p] || 0)}</td>`).join('')}</tr>`; }).join('');
+        let html = data.data.map(item => { const cls = item.status === 'LOW' ? 'text-red-400' : item.status === 'HIGH' ? 'text-yellow-400' : 'text-green-400'; return `<tr><td class="font-mono">${escapeHtml(item.material_number)}</td><td>${escapeHtml((item.material_name || '').substring(0, 18))}</td><td class="font-bold ${cls}">${item.status}</td>${periods.map(p => `<td class="text-right">${fmt(item.values[p] || 0)}</td>`).join('')}</tr>`; }).join('');
         document.getElementById('invBody').innerHTML = html || '<tr><td>No data</td></tr>';
     } catch (err) { log('Error: ' + err); }
 }
@@ -7750,7 +7750,7 @@ async function loadMoMTab() {
             const sign  = s.delta > 0 ? '+' : '';
             const dpct  = s.delta_pct !== null ? sign + s.delta_pct.toFixed(1) + '%' : '-';
             tmHtml += '<tr>'
-                + '<td class="p-1 text-slate-300">' + (s.material_name || s.material_number) + '</td>'
+                + '<td class="p-1 text-slate-300">' + escapeHtml(s.material_name || s.material_number) + '</td>'
                 + '<td class="p-1 text-right font-mono ' + color + '">' + sign + Math.round(s.delta).toLocaleString() + '</td>'
                 + '<td class="p-1 text-right font-mono ' + color + '">' + dpct + '</td>'
                 + '</tr>';
