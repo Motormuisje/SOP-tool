@@ -86,6 +86,43 @@ def save_sessions_to_disk(
     os.replace(tmp_path, sessions_store)
 
 
+def save_scenarios_to_disk(scenarios: dict, scenarios_store: Path) -> None:
+    """Persist saved scenarios (atomic, same pattern as the sessions store).
+
+    Scenario payloads are built from request JSON and row dicts, so they are
+    JSON-safe; default=str covers any stray non-JSON value.
+    """
+    store = {'scenarios': scenarios}
+    tmp_path = scenarios_store.with_name(f'{scenarios_store.name}.tmp')
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(store, f, default=str)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, scenarios_store)
+
+
+def load_scenarios_from_disk(scenarios_store: Path) -> dict:
+    """Restore saved scenarios; tolerate a missing or corrupt store file."""
+    if not scenarios_store.exists():
+        return {}
+    try:
+        with open(scenarios_store, 'r', encoding='utf-8') as f:
+            store = json.load(f)
+        scenarios = store.get('scenarios', {})
+        return scenarios if isinstance(scenarios, dict) else {}
+    except Exception as exc:
+        print(f'[scenarios] load error: {exc}')
+        try:
+            corrupt_path = scenarios_store.with_name(
+                f'{scenarios_store.name}.corrupt-{datetime.now().strftime("%Y%m%d%H%M%S")}'
+            )
+            scenarios_store.replace(corrupt_path)
+            print(f'[scenarios] corrupt store moved to: {corrupt_path}')
+        except Exception as move_exc:
+            print(f'[scenarios] corrupt store could not be moved: {move_exc}')
+        return {}
+
+
 def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
     """Restore session metadata from sessions_store.json on startup."""
     loaded_sessions = {}

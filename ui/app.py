@@ -52,7 +52,9 @@ from ui.engine_rebuild import (
     install_clean_engine_baseline,
 )
 from ui.session_store import (
+    load_scenarios_from_disk,
     load_sessions_from_disk,
+    save_scenarios_to_disk,
     save_sessions_to_disk,
 )
 from ui.state_snapshot import (
@@ -122,6 +124,7 @@ _cycle_manager = CycleManager(str(_CYCLE_STORAGE_DIR))
 
 
 SESSIONS_STORE = APP_DATA_ROOT / 'sessions_store.json'
+SCENARIOS_STORE = APP_DATA_ROOT / 'scenarios_store.json'
 GLOBAL_CONFIG_FILE = APP_DATA_ROOT / 'global_config.json'
 
 _global_config: dict = {}
@@ -178,6 +181,20 @@ def _save_sessions_to_disk():
 def _load_sessions_from_disk():
     global sessions, active_session_id
     sessions, active_session_id = load_sessions_from_disk(SESSIONS_STORE)
+
+
+def _save_scenarios_to_disk():
+    try:
+        save_scenarios_to_disk(scenarios, SCENARIOS_STORE)
+    except Exception as exc:
+        print(f'[scenarios] save error: {exc}')
+
+
+def _load_scenarios_from_disk():
+    # Mutate in place: the scenarios dict object is shared by reference with
+    # the scenarios blueprint.
+    scenarios.clear()
+    scenarios.update(load_scenarios_from_disk(SCENARIOS_STORE))
 
 
 def _build_and_install_session_engine(sess: dict):
@@ -247,25 +264,28 @@ def _wait_for_session_warmup(session_id: str, timeout_seconds: float) -> bool:
 
 def _apply_folder_config():
     """Apply folder paths from _global_config, update globals and CycleManager."""
-    global APP_UPLOADS_DIR, APP_EXPORTS_DIR, SESSIONS_STORE, _cycle_manager
+    global APP_UPLOADS_DIR, APP_EXPORTS_DIR, SESSIONS_STORE, SCENARIOS_STORE, _cycle_manager
     APP_UPLOADS_DIR, APP_EXPORTS_DIR, SESSIONS_STORE = apply_folder_config(
         _global_config,
         _default_folders(),
     )
+    SCENARIOS_STORE = SESSIONS_STORE.parent / 'scenarios_store.json'
     _cycle_manager = CycleManager(str(APP_EXPORTS_DIR))
 
 
 def _apply_folder_paths(uploads_dir: Path, exports_dir: Path, sessions_dir: Path) -> None:
-    global APP_UPLOADS_DIR, APP_EXPORTS_DIR, SESSIONS_STORE, _cycle_manager
+    global APP_UPLOADS_DIR, APP_EXPORTS_DIR, SESSIONS_STORE, SCENARIOS_STORE, _cycle_manager
     APP_UPLOADS_DIR = uploads_dir
     APP_EXPORTS_DIR = exports_dir
     SESSIONS_STORE = sessions_dir / 'sessions_store.json'
+    SCENARIOS_STORE = sessions_dir / 'scenarios_store.json'
     _cycle_manager = CycleManager(str(APP_EXPORTS_DIR))
 
 
 _load_global_config()
 _apply_folder_config()
 _load_sessions_from_disk()
+_load_scenarios_from_disk()
 app.register_blueprint(create_config_blueprint(
     _default_folders,
     _global_config,
@@ -501,7 +521,7 @@ _SESSION_SAVE_METHODS = {'POST', 'DELETE'}
 
 @app.after_request
 def _after_request_save(response):
-    """Auto-save sessions to disk after any mutating request."""
+    """Auto-save sessions (and scenarios) to disk after any mutating request."""
     if request.method in _SESSION_SAVE_METHODS and (
         request.path in _SESSION_SAVE_PATHS
         or (request.method == 'DELETE' and request.path.startswith('/api/sessions/'))
@@ -509,6 +529,8 @@ def _after_request_save(response):
     ):
         if response.status_code < 500:
             _save_sessions_to_disk()
+            if request.path.startswith('/api/scenarios'):
+                _save_scenarios_to_disk()
     return response
 
 

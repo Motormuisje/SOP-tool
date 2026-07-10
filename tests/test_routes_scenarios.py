@@ -479,3 +479,51 @@ def test_scenario_compare_export_with_empty_diff_writes_no_diff_sheet(scenarios_
     workbook = openpyxl.load_workbook(export_path)
     assert workbook["Volume Comparison"]["A1"].value == "No differences found."
     assert workbook["Value Comparison"]["A1"].value == "No differences found."
+
+
+def test_load_scenario_rederives_override_stores_from_pending_edits(scenarios_route_app):
+    """H7: stale capacity/inventory overrides must not survive a scenario load."""
+    sess = scenarios_route_app.sessions["session-a"]
+    sess["capacity_overrides"] = {
+        "07. Capacity utilization": {"STALE-MAT": {"2025-12": 999.0}},
+    }
+    sess["inventory_overrides"] = {"STALE-MAT": 111.0}
+
+    scenarios_route_app.scenarios["sc1"] = _scenario(
+        "session-a",
+        "Sc1",
+        results={LineType.TOTAL_DEMAND.value: [_snapshot(_row())]},
+        pending_edits={
+            "07. Capacity utilization||GROUP-X||||2026-01": {"original": 10.0, "new_value": 42.0},
+            "04. Inventory||MAT-1||||starting_stock": {"original": 5.0, "new_value": 77.0},
+            "01. Demand forecast||MAT-1||||2026-01": {"original": 1.0, "new_value": 2.0},
+        },
+    )
+
+    response = scenarios_route_app.client.post("/api/scenarios/load", json={"scenario_id": "sc1"})
+
+    assert response.status_code == 200
+    assert sess["capacity_overrides"] == {
+        "07. Capacity utilization": {"GROUP-X": {"2026-01": 42.0}}
+    }
+    assert sess["inventory_overrides"] == {"MAT-1": 77.0}
+
+
+def test_scenarios_persist_round_trip(tmp_path):
+    """M13: scenarios must survive a server restart via scenarios_store.json."""
+    import json
+
+    from ui.session_store import load_scenarios_from_disk, save_scenarios_to_disk
+
+    store = tmp_path / "scenarios_store.json"
+    scenarios = {"sc1": _scenario("session-a", "Sc1")}
+    save_scenarios_to_disk(scenarios, store)
+
+    assert store.exists()
+    assert not store.with_name("scenarios_store.json.tmp").exists()
+    loaded = load_scenarios_from_disk(store)
+    assert loaded == json.loads(json.dumps(scenarios))
+
+    store.write_text("{ corrupt", encoding="utf-8")
+    assert load_scenarios_from_disk(store) == {}
+    assert not store.exists()  # quarantined

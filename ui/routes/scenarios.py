@@ -10,6 +10,40 @@ from flask import Blueprint, jsonify, request, send_file
 
 from modules.models import LineType
 
+# Line types whose pending edits live in sess['capacity_overrides'] —
+# must match the branches in ui.volume_change.apply_volume_change.
+_CAPACITY_OVERRIDE_LINE_TYPES = {
+    LineType.CAPACITY_UTILIZATION.value,
+    LineType.AVAILABLE_CAPACITY.value,
+    LineType.SHIFT_AVAILABILITY.value,
+    LineType.FTE_REQUIREMENTS.value,
+}
+
+
+def derive_override_stores(pending_edits: dict) -> tuple[dict, dict]:
+    """Re-derive capacity_overrides / inventory_overrides from pending_edits.
+
+    Scenario load replaces pending_edits wholesale; the override stores must
+    follow, or the next recalc resurrects edits the scenario doesn't contain
+    (and live state diverges from what replay produces after a restart).
+    """
+    capacity: dict = {}
+    inventory: dict = {}
+    for key, edit in (pending_edits or {}).items():
+        parts = key.split('||')
+        if len(parts) != 4:
+            continue
+        lt, mat, _aux, period = parts
+        try:
+            val = float(edit.get('new_value', 0))
+        except (TypeError, ValueError):
+            continue
+        if lt in _CAPACITY_OVERRIDE_LINE_TYPES:
+            capacity.setdefault(lt, {}).setdefault(mat, {})[period] = val
+        elif lt == LineType.INVENTORY.value and period == 'starting_stock':
+            inventory[mat] = val
+    return capacity, inventory
+
 
 def create_scenarios_blueprint(
     scenarios: dict,
@@ -164,6 +198,9 @@ def create_scenarios_blueprint(
             restored_pending = build_pending_edits_from_results_snapshot(sc.get('results', {}))
         sess['pending_edits'] = restored_pending
         sess['value_aux_overrides'] = json.loads(json.dumps(sc.get('value_aux_overrides', {})))
+        # The override stores must track the restored pending_edits, or stale
+        # entries from pre-load edits get re-applied on the next recalc.
+        sess['capacity_overrides'], sess['inventory_overrides'] = derive_override_stores(restored_pending)
         sess['undo_stack'] = []
         sess['redo_stack'] = []
         rebuild_volume_caches_from_results(current_engine)
