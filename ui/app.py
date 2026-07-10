@@ -129,6 +129,11 @@ _VERBOSE_STARTUP = os.getenv('SOP_VERBOSE_STARTUP', '').strip().lower() in ('1',
 _DISABLE_AUTORUN = os.getenv('SOP_DISABLE_AUTORUN', '').strip().lower() in ('1', 'true', 'yes', 'on')
 _session_warmup_lock = threading.Lock()
 _session_warmup_events: dict[str, threading.Event] = {}
+# Guards mutations of the module-level `sessions` dict (and session status /
+# engine-install fields) against concurrent access from background threads
+# (warmup, autorun) and Flask request handlers. RLock because
+# _save_sessions_to_disk may be called while a worker already holds the lock.
+_sessions_lock = threading.RLock()
 
 
 def _restore_engine_state(engine, snapshot: dict) -> None:
@@ -159,12 +164,13 @@ def _get_config_overrides() -> dict:
 
 def _save_sessions_to_disk():
     try:
-        save_sessions_to_disk(
-            sessions,
-            active_session_id,
-            SESSIONS_STORE,
-            _machine_overrides_from_engine,
-        )
+        with _sessions_lock:
+            save_sessions_to_disk(
+                sessions,
+                active_session_id,
+                SESSIONS_STORE,
+                _machine_overrides_from_engine,
+            )
     except Exception as exc:
         print(f'[sessions] save error: {exc}')
 
@@ -198,20 +204,25 @@ def _start_session_warmup(session_id: str) -> bool:
             event.set()
             return
         label = sess.get('custom_name') or sess.get('filename', session_id)
-        sess['restore_status'] = 'warming'
-        sess['restore_error'] = None
+        with _sessions_lock:
+            sess['restore_status'] = 'warming'
+            sess['restore_error'] = None
         try:
+            # Long-running engine build stays OUTSIDE the lock; only the
+            # install of the result into the session dict is locked.
             with contextlib.redirect_stdout(io.StringIO()):
                 engine = _build_and_install_session_engine(sess)
-            if engine is None:
-                sess['restore_status'] = 'cold'
-            elif sessions.get(session_id) is sess:
-                sess['engine'] = engine
-                sess['restore_status'] = 'ready'
-                sess['restore_error'] = None
+            with _sessions_lock:
+                if engine is None:
+                    sess['restore_status'] = 'cold'
+                elif sessions.get(session_id) is sess:
+                    sess['engine'] = engine
+                    sess['restore_status'] = 'ready'
+                    sess['restore_error'] = None
         except Exception as exc:
-            sess['restore_status'] = 'failed'
-            sess['restore_error'] = str(exc)
+            with _sessions_lock:
+                sess['restore_status'] = 'failed'
+                sess['restore_error'] = str(exc)
             import logging
             logging.getLogger(__name__).error(f'session warmup FAIL "{label}": {exc}')
         finally:
@@ -391,8 +402,10 @@ def _autorun_sessions():
     import threading
 
     def _worker():
+        with _sessions_lock:
+            items = list(sessions.items())
         candidates = [
-            (sid, sess) for sid, sess in sessions.items()
+            (sid, sess) for sid, sess in items
             if sess.get('parameters') is not None and (
                 sess.get('extract_files') or Path(sess.get('file_path', '')).exists()
             )
@@ -425,7 +438,10 @@ def _autorun_sessions():
                         _install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
                         with app.app_context():
                             _replay_pending_edits(sess, engine)
-                sess['engine'] = engine
+                # Engine build/run happens outside the lock; only the install
+                # into the shared session dict is locked.
+                with _sessions_lock:
+                    sess['engine'] = engine
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).error(f'autorun FAIL "{label}": {exc}')

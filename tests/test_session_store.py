@@ -1,4 +1,6 @@
 import json
+import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -157,6 +159,75 @@ def test_snapshot_session_metadata_survives_cold_start(tmp_path):
     assert restored["redo_stack"] == []
     assert restored["restore_status"] == "cold"
     assert restored["restore_error"] is None
+
+
+def _plain_session(sid: str) -> dict:
+    return {
+        "id": sid,
+        "file_path": f"C:/fixtures/{sid}.xlsm",
+        "filename": f"{sid}.xlsm",
+        "custom_name": None,
+        "is_snapshot": False,
+        "engine": None,
+        "metadata": {},
+        "uploaded_at": "2026-04-22T07:00:00",
+        "parameters": {"planning_month": "2025-12"},
+        "pending_edits": {},
+        "value_aux_overrides": {},
+        "machine_overrides": {},
+        "valuation_params": {"1": 1.0},
+    }
+
+
+def test_save_sessions_to_disk_survives_concurrent_dict_mutation(tmp_path):
+    """Bug 5 regression: background threads insert/delete sessions while a save
+    iterates the live dict. Before the fix (snapshot iteration) this raised
+    'RuntimeError: dictionary changed size during iteration' within a few
+    hundred iterations and the save was lost."""
+    store_path = tmp_path / "sessions_store.json"
+    sessions = {f"s{i}": _plain_session(f"s{i}") for i in range(100)}
+    saver_errors = []
+    stop_mutating = threading.Event()
+
+    def _saver():
+        try:
+            for _ in range(200):
+                save_sessions_to_disk(
+                    sessions,
+                    "s0",
+                    store_path,
+                    lambda sess, engine: {},
+                )
+        except Exception as exc:  # noqa: BLE001 - collected for the assertion
+            saver_errors.append(exc)
+        finally:
+            stop_mutating.set()
+
+    # Short thread switch interval: interleaves the two threads aggressively
+    # (reliably triggers the pre-fix RuntimeError) and keeps the tight
+    # mutation loop below from starving the saver thread of the GIL.
+    previous_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-4)
+    try:
+        saver = threading.Thread(target=_saver)
+        saver.start()
+
+        counter = 0
+        while not stop_mutating.is_set():
+            sid = f"extra-{counter}"
+            sessions[sid] = _plain_session(sid)
+            sessions.pop(f"extra-{counter - 1}", None)
+            counter += 1
+
+        saver.join(timeout=30)
+    finally:
+        sys.setswitchinterval(previous_interval)
+    assert not saver.is_alive()
+    assert saver_errors == []
+    # The final file must be complete, parseable JSON.
+    stored = json.loads(store_path.read_text(encoding="utf-8"))
+    assert stored["active_session_id"] == "s0"
+    assert "s0" in stored["sessions"]
 
 
 def test_load_sessions_from_disk_returns_empty_when_store_missing(tmp_path):

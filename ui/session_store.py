@@ -15,7 +15,10 @@ def save_sessions_to_disk(
 ) -> None:
     """Persist session metadata without engine objects."""
     serializable = {}
-    for sid, sess in sessions.items():
+    # Iterate over a snapshot: background threads (warmup/autorun) may insert
+    # or delete sessions concurrently, and iterating the live dict would raise
+    # "dictionary changed size during iteration" and lose the save.
+    for sid, sess in list(sessions.items()):  # NOSONAR(S7504) list() is a deliberate snapshot
         # Persist current valuation_params per-session so rebuilds after
         # restart use the correct per-session values, not the shared global config.
         engine = sess.get('engine')

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 
 
@@ -17,11 +18,23 @@ def load_global_config(config_file: Path) -> dict:
 
 
 def save_global_config(config_file: Path, global_config: dict) -> None:
+    # Atomic write (same pattern as session_store.save_sessions_to_disk):
+    # write to a temp file, fsync, then os.replace. A crash mid-write can no
+    # longer corrupt global_config.json (which load_global_config would then
+    # silently replace with {}).
+    tmp_path = config_file.with_name(f'{config_file.name}.tmp')
     try:
-        with open(config_file, 'w', encoding='utf-8') as f:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(global_config, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, config_file)
     except Exception as exc:
         print(f'[global_config] save error: {exc}')
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def sync_global_config_from_engine(engine, global_config, format_pap) -> None:

@@ -47,6 +47,35 @@ def test_save_global_config_writes_json(tmp_path):
     assert data["forecast_months"] == 12
 
 
+def test_save_global_config_round_trip_leaves_no_tmp_file(tmp_path):
+    path = tmp_path / "config.json"
+    config = {"site": "NLX1", "forecast_months": 12, "folders": {"uploads": "C:/u"}}
+
+    save_global_config(path, config)
+
+    assert load_global_config(path) == config
+    assert not (tmp_path / "config.json.tmp").exists()
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_save_global_config_keeps_original_file_when_write_fails(tmp_path, monkeypatch):
+    """Bug 6 regression: a crash mid-write must not corrupt the existing
+    config file (load_global_config would silently return {} afterwards)."""
+    path = tmp_path / "config.json"
+    original = {"site": "NLX1", "valuation_params": {"1": 10.0}}
+    save_global_config(path, original)
+
+    def _boom(*args, **kwargs):
+        raise OSError("disk full mid-write")
+
+    monkeypatch.setattr(json, "dump", _boom)
+    save_global_config(path, {"site": "CLOBBERED"})
+
+    monkeypatch.undo()
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+    assert load_global_config(path) == original
+
+
 def test_sync_global_config_from_engine_updates_config_fields():
     vp = SimpleNamespace(
         direct_fte_cost_per_month=1.0,
