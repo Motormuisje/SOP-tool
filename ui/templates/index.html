@@ -1478,7 +1478,21 @@
     <div id="planTooltip"></div>
     <div id="valueTooltip"></div>
     <div id="ltInfoTooltip"></div>
-<script src="{{ url_for('static', filename='sop_planning.js') }}?v=20260711a"></script>
+    <!-- Chart zoom modal (Fase 1.1). display toggled in JS; no Tailwind .hidden
+         because the inline flex layout would override it and keep the overlay
+         capturing clicks across the whole page. -->
+    <div id="chartZoomModal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(2,6,23,0.82);align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)closeChartZoom()">
+        <div class="card rounded-xl" style="width:min(1200px,95vw);height:min(80vh,760px);display:flex;flex-direction:column;padding:16px 18px">
+            <div class="flex items-center justify-between mb-3">
+                <h3 id="chartZoomTitle" class="font-semibold text-base">Grafiek</h3>
+                <button type="button" onclick="closeChartZoom()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
+            </div>
+            <div id="chartZoomCanvasHost" style="flex:1;min-height:0;position:relative">
+                <canvas id="chartZoomCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+<script src="{{ url_for('static', filename='sop_planning.js') }}?v=20260711b"></script>
 <script>
 let state = { periods: [], results: null, lineTypes: [], valueResults: null, valueLineTypes: [], consolidation: [], cellEdits: {}, valueAuxEdits: {}, valueRowDeltas: {}, demandTurnoverDeltas: {}, top10Overstocks: [], activeSessionId: null, dashboardDirty: false, moqRawNeeds: {}, machineDeltaSummary: null, machineDeltaSummaries: {} };
 // Resize all Chart.js charts when window is restored from minimized state
@@ -3154,6 +3168,95 @@ function exportChartPNG(chartInstance, filename) {
 function exportTop10PNG() {
     exportChartPNG(overstocksChart, 'top10_overstocks.png');
 }
+
+// ===== Chart zoom (Fase 1.1) =====
+// One modal enlarges any Chart.js chart. The live chart is resolved at click
+// time via Chart.getChart(canvas), so it always mirrors the current data even
+// after a re-render, and no per-panel chart variable wiring is needed.
+let _zoomChart = null;
+
+function _cloneChartConfigFrom(src) {
+    let clonedData, clonedOptions;
+    try {
+        clonedData = JSON.parse(JSON.stringify(src.data));
+        clonedOptions = JSON.parse(JSON.stringify(src.config.options || src.options || {}));
+    } catch (e) {
+        clonedData = {
+            labels: [...(src.data.labels || [])],
+            datasets: (src.data.datasets || []).map(ds => ({
+                ...ds,
+                data: Array.isArray(ds.data) ? [...ds.data] : ds.data,
+                backgroundColor: Array.isArray(ds.backgroundColor) ? [...ds.backgroundColor] : ds.backgroundColor,
+                borderColor: Array.isArray(ds.borderColor) ? [...ds.borderColor] : ds.borderColor,
+            })),
+        };
+        clonedOptions = {};
+    }
+    const cfg = { type: src.config.type, data: clonedData, options: clonedOptions };
+    cfg.options.responsive = true;
+    cfg.options.maintainAspectRatio = false;
+    return cfg;
+}
+
+function openChartZoomForCanvas(canvas, title) {
+    if (!canvas || typeof Chart === 'undefined' || !Chart.getChart) return;
+    const src = Chart.getChart(canvas);
+    if (!src) return;
+    const modal = document.getElementById('chartZoomModal');
+    const titleEl = document.getElementById('chartZoomTitle');
+    const host = document.getElementById('chartZoomCanvasHost');
+    if (!modal || !host) return;
+    titleEl.textContent = title || 'Grafiek';
+    host.innerHTML = '<canvas id="chartZoomCanvas"></canvas>';
+    if (_zoomChart) { try { _zoomChart.destroy(); } catch (e) {} _zoomChart = null; }
+    _zoomChart = new Chart(host.querySelector('canvas').getContext('2d'), _cloneChartConfigFrom(src));
+    modal.style.display = 'flex';
+    modal.dataset.sourceCanvas = canvas.id || '';
+}
+
+function closeChartZoom() {
+    const modal = document.getElementById('chartZoomModal');
+    if (modal) modal.style.display = 'none';
+    if (_zoomChart) { try { _zoomChart.destroy(); } catch (e) {} _zoomChart = null; }
+}
+
+// Find the panel title for a given canvas (nearest h3 in the enclosing card/panel).
+function _chartPanelTitle(canvas) {
+    const panel = canvas.closest('.card, .db-panel');
+    const h3 = panel ? panel.querySelector('h3') : null;
+    return h3 ? h3.textContent.trim() : 'Grafiek';
+}
+
+// Inject a "vergroot" button next to every PNG export button, and allow
+// double-clicking any chart canvas to zoom it.
+function _installChartZoomAffordances() {
+    document.querySelectorAll('[onclick^="exportChart"], [onclick^="exportTop10"]').forEach(pngBtn => {
+        if (pngBtn.dataset.zoomWired) return;
+        pngBtn.dataset.zoomWired = '1';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = pngBtn.className;
+        btn.innerHTML = '&#9974; Vergroot';
+        btn.title = 'Vergroot deze grafiek';
+        btn.addEventListener('click', () => {
+            const panel = pngBtn.closest('.card, .db-panel');
+            const canvas = panel ? panel.querySelector('canvas') : null;
+            if (canvas) openChartZoomForCanvas(canvas, _chartPanelTitle(canvas));
+        });
+        pngBtn.parentNode.insertBefore(btn, pngBtn);
+    });
+    if (!document._chartZoomDblWired) {
+        document._chartZoomDblWired = true;
+        document.addEventListener('dblclick', (e) => {
+            const canvas = e.target.closest && e.target.closest('canvas');
+            if (canvas && (canvas.closest('.card') || canvas.closest('.db-panel')) && canvas.id !== 'chartZoomCanvas') {
+                openChartZoomForCanvas(canvas, _chartPanelTitle(canvas));
+            }
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', _installChartZoomAffordances);
 
 function renderTop10Overstocks(top10) {
     const canvas = document.getElementById('overstocksChart');
@@ -6339,6 +6442,10 @@ function current_engine_loaded() {
 }
 
 document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const zoom = document.getElementById('chartZoomModal');
+        if (zoom && zoom.style.display !== 'none' && zoom.style.display !== '') { e.preventDefault(); closeChartZoom(); return; }
+    }
     if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         if (_activeTabName === 'capacity') undoMachineEdit();
