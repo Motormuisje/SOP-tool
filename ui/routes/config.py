@@ -1,12 +1,13 @@
 """Configuration-related Flask routes."""
 
+import contextlib
 from datetime import datetime
 import io
 from pathlib import Path
-import sys
 from typing import Callable
 
 from flask import Blueprint, current_app, jsonify, request
+from werkzeug.utils import secure_filename
 
 from modules.data_loader import DataLoader
 
@@ -106,17 +107,16 @@ def create_config_blueprint(
         if not file.filename.lower().endswith(('.xlsm', '.xlsx')):
             return jsonify({'error': 'Only .xlsm or .xlsx files are accepted'}), 400
 
-        dest = upload_dir / file.filename
+        safe_name = secure_filename(file.filename)
+        if not safe_name:
+            return jsonify({'error': f'Invalid filename: "{file.filename}"'}), 400
+        dest = upload_dir / safe_name
         file.save(str(dest))
 
         try:
-            devnull = io.StringIO()
-            sys.stdout, saved_stdout = devnull, sys.stdout
-            try:
+            with contextlib.redirect_stdout(io.StringIO()):
                 loader = DataLoader(excel_file=str(dest))
                 loader.load_all()
-            finally:
-                sys.stdout = saved_stdout
         except Exception:
             return jsonify({'error': 'Could not read file. Check that it contains the required sheets.'}), 400
 

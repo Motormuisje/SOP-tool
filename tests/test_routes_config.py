@@ -523,3 +523,29 @@ def test_upload_master_file_saves_defaults_from_loader(config_route_app, monkeyp
     }
     assert config_route_app.global_config["master_filename"] == "master.xlsm"
     assert config_route_app.save_calls
+
+
+def test_master_file_upload_traversal_filename_stays_inside_upload_dir(config_route_app):
+    """A crafted filename like ..\\..\\escape.xlsx must never write outside uploads."""
+    resp = config_route_app.client.post(
+        "/api/config/master-file",
+        data={"master_file": (io.BytesIO(b"not a real workbook"), "..\\..\\escape.xlsx")},
+        content_type="multipart/form-data",
+    )
+    # DataLoader will reject the fake workbook (400) - the point is where bytes landed.
+    assert resp.status_code != 500
+    assert not (config_route_app.tmp_path / "escape.xlsx").exists()
+    assert not (config_route_app.tmp_path.parent / "escape.xlsx").exists()
+    upload_dir = config_route_app.tmp_path / "uploads"
+    if upload_dir.exists():
+        for saved in upload_dir.iterdir():
+            assert saved.resolve().is_relative_to(upload_dir.resolve())
+
+
+def test_master_file_upload_empty_sanitized_name_rejected(config_route_app):
+    resp = config_route_app.client.post(
+        "/api/config/master-file",
+        data={"master_file": (io.BytesIO(b"x"), "..\\..\\.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
