@@ -680,45 +680,57 @@ class PlanningEngine:
             _ov_chart3_anchor = 'A' + str(_chart_base + 44)   # Top 10 Overstocks (Phase 2)
 
             # Chart 1 — Projected Financial Metrics (PNG embed)
-            _fm_series = {}
-            for _m in ['TURNOVER', 'COST OF GOODS', 'GROSS MARGIN', 'INVENTORY VALUE']:
-                for _row in consol_rows:
-                    if _row.material_number.replace('ZZZZZZ_', '') == _m:
-                        _fm_series[_m] = [_row.get_value(p) for p in self.data.periods]
-                        break
-            _fm_img = _XLImage(_cr.financial_metrics(
-                self.data.periods, _fm_series,
-                width_cm=_overview_chart_w_cm, height_cm=_overview_chart_h_cm,
-            ))
-            _fm_img.anchor = 'A' + str(_chart_base)
-            ws_overview.add_image(_fm_img)
+            # Charts degrade to a skipped chart instead of failing the whole
+            # export when consolidation data is missing (e.g. no valuation
+            # parameters sheet) — same pattern as the Top-10/IQ/MoM blocks.
+            try:
+                _fm_series = {}
+                for _m in ['TURNOVER', 'COST OF GOODS', 'GROSS MARGIN', 'INVENTORY VALUE']:
+                    for _row in consol_rows:
+                        if _row.material_number.replace('ZZZZZZ_', '') == _m:
+                            _fm_series[_m] = [_row.get_value(p) for p in self.data.periods]
+                            break
+                _fm_img = _XLImage(_cr.financial_metrics(
+                    self.data.periods, _fm_series,
+                    width_cm=_overview_chart_w_cm, height_cm=_overview_chart_h_cm,
+                ))
+                _fm_img.anchor = 'A' + str(_chart_base)
+                ws_overview.add_image(_fm_img)
+            except Exception as _e_fm:
+                print(f"  Warning: Financial metrics chart skipped: {_e_fm}")
 
             # Chart 4 — ROCE Components (PNG embed)
-            _rc_series = {}
-            for _m in ['EBIT', 'CAPITAL INVESTMENT', 'OPERATIONAL CASHFLOW']:
-                for _row in consol_rows:
-                    if _row.material_number.replace('ZZZZZZ_', '') == _m:
-                        _rc_series[_m] = [_row.get_value(p) for p in self.data.periods]
-                        break
-            _rc_img = _XLImage(_cr.roce_components(
-                self.data.periods, _rc_series,
-                width_cm=_overview_chart_w_cm, height_cm=_overview_chart_h_cm,
-            ))
-            _rc_img.anchor = 'A' + str(_chart_base + 66)
-            ws_overview.add_image(_rc_img)
+            try:
+                _rc_series = {}
+                for _m in ['EBIT', 'CAPITAL INVESTMENT', 'OPERATIONAL CASHFLOW']:
+                    for _row in consol_rows:
+                        if _row.material_number.replace('ZZZZZZ_', '') == _m:
+                            _rc_series[_m] = [_row.get_value(p) for p in self.data.periods]
+                            break
+                _rc_img = _XLImage(_cr.roce_components(
+                    self.data.periods, _rc_series,
+                    width_cm=_overview_chart_w_cm, height_cm=_overview_chart_h_cm,
+                ))
+                _rc_img.anchor = 'A' + str(_chart_base + 66)
+                ws_overview.add_image(_rc_img)
+            except Exception as _e_rc:
+                print(f"  Warning: ROCE components chart skipped: {_e_rc}")
 
             # Chart 5 — ROCE bar + 15% target + average line (PNG embed)
-            _roce_vals = []
-            for _row in consol_rows:
-                if 'ROCE' in _row.material_number and 'CAPITAL' not in _row.material_number:
-                    _roce_vals = [_row.get_value(p) for p in self.data.periods]
-                    break
-            _rb_img = _XLImage(_cr.roce_bar(
-                self.data.periods, _roce_vals, target=0.15, average=_roce_avg_val,
-                width_cm=_overview_chart_w_cm, height_cm=_overview_chart_h_cm,
-            ))
-            _rb_img.anchor = 'A' + str(_chart_base + 88)
-            ws_overview.add_image(_rb_img)
+            try:
+                _roce_vals = []
+                for _row in consol_rows:
+                    if 'ROCE' in _row.material_number and 'CAPITAL' not in _row.material_number:
+                        _roce_vals = [_row.get_value(p) for p in self.data.periods]
+                        break
+                _rb_img = _XLImage(_cr.roce_bar(
+                    self.data.periods, _roce_vals, target=0.15, average=_roce_avg_val,
+                    width_cm=_overview_chart_w_cm, height_cm=_overview_chart_h_cm,
+                ))
+                _rb_img.anchor = 'A' + str(_chart_base + 88)
+                ws_overview.add_image(_rb_img)
+            except Exception as _e_rb:
+                print(f"  Warning: ROCE bar chart skipped: {_e_rb}")
 
             # ---- Top 10 Overstocks sheet (VBA CreateTop10OverstocksChart line 7116) ----
             top10_count = 0

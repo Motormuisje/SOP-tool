@@ -86,3 +86,21 @@ def test_chart_renderer_mom_scatter_returns_png_for_empty_and_populated_inputs()
             ["C6EFCE", "FFC7CE"],
         )
     )
+
+
+def test_roce_bar_empty_values_renders_placeholder():
+    """Missing valuation params -> no consolidation rows -> empty ROCE series.
+    Must render a placeholder instead of raising (export crash H5)."""
+    from modules import chart_renderer
+
+    periods = [f"2026-{m:02d}" for m in range(1, 13)]
+    buf = chart_renderer.roce_bar(periods, [])
+    assert buf.getbuffer().nbytes > 0
+
+
+def test_roce_bar_length_mismatch_renders_placeholder():
+    from modules import chart_renderer
+
+    periods = [f"2026-{m:02d}" for m in range(1, 13)]
+    buf = chart_renderer.roce_bar(periods, [0.1, 0.2])
+    assert buf.getbuffer().nbytes > 0

@@ -79,6 +79,20 @@ def _fig_to_bytes(fig: plt.Figure) -> io.BytesIO:
     return buf
 
 
+def _empty_chart(title: str, width_cm: float, height_cm: float) -> io.BytesIO:
+    """Placeholder chart when the underlying data is missing (e.g. no
+    valuation parameters → no consolidation rows). Rendering a placeholder
+    instead of raising keeps the Excel export usable."""
+    fig, ax = plt.subplots(figsize=(width_cm / 2.54, height_cm / 2.54))
+    ax.set_title(title, fontsize=11, fontweight='bold')
+    ax.text(0.5, 0.5, 'Geen data beschikbaar', ha='center', va='center',
+            fontsize=10, color='#888888', transform=ax.transAxes)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    fig.tight_layout()
+    return _fig_to_bytes(fig)
+
+
 def _short_labels(periods: List[str]) -> List[str]:
     """'2025-01' → 'Jan-25' for readable axis ticks."""
     month_abbr = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -177,6 +191,8 @@ def roce_bar(
     height_cm: float = 12,
 ) -> io.BytesIO:
     """Bar chart (ROCE %) with dashed 15% target and green average line."""
+    if not roce_values or len(roce_values) != len(periods):
+        return _empty_chart('ROCE', width_cm, height_cm)
     fig, ax = plt.subplots(figsize=(width_cm / 2.54, height_cm / 2.54))
     x = np.arange(len(periods))
     labels = _short_labels(periods)
