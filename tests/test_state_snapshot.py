@@ -288,3 +288,27 @@ def test_restore_engine_state_restores_rows_config_and_machine_state():
     assert global_config["valuation_params"]["1"] == pytest.approx(1.0)
     assert engine.data.machines["M1"].oee == pytest.approx(0.95)
     assert engine.data.machines["M1"].availability_by_period == {"2025-12": 0.88}
+
+
+def test_restore_engine_state_clears_live_shift_hours_override_when_baseline_none():
+    engine = _engine(FakeMachine(shift_hours_override=None))
+    snapshot = state_snapshot.snapshot_engine_state(engine, lambda machine, data: 520.0)
+    assert snapshot["machines"]["M1"]["shift_hours_override"] is None
+
+    engine.data.machines["M1"].shift_hours_override = 999.0
+
+    state_snapshot.restore_engine_state(engine, snapshot, {})
+
+    assert engine.data.machines["M1"].shift_hours_override is None
+
+
+def test_restore_engine_state_restores_numeric_shift_hours_override():
+    engine = _engine(FakeMachine(shift_hours_override=610.0))
+    snapshot = state_snapshot.snapshot_engine_state(engine, lambda machine, data: 612.5)
+    assert snapshot["machines"]["M1"]["shift_hours_override"] == pytest.approx(610.0)
+
+    engine.data.machines["M1"].shift_hours_override = None
+
+    state_snapshot.restore_engine_state(engine, snapshot, {})
+
+    assert engine.data.machines["M1"].shift_hours_override == pytest.approx(610.0)

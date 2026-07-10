@@ -285,6 +285,7 @@ def restore_engine_state(engine, snapshot: dict, global_config: dict) -> None:
                 continue
             machine.oee = float(snap.get('oee', machine.oee))
             machine.availability_by_period = dict(snap.get('availability_by_period') or {})
+            machine.shift_hours_override = snap.get('shift_hours_override')
 
 
 def ensure_reset_baseline(sess, engine, shift_hours_lookup) -> None:
