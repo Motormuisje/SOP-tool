@@ -71,12 +71,15 @@ def replay_pending_edits(
                 aux_column=aux,
                 push_undo=False,
             )
-            try:
-                payload = response.get_json(silent=True) if hasattr(response, 'get_json') else None
-                if isinstance(payload, dict) and not payload.get('success', True):
-                    print(f'[replay_pending_edits] skipped "{key}": {payload}')
-            except Exception:
-                pass
+            # apply_volume_change always returns a Response object (error
+            # paths included), so every non-success outcome can be logged.
+            # A payload without success=True (e.g. {'error': ...} from a
+            # 403/404) means the edit was NOT applied — say so instead of
+            # dropping it silently, but keep replaying the remaining edits.
+            payload = response.get_json(silent=True) if hasattr(response, 'get_json') else None
+            if not isinstance(payload, dict) or payload.get('success') is not True:
+                detail = payload if payload is not None else getattr(response, 'status_code', response)
+                print(f'[replay_pending_edits] skipped "{key}": {detail}')
         except Exception as exc:
             print(f'[replay_pending_edits] failed "{key}": {exc}')
     if machine_overrides_present and apply_machine_overrides(engine, sess.get('machine_overrides') or {}):

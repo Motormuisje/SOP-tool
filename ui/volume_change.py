@@ -365,6 +365,30 @@ def restore_manual_edits_from_pending(current_engine, sess):
             continue
         target_row.manual_edits[period] = {'original': original, 'new': new_value}
 
+def _set_or_pop_capacity_override(sess, line_type, material_number, period, new_value, is_revert):
+    """Write a capacity override, or remove it when the edit is a revert.
+
+    On revert the entry must be POPPED (not written back with the original
+    value): a leftover override pins the cell against upstream cascades on the
+    live engine, while a restart replays from pending_edits (which no longer
+    contains the edit) and leaves it unpinned — live and replay would diverge.
+    Empty inner dicts are pruned so the store stays clean.
+    """
+    capacity_overrides = sess.setdefault('capacity_overrides', {})
+    if is_revert:
+        lt_map = capacity_overrides.get(line_type)
+        if lt_map is not None:
+            mat_map = lt_map.get(material_number)
+            if mat_map is not None:
+                mat_map.pop(period, None)
+                if not mat_map:
+                    del lt_map[material_number]
+            if not lt_map:
+                del capacity_overrides[line_type]
+    else:
+        capacity_overrides.setdefault(line_type, {}).setdefault(material_number, {})[period] = float(new_value)
+
+
 def apply_volume_change(sess, current_engine, line_type, material_number, period, new_value,
                           aux_column='',
                           push_undo=True):
@@ -373,7 +397,9 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
     Used by /api/update_volume (via direct code), /api/undo, /api/redo.
     """
     if line_type not in EDITABLE_LINE_TYPES:
-        return jsonify({'error': f'Line type "{line_type}" is not editable'}), 403
+        resp = jsonify({'error': f'Line type "{line_type}" is not editable'})
+        resp.status_code = 403
+        return resp
     rows = current_engine.results.get(line_type, [])
     material_number = str(material_number)
     aux_column = str(aux_column or '').strip()
@@ -393,7 +419,9 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             detail += f' / aux "{aux_column}"'
         if available_aux:
             detail += f'. Available aux: {", ".join(available_aux[:6])}'
-        return jsonify({'error': detail}), 404
+        resp = jsonify({'error': detail})
+        resp.status_code = 404
+        return resp
     ensure_reset_baseline(sess, current_engine, SHIFT_HOURS_LOOKUP_FALLBACK)
 
     # Enforce ceiling rounding for L06 line types so the stored value always
@@ -435,9 +463,15 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         target_row.manual_edits[period] = {'original': old_value, 'new': new_value}
     else:
         target_row.manual_edits[period]['new'] = new_value
-    # If restored to original, remove the edit tracking entry
+    # If restored to original, remove the edit tracking entry.
+    # Tolerance-based comparison (matching update_value_aux in ui/routes/edits.py)
+    # so float round-trips still count as a revert. This single decision drives
+    # manual_edits removal, pending_edits removal AND the override-store
+    # pop below — all three must stay consistent, or live state diverges from
+    # what replay_pending_edits rebuilds after a restart.
     original_val = target_row.manual_edits[period].get('original', old_value)
-    if new_value == original_val:
+    is_revert = abs(new_value - original_val) < 1e-9
+    if is_revert:
         target_row.manual_edits.pop(period, None)
 
     if is_l4_starting_stock:
@@ -449,7 +483,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
     # without needing the frontend's separate /api/sessions/edits/persist call.
     _edit_key = pending_edit_key(line_type, material_number, aux_column, period)
     _pending = sess.setdefault('pending_edits', {})
-    if new_value == original_val:
+    if is_revert:
         _pending.pop(_edit_key, None)
     else:
         # Preserve the original baseline from any existing entry so repeated edits
@@ -608,10 +642,19 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
     elif line_type == LineType.INVENTORY.value:
         # L4: only the starting stock is editable. Period values are derived.
         if period != 'starting_stock':
-            return jsonify({
+            resp = jsonify({
                 'error': "Only starting stock is editable for L4 — period must be 'starting_stock'"
-            }), 403
-        sess.setdefault('inventory_overrides', {})[material_number] = float(new_value)
+            })
+            resp.status_code = 403
+            return resp
+        if is_revert:
+            # Pop instead of writing the original back: a leftover override
+            # would keep the starting stock pinned on the live engine while a
+            # restart (replaying from pending_edits) leaves it unpinned.
+            sess.get('inventory_overrides', {}).pop(material_number, None)
+        else:
+            sess.setdefault('inventory_overrides', {})[material_number] = float(new_value)
+        # The value did just change (back); downstream lines must recompute.
         recalc_material_subtree(
             current_engine,
             material_number,
@@ -625,8 +668,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         LineType.AVAILABLE_CAPACITY.value,
         LineType.SHIFT_AVAILABILITY.value,
     ):
-        capacity_overrides = sess.setdefault('capacity_overrides', {})
-        capacity_overrides.setdefault(line_type, {}).setdefault(material_number, {})[period] = float(new_value)
+        _set_or_pop_capacity_override(sess, line_type, material_number, period, new_value, is_revert)
         recalculate_capacity_and_values(current_engine, sess)
 
     elif line_type == LineType.FTE_REQUIREMENTS.value:
@@ -634,8 +676,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         # CapacityEngine._apply_user_overrides re-applies the override on every
         # recalc, so re-running capacity here is safe and ensures all paths funnel
         # through the same recalc — slightly more work, but consistent.
-        capacity_overrides = sess.setdefault('capacity_overrides', {})
-        capacity_overrides.setdefault(line_type, {}).setdefault(material_number, {})[period] = float(new_value)
+        _set_or_pop_capacity_override(sess, line_type, material_number, period, new_value, is_revert)
         recalculate_capacity_and_values(current_engine, sess)
 
     else:

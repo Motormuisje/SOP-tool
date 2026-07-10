@@ -216,6 +216,40 @@ def test_replay_pending_edits_logs_failed_and_unsuccessful_edits(capsys):
     assert 'skipped "01. Demand forecast||MAT-2||||2025-12"' in captured.out
 
 
+def test_replay_pending_edits_logs_skipped_for_missing_material_and_applies_rest(capsys):
+    """An error payload (no 'success' key, e.g. a 404 for a nonexistent
+    material) must be logged as skipped, and remaining edits must still apply.
+    Regression: error responses used to be dropped without any log line."""
+    sess = {
+        "pending_edits": {
+            "01. Demand forecast||MISSING||||2025-12": {"original": 1.0, "new_value": 5.0},
+            "01. Demand forecast||MAT-1||||2025-12": {"original": 2.0, "new_value": 7.0},
+        },
+    }
+    applied = []
+
+    def apply_volume_change_fn(sess_arg, engine_arg, lt, mat, period, val, aux_column="", push_undo=True):
+        if mat == "MISSING":
+            # apply_volume_change returns a Response whose payload has only
+            # an 'error' key (no 'success') when the row does not exist.
+            return FakeResponse({"error": "Row not found for 01. Demand forecast / MISSING"})
+        applied.append((mat, val))
+        return FakeResponse({"success": True})
+
+    replay.replay_pending_edits(
+        sess,
+        SimpleNamespace(),
+        apply_volume_change_fn,
+        lambda e, overrides: False,
+        lambda e, s: None,
+    )
+
+    captured = capsys.readouterr()
+    assert 'skipped "01. Demand forecast||MISSING||||2025-12"' in captured.out
+    assert "Row not found" in captured.out
+    assert applied == [("MAT-1", 7.0)]
+
+
 def test_replay_pending_edits_recalculates_values_after_volume_edits_with_aux_overrides(monkeypatch):
     calls = []
 

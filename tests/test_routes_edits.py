@@ -743,6 +743,61 @@ def test_import_edits_propagates_apply_error(edits_mock_app):
 
 
 @pytest.mark.no_fixture
+def test_import_edits_non_editable_line_type_returns_403_not_500():
+    """The REAL apply_volume_change error path must surface as a clean 4xx.
+
+    Regression: error sites used to return (jsonify(...), status) tuples, so
+    import_edits crashed on resp.status_code and the whole import 500'd.
+    """
+    from ui.routes.edits import create_edits_blueprint
+
+    engine = SimpleNamespace(results={}, value_results={}, data=None)
+    sess = {"id": "import-403", "engine": engine, "pending_edits": {}}
+
+    def get_active():
+        return sess, engine
+
+    def crash_callback(*args, **kwargs):
+        raise RuntimeError("unexpected callback called in import 403 test")
+
+    flask_app = Flask(__name__)
+    flask_app.config["TESTING"] = True
+    flask_app.register_blueprint(create_edits_blueprint(
+        get_active,
+        set(),
+        {},
+        apply_volume_change,  # the real one from ui.volume_change
+        crash_callback,
+        crash_callback,
+        crash_callback,
+        crash_callback,
+        crash_callback,
+        crash_callback,
+        crash_callback,
+        crash_callback,
+    ))
+
+    response = flask_app.test_client().post(
+        "/api/edits/import",
+        json={
+            "edits": [{
+                "line_type": LineType.DEPENDENT_DEMAND.value,
+                "material_number": "MAT-1",
+                "period": "2025-12",
+                "new": 5.0,
+                "aux_column": "",
+            }],
+            "value_aux_edits": [],
+        },
+    )
+
+    assert response.status_code == 403
+    payload = response.get_json()
+    assert "error" in payload
+    assert "not editable" in payload["error"]
+
+
+@pytest.mark.no_fixture
 def test_reset_edits_no_engine_returns_400(edits_mock_app):
     edits_mock_app.make_session(engine=None)
 
