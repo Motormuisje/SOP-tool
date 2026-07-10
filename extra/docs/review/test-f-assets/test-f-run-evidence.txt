@@ -1,0 +1,12 @@
+Test F UI evidence run
+Fixture=C:\Users\stijn\Desktop\SOP_GOLDEN_FIXTURE.xlsm
+Base URL=http://127.0.0.1:61662
+PAP payload={'pap': {}}
+Session1=15f2426b-30ca-4997-a92b-edb535048443
+Session2 snapshot/reset=e5e63d17-89d1-4ecd-945a-ee7ca7e8b5af
+Calculated rows=1973
+Canvas chart 1 nonblank={'present': True, 'nonblank': True, 'colored': 29528, 'width': 434, 'height': 300}
+Canvas chart 2 nonblank={'present': True, 'nonblank': True, 'colored': 44169, 'width': 434, 'height': 300}
+Session1 pending before snapshot={'04. Inventory||600003806||||starting_stock': {'new_value': 130.0, 'original': 30.0}, '07. Capacity utilization||ZZZ_PACKGROUP01||||2025-12': {'new_value': 700.0, 'original': 598.6199751346303}, '09. Available capacity||Z_MACH01||||2025-12': {'new_value': 0.75, 'original': 1.0}, '11. Shift availability||ZZZ_PACKGROUP01||||2025-12': {'new_value': 400.0, 'original': 520.0}, '12. FTE requirements||ZZZ_PACKGROUP01||||2025-12': {'new_value': 6.5, 'original': 5.630026809651475}}
+Session2 pending after reset={}
+Session1 pending after return={'04. Inventory||600003806||||starting_stock': {'new_value': 130.0, 'original': 30.0}, '07. Capacity utilization||ZZZ_PACKGROUP01||||2025-12': {'new_value': 700.0, 'original': 598.6199751346303}, '09. Available capacity||Z_MACH01||||2025-12': {'new_value': 0.75, 'original': 1.0}, '11. Shift availability||ZZZ_PACKGROUP01||||2025-12': {'new_value': 400.0, 'original': 520.0}, '12. FTE requirements||ZZZ_PACKGROUP01||||2025-12': {'new_value': 6.5, 'original': 5.630026809651475}}

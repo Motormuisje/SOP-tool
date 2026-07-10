@@ -1,0 +1,29 @@
+Test F per-step screenshot evidence run
+Fixture=C:\Users\stijn\Desktop\SOP_GOLDEN_FIXTURE.xlsm
+Base URL=http://127.0.0.1:59532
+PAP payload={'pap': {}}
+Session1=d0bacc82-6afd-4dae-abcb-18e9d06adca3
+Session2 snapshot/reset=87aac0a4-b805-49cc-b2c1-ab1c5d8102b4
+Calculated rows=1973
+Captured screenshots:
+- step-1-l4 planning_row: steps/01-step-1-l4-planning-row.png
+- step-1-l4 dashboard: steps/02-step-1-l4-dashboard.png
+- step-2-l7 planning_row: steps/03-step-2-l7-planning-row.png
+- step-2-l7 machine_charts: steps/04-step-2-l7-machine-charts.png
+- step-2-l7 machine_heatmap: steps/05-step-2-l7-machine-heatmap.png
+- step-3-l9 planning_row: steps/06-step-3-l9-planning-row.png
+- step-3-l9 machine_charts: steps/07-step-3-l9-machine-charts.png
+- step-3-l9 machine_heatmap: steps/08-step-3-l9-machine-heatmap.png
+- step-4-l11 planning_row: steps/09-step-4-l11-planning-row.png
+- step-4-l11 machine_charts: steps/10-step-4-l11-machine-charts.png
+- step-4-l11 machine_heatmap: steps/11-step-4-l11-machine-heatmap.png
+- step-5-l12 planning_row: steps/12-step-5-l12-planning-row.png
+- step-5-l12 values_row: steps/13-step-5-l12-values-row.png
+- step-5-l12 dashboard: steps/14-step-5-l12-dashboard.png
+Canvas checks:
+- {'step': 'step-2-l7', 'chart1': {'present': True, 'nonblank': True, 'colored': 29530, 'width': 434, 'height': 300}, 'chart2': {'present': True, 'nonblank': True, 'colored': 43994, 'width': 434, 'height': 300}}
+- {'step': 'step-3-l9', 'chart1': {'present': True, 'nonblank': True, 'colored': 29529, 'width': 434, 'height': 300}, 'chart2': {'present': True, 'nonblank': True, 'colored': 43989, 'width': 434, 'height': 300}}
+- {'step': 'step-4-l11', 'chart1': {'present': True, 'nonblank': True, 'colored': 29524, 'width': 434, 'height': 300}, 'chart2': {'present': True, 'nonblank': True, 'colored': 43998, 'width': 434, 'height': 300}}
+Session1 pending before snapshot={'04. Inventory||600003806||||starting_stock': {'new_value': 130.0, 'original': 30.0}, '07. Capacity utilization||ZZZ_PACKGROUP01||||2025-12': {'new_value': 700.0, 'original': 598.6199751346303}, '09. Available capacity||Z_MACH01||||2025-12': {'new_value': 0.75, 'original': 1.0}, '11. Shift availability||ZZZ_PACKGROUP01||||2025-12': {'new_value': 400.0, 'original': 520.0}, '12. FTE requirements||ZZZ_PACKGROUP01||||2025-12': {'new_value': 6.5, 'original': 5.630026809651475}}
+Session2 pending after reset={}
+Session1 pending after return={'04. Inventory||600003806||||starting_stock': {'new_value': 130.0, 'original': 30.0}, '07. Capacity utilization||ZZZ_PACKGROUP01||||2025-12': {'new_value': 700.0, 'original': 598.6199751346303}, '09. Available capacity||Z_MACH01||||2025-12': {'new_value': 0.75, 'original': 1.0}, '11. Shift availability||ZZZ_PACKGROUP01||||2025-12': {'new_value': 400.0, 'original': 520.0}, '12. FTE requirements||ZZZ_PACKGROUP01||||2025-12': {'new_value': 6.5, 'original': 5.630026809651475}}

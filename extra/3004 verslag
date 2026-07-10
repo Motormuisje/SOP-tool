@@ -1,0 +1,7 @@
+Testdekking routes (ochtend): De unit-testdekking van workflow.py en edit_state.py is naar 100% gebracht, en de bestaande test_routes_machines.py is uitgebreid. Daarmee zijn alle Flask-routes afgedekt door geïsoleerde blueprint-tests die geen database of echte engine nodig hebben.
+
+Machines-tab performance sprint: de sprint heeft de machines-tab merkbaar sneller gemaakt door de zware routing-berekening (O(materialen × routings)) één keer te cachen in rebuild_machine_output_caches() na elke Calculate, in plaats van bij elke GET-request opnieuw. Daarnaast wordt het dashboard niet meer onnodig opnieuw gerenderd bij een machine-edit, en refresht de tabel nu automatisch na een edit/undo/redo/reset zonder dat je van tab hoeft te wisselen.
+
+Code review + fix (middag): Bij de review van de sprint-commit bleek dat resetMachineEdits als enige functie de _machineOpInFlight-guard miste — waardoor snel dubbelklikken op Reset alsnog twee gelijktijdige requests kon sturen. Dat is direct gefixed. Tot slot zijn twee Playwright-browsertests toegevoegd die de race-condition bij reset en de automatische tabelrefresh na een edit écht in de browser verifiëren.
+
+De toegevoegde waarde van vandaag: de machines-tab is aantoonbaar sneller, de bugfix voor gelijktijdige requests is gedekt door zowel review als tests, en het testfundament voor alle routes is volledig op orde.
