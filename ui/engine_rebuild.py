@@ -22,6 +22,8 @@ def get_config_overrides(global_config: dict) -> dict:
     fc_defaults = global_config.get('forecast_defaults')
     if fc_defaults and (fc_defaults.get('default') not in (None, '') or fc_defaults.get('per_material')):
         ov['forecast_defaults'] = fc_defaults
+    if global_config.get('added_products'):
+        ov['added_products'] = global_config['added_products']
     return ov
 
 
@@ -70,6 +72,19 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
         ov['forecast_defaults'] = fd
     else:
         ov.pop('forecast_defaults', None)
+
+    # Added products (Fase 3) follow the same per-session rule as forecast
+    # defaults: the session dict is authoritative, a live engine's own
+    # config_overrides is the fallback, and a session without products must
+    # never inherit them from the shared global config on rebuild.
+    ap = sess.get('added_products')
+    if ap is None:
+        engine = sess.get('engine')
+        ap = (getattr(engine, 'config_overrides', None) or {}).get('added_products')
+    if ap:
+        ov['added_products'] = ap
+    else:
+        ov.pop('added_products', None)
     return ov
 
 

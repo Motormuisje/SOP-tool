@@ -70,6 +70,11 @@ def sync_global_config_from_engine(engine, global_config, format_pap) -> None:
     # so a stale value from the previous session cannot linger.
     fd = (getattr(engine, 'config_overrides', None) or {}).get('forecast_defaults')
     global_config['forecast_defaults'] = fd or {}
+    # Added products (Fase 3) are per-session; mirror the ACTIVE session's
+    # list into global config so fresh /api/calculate runs keep them and a
+    # stale list from the previous session cannot linger.
+    ap = (getattr(engine, 'config_overrides', None) or {}).get('added_products')
+    global_config['added_products'] = list(ap or [])
 
 
 def resolve_folder_paths(global_config: dict, default_folders: dict) -> tuple[Path, Path, Path]:

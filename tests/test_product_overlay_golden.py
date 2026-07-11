@@ -178,3 +178,68 @@ def test_dependent_demand_child_direction(integrated_engine, integration_partner
     reqs = [r for r in _rows(integrated_engine, LineType.DEPENDENT_REQUIREMENTS, p)
             if r.aux_column == MN]
     assert reqs, "existing parent's L08 does not list the added component"
+
+
+# ------------------------------------------------------------------- TP3-04
+
+def test_restart_rebuild_and_replay_restore_product_and_edit(
+        golden_fixture_path, tmp_path):
+    """Restart simulation: session persisted to disk, engine rebuilt from the
+    loaded dict, pending edit on the ADDED product replayed. Live state and
+    post-restart replay must agree (replay is the source of truth)."""
+    from flask import Flask
+
+    from ui.engine_rebuild import build_clean_engine_for_session
+    from ui.replay import replay_pending_edits
+    from ui.session_store import load_sessions_from_disk, save_sessions_to_disk
+    from ui.volume_change import apply_volume_change
+
+    product = {"material_number": MN, "name": "Restartproduct",
+               "product_type": "other", "flat_volume": 100.0, "safety_stock": 0.0}
+    sess = {
+        "id": "s-restart", "file_path": str(golden_fixture_path),
+        "extract_files": None,
+        "parameters": {"planning_month": "2025-12", "months_actuals": 11,
+                       "months_forecast": 12},
+        "added_products": [product],
+        "pending_edits": {}, "value_aux_overrides": {}, "machine_overrides": {},
+        "inventory_overrides": {}, "capacity_overrides": {},
+        "undo_stack": [], "redo_stack": [], "engine": None,
+    }
+
+    app = Flask(__name__)
+    with contextlib.redirect_stdout(io.StringIO()):
+        engine1 = build_clean_engine_for_session(sess, {})
+    assert engine1 is not None
+    l01 = _rows(engine1, LineType.DEMAND_FORECAST, MN)
+    assert l01, "added product missing after session rebuild"
+    period = engine1.data.periods[2]
+    aux = str(l01[0].aux_column or "")
+
+    with app.app_context(), contextlib.redirect_stdout(io.StringIO()):
+        resp = apply_volume_change(
+            sess, engine1, LineType.DEMAND_FORECAST.value, MN, period, 999.0,
+            aux_column=aux)
+    assert (resp.get_json() or {}).get("success") is True, resp.get_json()
+    assert sess["pending_edits"], "edit was not recorded as pending"
+    live_l01 = _rows(engine1, LineType.DEMAND_FORECAST, MN)[0].values[period]
+    assert live_l01 == pytest.approx(999.0)
+
+    # --- restart: persist, reload, rebuild, replay ---
+    sess["engine"] = engine1
+    store = tmp_path / "sessions_store.json"
+    save_sessions_to_disk({"s-restart": sess}, "s-restart", store, lambda s, e: {})
+    loaded, _ = load_sessions_from_disk(store)
+    sess2 = loaded["s-restart"]
+    assert sess2["added_products"] == [product]
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        engine2 = build_clean_engine_for_session(sess2, {})
+        with app.app_context():
+            replay_pending_edits(
+                sess2, engine2, apply_volume_change,
+                lambda e, o: False, lambda e, s: None)
+
+    replay_l01 = _rows(engine2, LineType.DEMAND_FORECAST, MN)
+    assert replay_l01, "added product missing after restart rebuild"
+    assert replay_l01[0].values[period] == pytest.approx(live_l01)

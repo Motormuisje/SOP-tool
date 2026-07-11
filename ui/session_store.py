@@ -82,6 +82,13 @@ def save_sessions_to_disk(
                 if engine is not None
                 else (sess.get('forecast_defaults') or {})
             ),
+            # Added products (Fase 3): per-session config, same authority
+            # rule as forecast_defaults (live engine wins, else session).
+            'added_products': (
+                ((getattr(engine, 'config_overrides', None) or {}).get('added_products') or [])
+                if engine is not None
+                else (sess.get('added_products') or [])
+            ),
             # Annotations (Fase 2.1): pure metadata, JSON-safe.
             'comments': sess.get('comments', {}),
         }
@@ -168,6 +175,8 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 # None for store files written before this field existed.
                 'purchased_and_produced': data.get('purchased_and_produced'),
                 'forecast_defaults': data.get('forecast_defaults') or {},
+                # [] for store files written before this field existed.
+                'added_products': data.get('added_products') or [],
                 'comments': data.get('comments') or {},
                 'undo_stack': [],
                 'redo_stack': [],
