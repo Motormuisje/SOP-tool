@@ -43,6 +43,7 @@ from ui.routes.edits import create_edits_blueprint
 from ui.routes.exports import create_exports_blueprint
 from ui.routes.machines import create_machines_blueprint
 from ui.routes.pap import create_pap_blueprint
+from ui.routes.products import create_products_blueprint
 from ui.routes.read import create_read_blueprint
 from ui.routes.scenarios import create_scenarios_blueprint
 from ui.routes.sessions import create_sessions_blueprint
@@ -330,6 +331,17 @@ app.register_blueprint(create_pap_blueprint(
     lambda engine: _finish_pap_recalc(engine),
     _save_global_config,
     _moq_warnings_payload,
+))
+app.register_blueprint(create_products_blueprint(
+    lambda: _get_active(),
+    _global_config,
+    _save_global_config,
+    _save_sessions_to_disk,
+    lambda sess, params=None: build_clean_engine_for_session(sess, _global_config, params),
+    _install_clean_engine_baseline,
+    lambda sess, engine: _replay_pending_edits(sess, engine),
+    _moq_warnings_payload,
+    _value_results_payload,
 ))
 app.register_blueprint(create_sessions_blueprint(
     sessions,

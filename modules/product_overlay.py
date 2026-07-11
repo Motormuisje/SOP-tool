@@ -123,12 +123,17 @@ def _known_material_numbers(data) -> Set[str]:
     return known
 
 
-def validate_added_product(product: dict, data=None, other_added: Iterable[dict] = ()) -> dict:
+def validate_added_product(product: dict, data=None, other_added: Iterable[dict] = (),
+                           allow_numbers: Iterable[str] = ()) -> dict:
     """Normalize and validate one AddedProduct dict.
 
     ``data`` is a loaded DataLoader (skipped-checks mode when None, for pure
     shape tests). ``other_added`` are the OTHER overlay products (excluding
     this one), whose material numbers are valid BOM references.
+    ``allow_numbers`` are numbers exempt from the workbook-collision check:
+    routes validate against a LIVE engine whose data already contains the
+    current overlay, so an edit of an existing added product must not be
+    rejected as a collision with itself.
     Returns the sanitized dict; raises ValueError (Dutch) on invalid input.
     """
     if not isinstance(product, dict):
@@ -155,7 +160,7 @@ def validate_added_product(product: dict, data=None, other_added: Iterable[dict]
     known: Set[str] = set()
     if data is not None:
         known = _known_material_numbers(data)
-        if mn in known:
+        if mn in known and mn not in set(allow_numbers):
             raise ValueError(
                 f'Materiaalnummer {mn} bestaat al in het bronbestand. '
                 f'Kies een eigen nummerreeks (bijv. 9xxxxxxxx).')
