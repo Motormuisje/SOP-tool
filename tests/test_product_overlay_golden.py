@@ -204,10 +204,12 @@ def matrix_engine(golden_fixture_path, integration_partners):
     return _run(golden_fixture_path, [
         {"material_number": M_PURCHASED, "name": "Matrix inkoop",
          "product_type": "raw", "sourcing": "purchased",
-         "flat_volume": 100.0, "safety_stock": 10.0, "moq": 30.0, "lead_time": 2},
+         "flat_volume": 100.0, "safety_stock": 10.0, "moq": 30.0, "lead_time": 2,
+         "sales_price": 12.0, "raw_material_cost": 3.0},
         {"material_number": M_PRODUCED, "name": "Matrix productie",
          "product_type": "bulk", "sourcing": "produced",
-         "flat_volume": 80.0, "bom_as_parent": bom, "routing": routing},
+         "flat_volume": 80.0, "bom_as_parent": bom, "routing": routing,
+         "sales_price": 15.0},
         {"material_number": M_LEGACY_MOQ, "name": "Matrix legacy moq",
          "product_type": "bulk",  # geen sourcing: legacy pad
          "flat_volume": 60.0, "moq": 25.0, "bom_as_parent": bom, "routing": routing},
@@ -217,11 +219,12 @@ def matrix_engine(golden_fixture_path, integration_partners):
          "product_type": "bulk", "flat_volume": 30.0, "bom_as_parent": bom},
         {"material_number": M_MIX, "name": "Matrix mix",
          "product_type": "bulk", "sourcing": "mix", "pap_fraction": 0.6,
-         "flat_volume": 50.0, "moq": 10.0, "bom_as_parent": bom, "routing": routing},
+         "flat_volume": 50.0, "moq": 10.0, "bom_as_parent": bom, "routing": routing,
+         "sales_price": 20.0, "raw_material_cost": 5.0},
         {"material_number": M_VOLUMES, "name": "Matrix per-periode",
          "product_type": "other", "sourcing": "purchased",
          "volumes": {}, "flat_volume": None, "starting_stock": 500.0,
-         "safety_stock": 5.0},
+         "safety_stock": 5.0, "default_inventory_value": 2.5},
     ])
 
 
@@ -301,6 +304,82 @@ def test_matrix_starting_stock_covers_demandless_product(matrix_engine):
     # No volumes anywhere: L01 row absent, demand zero, inventory stays flat.
     assert not _rows(matrix_engine, LineType.DEMAND_FORECAST, M_VOLUMES)
     assert all(abs(v - 500.0) < 1e-6 for v in inv[0].values.values())
+
+
+# ------------------------------------------------- financial data end-to-end
+# Financial fields of added products must land EXACTLY in the value overlay:
+# revenue = sales_price × L01 volume, raw-material cost = cost × total demand
+# (× (1 − productiefractie) for mix), purchase-receipt value = cost × receipt,
+# inventory value = default_inventory_value × quantity, and the consolidated
+# turnover rises by precisely the products' combined revenue.
+
+def _value_rows(engine, line_type, mat):
+    return [r for r in engine.value_results.get(line_type.value, [])
+            if r.material_number == mat]
+
+
+@pytest.mark.parametrize("mat, price, volume", [
+    (M_PURCHASED, 12.0, 100.0),
+    (M_PRODUCED, 15.0, 80.0),
+    (M_MIX, 20.0, 50.0),
+])
+def test_matrix_revenue_is_price_times_volume(matrix_engine, mat, price, volume):
+    rows = _value_rows(matrix_engine, LineType.DEMAND_FORECAST, mat)
+    assert len(rows) == 1, f"{mat}: expected one value L01 row"
+    assert float(rows[0].aux_column) == pytest.approx(price)  # unit price shown
+    for period, v in rows[0].values.items():
+        assert v == pytest.approx(price * volume), (mat, period)
+
+
+def test_matrix_product_without_price_yields_zero_revenue(matrix_engine):
+    rows = _value_rows(matrix_engine, LineType.DEMAND_FORECAST, M_ROUTING_ONLY)
+    assert rows and all(v == 0 for v in rows[0].values.values())
+
+
+def test_matrix_raw_material_cost_purchased_and_mix(matrix_engine):
+    # Purchased: total demand 100 × cost 3 (no PAP factor).
+    rows = _value_rows(matrix_engine, LineType.TOTAL_DEMAND, M_PURCHASED)
+    assert len(rows) == 1
+    for v in rows[0].values.values():
+        assert v == pytest.approx(3.0 * 100.0)
+    # Mix: × (1 − productiefractie 0.6) — only the purchased share carries cost.
+    rows = _value_rows(matrix_engine, LineType.TOTAL_DEMAND, M_MIX)
+    assert len(rows) == 1
+    for v in rows[0].values.values():
+        assert v == pytest.approx(5.0 * 50.0 * 0.4)
+    # Produced: no purchase plan -> no raw-material cost row at all.
+    assert not _value_rows(matrix_engine, LineType.TOTAL_DEMAND, M_PRODUCED)
+
+
+def test_matrix_purchase_receipt_value_tracks_planned_receipts(matrix_engine):
+    plan_row = _rows(matrix_engine, LineType.PURCHASE_RECEIPT, M_PURCHASED)[0]
+    value_row = _value_rows(matrix_engine, LineType.PURCHASE_RECEIPT, M_PURCHASED)[0]
+    assert sum(plan_row.values.values()) > 0
+    for period, qty in plan_row.values.items():
+        assert value_row.values[period] == pytest.approx(qty * 3.0), period
+
+
+def test_matrix_inventory_value_uses_default_inventory_value(matrix_engine):
+    value_row = _value_rows(matrix_engine, LineType.INVENTORY, M_VOLUMES)[0]
+    assert value_row.starting_stock == pytest.approx(500.0 * 2.5)
+    for period, v in value_row.values.items():
+        assert v == pytest.approx(500.0 * 2.5), period  # voorraad blijft vlak
+
+
+def test_matrix_consolidated_turnover_rises_by_product_revenue(
+        planning_engine_result, matrix_engine):
+    def _turnover(engine):
+        rows = [r for r in engine.value_results.get(LineType.CONSOLIDATION.value, [])
+                if r.material_number == "ZZZZZZ_TURNOVER"]
+        assert len(rows) == 1
+        return rows[0].values
+
+    base, overlay = _turnover(planning_engine_result), _turnover(matrix_engine)
+    # Existing materials' L01 is untouched by the overlay, so the delta is
+    # exactly the added products' revenue: 100×12 + 80×15 + 50×20 per period.
+    expected_delta = 100.0 * 12.0 + 80.0 * 15.0 + 50.0 * 20.0
+    for period, base_val in base.items():
+        assert overlay[period] - base_val == pytest.approx(expected_delta), period
 
 
 # ------------------------------------------------------------------- TP3-04

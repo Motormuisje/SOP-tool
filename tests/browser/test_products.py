@@ -126,6 +126,7 @@ def test_add_produced_product_end_to_end(browser_page):
         page.fill("#prodNumber", mn)
         page.fill("#prodName", "Browsertest geproduceerd")
         page.fill("#prodFlatVolume", "90")
+        page.fill("#prodSalesPrice", "10")
         page.select_option("#prodSourcing", "produced")
         page.click("#prodSectionBomParent button")
         page.fill("#prodBomParentTbody .prod-link-ref", component)
@@ -158,6 +159,21 @@ def test_add_produced_product_end_to_end(browser_page):
             mn,
         )
         assert branch["production"] == 1 and branch["purchase"] == 0, branch
+
+        # Financial flow into the UI: the value overlay carries the revenue
+        # (sales price 10 × volume 90 = 900 per period).
+        revenue = page.evaluate(
+            """(mn) => {
+                const rows = (state.valueResults
+                    && state.valueResults['01. Demand forecast']) || [];
+                const row = rows.find(r => String(r.material_number) === mn);
+                if (!row) return null;
+                return Object.values(row.values);
+            }""",
+            mn,
+        )
+        assert revenue, "added product missing from value overlay in the UI"
+        assert all(abs(v - 900.0) < 1e-6 for v in revenue), revenue
         assert page.js_errors == []
     finally:
         try:
