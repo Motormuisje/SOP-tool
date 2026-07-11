@@ -322,11 +322,34 @@ naar instantie-snapshots, meegeleverd in het switch-payload; géén global
 config, baseline, replay of recalc (pure view-metadata). Export en MoM zijn
 in v1 bewust niet gescoopt.
 
-### Nog open uit het oorspronkelijke fase-3-verhaal
+### Master-config vervanging — gradatie (a) GEBOUWD (2026-07-11)
 
-**Integratiegradatie (vraag 5, a/b/c)** — master-sheet-vervanging/koppeling
-met het bronsysteem is NIET meegebouwd; daarvoor blijft de werksessie met
-Sibelco nodig (advies: gradatie (a), zie ontwerpnota §5).
+Klantvraag 5 is beantwoord met gradatie (a): **de app is eigenaar van de
+masterdata**. Kernontwerp: de store bewaart POST-PARSE data — de import
+draait de bestaande, VBA-getrouwe xlsm-loader precies één keer en
+serialiseert het resultaat; het store-geladen pad deserialiseert alleen.
+Er is dus géén tweede parser en de pariteit is exact getest (golden
+round-trip: elke masterstructuur identiek aan de xlsm-loader).
+
+- **Eenmalige import** (Config-tab "Masterdata (in app)"): parse master-.xlsm
+  → `master_store.json` met versieteller. Re-import over bestaande data
+  vraagt bevestiging met diff (de app is bron van waarheid).
+- **Werkboek-vrij rekenen**: de multi-upload gebruikt automatisch de
+  app-masterdata; de maandelijkse run heeft alleen nog de 4 SAP-extracts
+  nodig. Rebuilds/herstarts halen altijd de láátste storeversie op.
+- **Beheer-UI**: per dataset bekijken/bewerken (materialen, machines/OEE,
+  veiligheidsvoorraad, inkoop lead-time/MOQ, prijzen, kosten, valuatie);
+  elke wijziging wordt gevalideerd door hydratie (geen tweede regelset),
+  bumpt de versie en geldt bij de eerstvolgende berekening.
+- **Compatibiliteit**: de single-file-flow (één complete .xlsm) is
+  regel-voor-regel onaangeroerd — golden parity blijft het vangnet. Het
+  legacy-masterbestand blijft werken als terugvaloptie én als importbron.
+
+**Volledig Excel-vrij?** Masterdata: ja. De maandelijkse transactiedata
+(forecast, voorraad, BOM/routing-extracts) blijven SAP-exports; die worden
+pas Excel-vrij met een directe SAP-koppeling (gradatie (c)) — dat vergt
+API/DB-toegang van Sibelco plus een security review en staat als aparte
+vervolgstap open. De koppeling hoeft dan alleen nog de extracts te vervangen.
 
 ---
 

@@ -119,3 +119,30 @@ def test_workbook_free_upload_and_calculate(flask_test_app, store_env, tmp_path)
     assert engine is not None
     assert engine.data.periods == ['2026-01', '2026-02', '2026-03']
     assert 'M1' in engine.data.materials and 'PBA01' in engine.data.machines
+
+
+def test_workbook_free_session_rebuild_uses_latest_store(store_env, tmp_path):
+    """Herstart-/rebuild-pad: build_clean_engine_for_session bouwt een sessie
+    zonder file_path vanuit de LAATSTE master-store; zonder store faalt hij
+    netjes (None) in plaats van te crashen."""
+    from ui.engine_rebuild import build_clean_engine_for_session
+
+    extracts = write_extract_files(tmp_path)
+    sess = {
+        'id': 'wf', 'file_path': '', 'extract_files': extracts,
+        'parameters': {'planning_month': None, 'months_actuals': 1,
+                       'months_forecast': 3},
+        'pending_edits': {}, 'value_aux_overrides': {}, 'machine_overrides': {},
+        'inventory_overrides': {}, 'capacity_overrides': {}, 'engine': None,
+    }
+    # Zonder store: nette weigering.
+    assert build_clean_engine_for_session(sess, {}) is None
+
+    _seed_store(store_env)
+    import contextlib
+    import io as _io
+    with contextlib.redirect_stdout(_io.StringIO()):
+        engine = build_clean_engine_for_session(sess, {})
+    assert engine is not None
+    assert engine.data.periods == ['2026-01', '2026-02', '2026-03']
+    assert 'M1' in engine.data.materials

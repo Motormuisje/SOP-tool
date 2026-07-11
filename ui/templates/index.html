@@ -1371,10 +1371,27 @@
         <div id="config-tab" class="tab-content hidden">
           <div class="max-w-2xl mx-auto space-y-6">
 
-            <!-- Master Data File -->
+            <!-- Masterdata in de app (master-config vervanging) -->
+            <div class="card rounded-xl p-6">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="flex items-center font-semibold text-slate-200">
+                  Masterdata (in app)
+                  <span class="cfg-info">i<span class="cfg-tooltip">De app beheert de masterdata (materialen, machines/OEE, FTE, veiligheidsvoorraad, inkoop, kosten, valuatie). Eenmalig importeren uit een master-.xlsm; daarna heeft de maandelijkse berekening alleen de 4 SAP-extracts nodig en bewerk je masterdata hier. Wijzigingen gelden bij de eerstvolgende berekening.</span></span>
+                </h3>
+                <label class="btn-primary px-3 py-1 rounded text-xs font-semibold cursor-pointer text-white">
+                  Importeer masterbestand
+                  <input type="file" accept=".xlsm,.xlsx" class="hidden" id="masterImportInput" onchange="importMasterData(event)">
+                </label>
+              </div>
+              <p class="text-slate-500 text-xs mb-3">Na de import is geen basis-.xlsm meer nodig: de multi-upload gebruikt automatisch deze masterdata. De app is de bron van waarheid — een nieuwe import vraagt bevestiging.</p>
+              <div id="masterDataStatus" class="mb-3 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
+              <div id="masterDatasetButtons" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- Master Data File (legacy basisbestand / importbron) -->
             <div class="card rounded-xl p-6">
               <h3 class="font-semibold text-slate-200 mb-1">Master Data File</h3>
-              <p class="text-slate-500 text-xs mb-4">Het .xlsm bestand met Material master, Safety stock, OEE/Machines, FTE, Purchase sheet en financiele data. Eenmalig uploaden - geldt voor alle sessies.</p>
+              <p class="text-slate-500 text-xs mb-4">Het .xlsm bestand met Material master, Safety stock, OEE/Machines, FTE, Purchase sheet en financiele data. Dient als importbron voor de app-masterdata hierboven, en als terugvaloptie zolang er nog geen masterdata in de app staat.</p>
               <div id="cfgMasterStatus" class="mb-4 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
               <div class="flex items-center gap-3">
                 <label class="btn-primary px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer text-white">
@@ -1382,6 +1399,7 @@
                   <input type="file" accept=".xlsm,.xlsx" class="hidden" id="cfgMasterFileInput" onchange="uploadMasterFile(event)">
                 </label>
                 <span id="cfgMasterUploading" class="text-xs text-slate-400 hidden">Uploading...</span>
+                <button onclick="importMasterDataFromConfigured()" class="px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600" title="Parseer het geconfigureerde masterbestand één keer en beheer de data voortaan in de app">→ Importeer naar app</button>
               </div>
             </div>
 
@@ -4733,6 +4751,274 @@ async function _analysisDrillMachineProducts(mcCode, pA, pB) {
             <button type="button" onclick="_analysisDrillBack()" class="text-xs text-indigo-400 hover:text-indigo-300 mb-2">&#8592; Terug naar grafiekanalyse</button>
             <div class="text-xs text-slate-400">Productdetail niet beschikbaar: ${escapeHtml(String(e && e.message ? e.message : e))}</div>`;
     }
+}
+
+/* ===== Masterdata in de app (master-config vervanging) ===== */
+
+// Editor-specificatie per dataset. 'list' = array met sleutelveld,
+// 'dict' = { sleutel: object }, 'purchase' = samengesteld, 'form' = platte
+// velden, 'view' = alleen bekijken.
+const _MASTER_DATASETS = {
+    materials: { label: 'Materialen', kind: 'list', key: 'material_number',
+        cols: [['name', 'Naam', 'text'], ['product_family', 'Familie', 'text'], ['is_active', 'Actief', 'bool']] },
+    machines: { label: 'Machines', kind: 'list', key: 'machine_code',
+        cols: [['name', 'Naam', 'text'], ['oee', 'OEE', 'number'], ['machine_group', 'Groep', 'text']] },
+    safety_stock: { label: 'Veiligheidsvoorraad', kind: 'dict',
+        cols: [['safety_stock', 'Veiligheidsvoorraad', 'number'], ['strategic_stock', 'Strategisch', 'number'], ['lot_size', 'Lotgrootte', 'number'], ['target_stock', 'Doelvoorraad', 'number']] },
+    purchase: { label: 'Inkoop (lead time/MOQ)', kind: 'purchase' },
+    sales_prices: { label: 'Verkoopprijzen', kind: 'dict',
+        cols: [['volume_2025', 'Volume', 'number'], ['ex_works_revenue', 'Omzet (ExWorks)', 'number']] },
+    material_costs: { label: 'Grondstofkosten', kind: 'dict',
+        cols: [['cost_per_unit', 'Kost per eenheid', 'number']] },
+    machine_costs: { label: 'Machinekosten', kind: 'dict',
+        cols: [['variable_cost_per_hour', 'Variabele kost per uur', 'number']] },
+    valuation_params: { label: 'Valuatieparameters', kind: 'form' },
+    config: { label: 'Config', kind: 'view' },
+    fte: { label: 'FTE', kind: 'view' },
+};
+
+async function loadMasterDataStatus() {
+    const el = document.getElementById('masterDataStatus');
+    if (!el) return;
+    try {
+        const res = await fetch('/api/master_data');
+        const status = await res.json();
+        _renderMasterDataStatus(status);
+    } catch (e) {
+        el.textContent = 'Status niet beschikbaar.';
+    }
+}
+
+function _renderMasterDataStatus(status) {
+    const el = document.getElementById('masterDataStatus');
+    const btns = document.getElementById('masterDatasetButtons');
+    if (!el) return;
+    if (!status.exists) {
+        el.innerHTML = '<span class="text-amber-300">&#9888; Nog geen masterdata in de app.</span> Importeer eenmalig een master-.xlsm; daarna is geen basisbestand meer nodig.';
+        if (btns) btns.innerHTML = '';
+        return;
+    }
+    const counts = status.counts || {};
+    const edited = status.edited_at ? ` &middot; bewerkt ${escapeHtml(String(status.edited_at).slice(0, 16).replace('T', ' '))}` : '';
+    el.innerHTML = `<span class="text-emerald-300">&#10003; Masterdata in de app</span> — versie ${status.version}, `
+        + `geïmporteerd uit ${escapeHtml(status.source_filename || '?')} op ${escapeHtml(String(status.imported_at || '').slice(0, 16).replace('T', ' '))}${edited}.<br>`
+        + `<span class="text-slate-500 text-xs">${counts.materials || 0} materialen &middot; ${counts.machines || 0} machines &middot; ${counts.safety_stock || 0} veiligheidsvoorraden &middot; ${counts.purchase || 0} inkoopregels &middot; ${counts.sales_prices || 0} prijzen</span>`;
+    if (btns) {
+        btns.innerHTML = Object.entries(_MASTER_DATASETS).map(([ds, spec]) =>
+            `<button onclick="openMasterDatasetModal('${ds}')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">${escapeHtml(spec.label)}${spec.kind === 'view' ? ' &#128065;' : ' &#9998;'}</button>`
+        ).join('');
+    }
+}
+
+async function _postMasterImport(formData) {
+    let res = await fetch('/api/master_data/import', { method: 'POST', body: formData });
+    let data = await res.json();
+    if (data.needs_confirm) {
+        const cur = (data.current || {}).counts || {};
+        const inc = (data.incoming || {}).counts || {};
+        const ok = confirm(
+            `Er staat al masterdata in de app (versie ${(data.current || {}).version}, `
+            + `${cur.materials || 0} materialen) — inclusief eventuele bewerkingen.\n`
+            + `Importeren vervangt alles door "${(data.incoming || {}).source_filename}" `
+            + `(${inc.materials || 0} materialen, ${inc.machines || 0} machines).\n\nDoorgaan?`);
+        if (!ok) return null;
+        formData.append('confirm', 'true');
+        res = await fetch('/api/master_data/import', { method: 'POST', body: formData });
+        data = await res.json();
+    }
+    if (!res.ok || data.error) {
+        alert(data.error || 'Import mislukt');
+        return null;
+    }
+    return data;
+}
+
+async function importMasterData(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const data = await _postMasterImport(formData);
+    if (data) {
+        _renderMasterDataStatus(data);
+        notify(`Masterdata geïmporteerd (versie ${data.version}). De maandelijkse berekening heeft geen basis-.xlsm meer nodig.`, 'info', 4500);
+    }
+}
+
+async function importMasterDataFromConfigured() {
+    const data = await _postMasterImport(new FormData());
+    if (data) {
+        _renderMasterDataStatus(data);
+        notify(`Masterdata geïmporteerd (versie ${data.version}).`, 'info', 3500);
+    }
+}
+
+let _masterDatasetCache = null;  // { dataset, value, version }
+
+async function openMasterDatasetModal(dataset) {
+    const spec = _MASTER_DATASETS[dataset];
+    if (!spec) return;
+    const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`);
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    _masterDatasetCache = data;
+
+    const existing = document.getElementById('masterDatasetModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'masterDatasetModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.7);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px';
+    const editable = spec.kind !== 'view';
+    modal.innerHTML = `
+      <div style="background:#1e293b;border-radius:12px;padding:24px;width:100%;max-width:860px;color:#e2e8f0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <h2 style="font-size:1.1rem;font-weight:600">Masterdata — ${escapeHtml(spec.label)}</h2>
+          <button onclick="document.getElementById('masterDatasetModal').remove()" style="background:#334155;border:none;color:#e2e8f0;padding:4px 10px;border-radius:6px;cursor:pointer">&#10005; Sluiten</button>
+        </div>
+        ${editable ? '<p class="text-xs text-slate-500 mb-3">Wijzigingen gelden bij de eerstvolgende berekening (herbereken bestaande sessies om ze toe te passen).</p>' : ''}
+        <div id="masterDatasetBody" style="max-height:60vh;overflow:auto">${_masterDatasetHtml(spec, data.value)}</div>
+        ${editable ? `
+        <div class="flex items-center gap-3 mt-4">
+          <button id="btnSaveMasterDataset" onclick="saveMasterDataset('${dataset}')" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan</button>
+          <span id="masterDatasetStatus" class="text-xs text-slate-400"></span>
+        </div>` : ''}
+      </div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function _masterInput(kind, value) {
+    if (kind === 'bool') {
+        return `<input type="checkbox" class="master-edit accent-blue-500" ${value ? 'checked' : ''}>`;
+    }
+    return `<input type="text" value="${escapeHtml(value === null || value === undefined ? '' : String(value))}" class="master-edit bg-slate-700 rounded px-2 py-1 w-28 ${kind === 'number' ? 'text-right' : ''}">`;
+}
+
+function _masterDatasetHtml(spec, value) {
+    if (spec.kind === 'view') {
+        return `<pre class="text-xs text-slate-300 bg-slate-900 rounded p-3 overflow-auto">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+    }
+    if (spec.kind === 'form') {
+        const labels = {
+            direct_fte_cost_per_month: 'Directe FTE-kost / maand', indirect_fte_cost_per_month: 'Indirecte FTE-kost / maand',
+            overhead_cost_per_month: 'Overheadkost / maand', sga_cost_per_month: 'SG&A-kost / maand',
+            depreciation_per_year: 'Afschrijving / jaar', net_book_value: 'Boekwaarde vaste activa',
+            days_sales_outstanding: 'DSO (dagen)', days_payable_outstanding: 'DPO (dagen)',
+        };
+        return '<table class="w-full text-sm"><tbody>' + Object.entries(labels).map(([field, label]) => `
+            <tr data-master-field="${field}"><td class="p-2 text-slate-300">${label}</td>
+            <td class="p-2">${_masterInput('number', (value || {})[field])}</td></tr>`).join('') + '</tbody></table>';
+    }
+    if (spec.kind === 'purchase') {
+        const lead = (value || {}).lead_times || {};
+        const moq = (value || {}).moq || {};
+        const mats = [...new Set([...Object.keys(lead), ...Object.keys(moq)])].sort();
+        return `<table class="w-full text-xs"><thead><tr class="text-slate-400">
+            <th class="text-left p-1">Materiaal</th><th class="text-right p-1">Lead time (mnd)</th><th class="text-right p-1">MOQ</th></tr></thead><tbody>`
+            + mats.map(mat => `<tr data-master-key="${escapeHtml(mat)}">
+                <td class="p-1 font-mono">${escapeHtml(mat)}</td>
+                <td class="p-1 text-right" data-master-col="lead">${_masterInput('number', lead[mat])}</td>
+                <td class="p-1 text-right" data-master-col="moq">${_masterInput('number', moq[mat])}</td></tr>`).join('')
+            + '</tbody></table>';
+    }
+    const rows = spec.kind === 'list'
+        ? (value || []).map(item => [item[spec.key], item])
+        : Object.entries(value || {});
+    return `<table class="w-full text-xs"><thead><tr class="text-slate-400">
+        <th class="text-left p-1">${spec.kind === 'list' ? 'Sleutel' : 'Materiaal/Code'}</th>
+        ${spec.cols.map(c => `<th class="text-right p-1">${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>`
+        + rows.map(([key, item]) => `<tr data-master-key="${escapeHtml(String(key))}">
+            <td class="p-1 font-mono">${escapeHtml(String(key))}</td>
+            ${spec.cols.map(c => `<td class="p-1 text-right" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
+        </tr>`).join('')
+        + '</tbody></table>';
+}
+
+function _masterCellValue(cell, kind) {
+    const input = cell.querySelector('.master-edit');
+    if (!input) return undefined;
+    if (kind === 'bool') return input.checked;
+    const raw = input.value.trim();
+    if (kind === 'number') {
+        if (raw === '') return 0;
+        const parsed = parseLocaleNumber(raw);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+    return raw;
+}
+
+function collectMasterDataset(dataset) {
+    const spec = _MASTER_DATASETS[dataset];
+    const original = _masterDatasetCache ? _masterDatasetCache.value : null;
+    if (spec.kind === 'form') {
+        const out = { ...(original || {}) };
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-field]')) {
+            const parsed = _masterCellValue(row.cells[1], 'number');
+            if (parsed === null) return { error: 'Ongeldig getal in het formulier.' };
+            out[row.dataset.masterField] = parsed;
+        }
+        return { value: out };
+    }
+    if (spec.kind === 'purchase') {
+        const value = { ...(original || {}), lead_times: {}, moq: {} };
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-key]')) {
+            const mat = row.dataset.masterKey;
+            const lead = _masterCellValue(row.querySelector('[data-master-col="lead"]'), 'number');
+            const moq = _masterCellValue(row.querySelector('[data-master-col="moq"]'), 'number');
+            if (lead === null || moq === null) return { error: `Ongeldig getal bij ${mat}.` };
+            if (lead > 0) value.lead_times[mat] = Math.round(lead);
+            if (moq > 0) value.moq[mat] = moq;
+        }
+        // Membership volgt de MOQ-regel: alleen materialen met een MOQ.
+        value.sheet_materials = Object.keys(value.moq).sort();
+        return { value };
+    }
+    const byKey = {};
+    for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-key]')) {
+        const patch = {};
+        for (const col of spec.cols) {
+            const cell = row.querySelector(`[data-master-col="${col[0]}"]`);
+            const parsed = _masterCellValue(cell, col[2]);
+            if (parsed === null) return { error: `Ongeldig getal bij ${row.dataset.masterKey}.` };
+            patch[col[0]] = parsed;
+        }
+        byKey[row.dataset.masterKey] = patch;
+    }
+    if (spec.kind === 'list') {
+        const value = (original || []).map(item => {
+            const patch = byKey[String(item[spec.key])];
+            return patch ? { ...item, ...patch } : item;
+        });
+        return { value };
+    }
+    const value = {};
+    Object.entries(original || {}).forEach(([key, item]) => {
+        const patch = byKey[String(key)];
+        value[key] = patch ? { ...item, ...patch } : item;
+    });
+    return { value };
+}
+
+async function saveMasterDataset(dataset) {
+    const { value, error } = collectMasterDataset(dataset);
+    if (error) { alert(error); return; }
+    const statusEl = document.getElementById('masterDatasetStatus');
+    if (statusEl) statusEl.textContent = 'Opslaan...';
+    const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+        alert(data.error || 'Opslaan mislukt');
+        if (statusEl) statusEl.textContent = '';
+        return;
+    }
+    _renderMasterDataStatus(data);
+    const modal = document.getElementById('masterDatasetModal');
+    if (modal) modal.remove();
+    notify(`Masterdata opgeslagen (versie ${data.version}). Herbereken sessies om de wijziging toe te passen.`, 'info', 4500);
 }
 
 /* ===== Materiaalgroepen (filter + actieve groep) ===== */
@@ -11551,6 +11837,8 @@ async function loadConfigTab() {
         loadFolderConfig();
         // Dynamische producten (Fase 3)
         loadAddedProducts();
+        // Masterdata in de app (master-config vervanging)
+        loadMasterDataStatus();
     } catch(e) { console.error('loadConfigTab error', e); }
 }
 
