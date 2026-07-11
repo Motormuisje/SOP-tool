@@ -50,7 +50,7 @@ from ui.routes.sessions import create_sessions_blueprint
 from ui.routes.workflow import create_workflow_blueprint
 from ui.engine_rebuild import (
     build_clean_engine_for_session,
-    get_config_overrides,
+    get_calculate_config_overrides,
     get_session_config_overrides,
     install_clean_engine_baseline,
 )
@@ -165,7 +165,12 @@ def _save_global_config():
 
 
 def _get_config_overrides() -> dict:
-    return get_config_overrides(_global_config)
+    # /api/calculate builds from the global config, but added_products must be
+    # session-first: the global mirror can be stale after a switch to a
+    # session without a live engine (sync skipped), and a recalculate must not
+    # drop this session's products or inherit another session's.
+    sess, _engine = _get_active()
+    return get_calculate_config_overrides(sess, _global_config)
 
 
 def _save_sessions_to_disk():

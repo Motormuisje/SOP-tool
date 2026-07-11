@@ -27,6 +27,29 @@ def get_config_overrides(global_config: dict) -> dict:
     return ov
 
 
+def get_calculate_config_overrides(sess: dict | None, global_config: dict) -> dict:
+    """Overrides for /api/calculate on the ACTIVE session.
+
+    Starts from the global config (the config tab writes VP/PAP/forecast
+    defaults there), but takes ``added_products`` session-first. The global
+    mirror is only refreshed on a session switch when the target has a live
+    engine — after switching to a still-warming/cold session it is stale, and
+    a recalculate must never silently DROP this session's products or INHERIT
+    another session's.
+    """
+    ov = get_config_overrides(global_config)
+    if sess is None:
+        return ov
+    ap = sess.get('added_products')
+    if ap is None:
+        ap = (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('added_products')
+    if ap:
+        ov['added_products'] = ap
+    else:
+        ov.pop('added_products', None)
+    return ov
+
+
 def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict:
     """Build config_overrides for a session-specific engine rebuild."""
     ov = get_config_overrides(global_config)

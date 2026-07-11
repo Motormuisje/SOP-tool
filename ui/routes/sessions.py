@@ -157,6 +157,13 @@ def create_sessions_blueprint(
                 (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('forecast_defaults')
                 or sess.get('forecast_defaults') or {}
             ),
+            # Added products (Fase 3) are session config like forecast_defaults:
+            # a snapshot without them would rebuild WITHOUT the products and
+            # silently skip every copied pending edit that references them.
+            'added_products': copy.deepcopy(
+                (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('added_products')
+                or sess.get('added_products') or []
+            ),
             'comments': copy.deepcopy(sess.get('comments', {})),
             'undo_stack': [],
             'redo_stack': [],

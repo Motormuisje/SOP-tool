@@ -199,6 +199,10 @@ def _session_payload(
         'pending_edits': {},
         'value_aux_overrides': {},
         'machine_overrides': {},
+        # Explicit empty list: a FRESH upload must never inherit the previous
+        # session's dynamic products via the global-config mirror (None would
+        # mean "fall back to the live engine / global" in the override chain).
+        'added_products': [],
     }
     if extract_files is not None:
         payload['extract_files'] = extract_files

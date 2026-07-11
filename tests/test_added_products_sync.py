@@ -89,6 +89,102 @@ def test_old_store_files_default_to_empty_list(tmp_path):
     assert loaded["s1"]["added_products"] == []
 
 
+# ------------------------------------------------- calculate (stale mirror)
+
+def test_calculate_overrides_take_session_products_over_stale_global():
+    """Session-switch bug: /api/calculate used the global mirror, which is
+    only refreshed when switching to a session WITH a live engine. A stale
+    mirror must neither drop this session's products nor leak another's."""
+    from ui.engine_rebuild import get_calculate_config_overrides
+
+    other = dict(PRODUCT, material_number="STALE-OTHER-SESSION")
+    # Stale global still mirrors another session; active session has its own.
+    ov = get_calculate_config_overrides(
+        {"id": "a", "engine": None, "added_products": [PRODUCT]},
+        {"added_products": [other]})
+    assert ov["added_products"] == [PRODUCT]
+
+    # Active session without products: the stale global must NOT leak in.
+    ov = get_calculate_config_overrides(
+        {"id": "b", "engine": None, "added_products": []},
+        {"added_products": [other]})
+    assert "added_products" not in ov
+
+    # Live engine is the fallback when the session field was never set.
+    ov = get_calculate_config_overrides(
+        {"id": "c", "engine": _engine([PRODUCT])}, {"added_products": []})
+    assert ov["added_products"] == [PRODUCT]
+
+
+# ------------------------------------------------------- snapshot/instances
+
+def _snapshot_app(sess_a):
+    import contextlib
+
+    from flask import Flask
+
+    from ui.routes.sessions import create_sessions_blueprint
+
+    sessions = {"a": sess_a}
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("unexpected callback in snapshot test")
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    app.register_blueprint(create_sessions_blueprint(
+        sessions,
+        lambda: "a",
+        lambda sid: None,
+        lambda: (sessions["a"], sessions["a"].get("engine")),
+        {},
+        lambda s, e: {},
+        lambda: None,
+        lambda e: None,
+        crash, crash, crash,
+        lambda snap: False,
+        lambda e: False,
+        lambda: contextlib.nullcontext(),
+        start_session_warmup=None,
+        wait_for_session_warmup=None,
+    ))
+    return app, sessions
+
+
+def _base_session(**over):
+    sess = {
+        "id": "a", "file_path": "x.xlsm", "filename": "x.xlsm", "engine": None,
+        "custom_name": "A", "metadata": {}, "uploaded_at": "", "parameters": None,
+        "pending_edits": {}, "value_aux_overrides": {}, "machine_overrides": {},
+        "comments": {},
+    }
+    sess.update(over)
+    return sess
+
+
+def test_snapshot_copies_added_products_deep():
+    """An instance snapshot without the products would rebuild WITHOUT them
+    and silently skip every copied pending edit referencing them."""
+    sess_a = _base_session(added_products=[dict(PRODUCT)])
+    app, sessions = _snapshot_app(sess_a)
+    resp = app.test_client().post("/api/sessions/snapshot", json={"name": "B"})
+    assert resp.status_code == 200
+    new_id = resp.get_json()["session"]["id"]
+    copied = sessions[new_id]["added_products"]
+    assert copied == [PRODUCT]
+    assert copied is not sess_a["added_products"]          # deep copy
+    assert copied[0] is not sess_a["added_products"][0]
+
+
+def test_snapshot_prefers_live_engine_products():
+    sess_a = _base_session(engine=_engine([PRODUCT]), added_products=[])
+    app, sessions = _snapshot_app(sess_a)
+    resp = app.test_client().post("/api/sessions/snapshot", json={"name": "B"})
+    assert resp.status_code == 200
+    new_id = resp.get_json()["session"]["id"]
+    assert sessions[new_id]["added_products"] == [PRODUCT]
+
+
 # ------------------------------------------------------------ global mirror
 
 def test_sync_global_mirrors_active_session_and_clears_stale():
