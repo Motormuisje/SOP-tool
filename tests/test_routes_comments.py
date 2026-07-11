@@ -92,3 +92,21 @@ def test_export_comments_sheet(tmp_path):
     ws = wb2["Opmerkingen"]
     assert ws.cell(2, 4).value == "Afstemmen met productie"
     assert ws.cell(2, 5).value == "abdel"
+
+
+def test_export_comments_sheet_survives_control_characters(tmp_path):
+    """F15: control chars in comment text must not fail the export."""
+    import openpyxl
+    from ui.routes.exports import _append_comments_sheet
+
+    wb = openpyxl.Workbook()
+    wb.active.title = "Planning sheet"
+    path = tmp_path / "out.xlsx"
+    wb.save(path)
+
+    _append_comments_sheet(str(path), {
+        comment_key("machine", "PBA01", ""): {
+            "text": "regel1\x0bregel2\x00einde", "user": "u\x0c", "updated_at": "2026-07-11"},
+    })
+    ws = openpyxl.load_workbook(path)["Opmerkingen"]
+    assert ws.cell(2, 4).value == "regel1regel2einde"

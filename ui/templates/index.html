@@ -3703,9 +3703,18 @@ async function applyDirectThroughput(mcCode) {
     if (isNaN(target) || target <= 0) { notify('Voer een geldige doeldoorzet in.', 'warning'); return; }
     const curEff = m.throughput_effective;
     if (!curEff || curEff <= 0) { notify('Huidige doorzet is 0 — kan niet evenredig schalen. Pas OEE direct aan.', 'warning'); return; }
-    // effective ∝ OEE  ⇒  new_oee = oee × (target / current_effective)
+    // effective ∝ OEE  ⇒  new_oee = oee × (target / current_effective).
+    // The backend rejects OEE > 1.5, so the reachable ceiling is known up
+    // front — tell the user the max achievable target instead of sending a
+    // request that 400s with an OEE-units error.
+    const OEE_MAX = 1.5;
     let newOee = m.oee * (target / curEff);
-    newOee = Math.max(0.01, Math.min(2.0, newOee)); // clamp OEE fraction
+    if (newOee > OEE_MAX) {
+        const maxTarget = curEff * (OEE_MAX / m.oee);
+        notify(`Doel niet haalbaar: maximaal ${maxTarget.toFixed(2)} bij de OEE-limiet van 150%. Voer een doel t/m dat maximum in.`, 'warning', 5000);
+        return;
+    }
+    newOee = Math.max(0.01, newOee);
     setBusy(true, 'Doorzet toepassen (OEE aanpassen)...');
     try {
         const res = await fetch('/api/machines/update', {
@@ -5892,6 +5901,15 @@ let _planEditsInFlight = 0;
 function planEditsBusy() { return _planEditsInFlight > 0; }
 
 function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key) {
+    if (_isSwitchingSession) {
+        // The guard lives at ENQUEUE time, not inside the queued task:
+        // switchSession drains the queue, and edits already queued before the
+        // switch must complete against the old session — only NEW commits
+        // started mid-switch are rejected (visibly, not silently).
+        cell.textContent = fmt(origVal);
+        notify('Sessie wordt gewisseld — wijziging niet toegepast.', 'warning');
+        return Promise.resolve();
+    }
     _planEditsInFlight++;
     _planEditQueue = _planEditQueue
         .then(() => _commitPlanEditNow(cell, matNum, lt, period, newValue, origVal, key))
@@ -5901,12 +5919,6 @@ function _commitPlanEdit(cell, matNum, lt, period, newValue, origVal, key) {
 }
 
 async function _commitPlanEditNow(cell, matNum, lt, period, newValue, origVal, key) {
-    if (_isSwitchingSession) {
-        // A session switch is running: applying this edit now could hit the
-        // wrong session server-side. Revert the cell instead of guessing.
-        cell.textContent = fmt(origVal);
-        return;
-    }
     // Capture the session BEFORE the await: if the user switches instance
     // while the cascade runs, this edit belongs to the session that was
     // active when it was made — never to the newly selected one.

@@ -112,6 +112,13 @@ def _apply_edit_highlights(path: str, engine):
     wb.save(path)
 
 
+def _excel_safe(value) -> str:
+    """Strip control characters openpyxl rejects (IllegalCharacterError) —
+    comment text can contain them when pasted from Excel/PDF."""
+    import re
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(value or ''))
+
+
 def _append_comments_sheet(path: str, comments: dict):
     """Add an 'Opmerkingen' sheet listing session annotations (Fase 2.1)."""
     if not comments:
@@ -135,8 +142,10 @@ def _append_comments_sheet(path: str, comments: dict):
         target = parts[1] if len(parts) > 1 else ''
         period = parts[2] if len(parts) > 2 else ''
         if isinstance(entry, dict):
-            ws.append([scope, target, period, entry.get('text', ''),
-                       entry.get('user', ''), entry.get('updated_at', '')])
+            ws.append([_excel_safe(scope), _excel_safe(target), _excel_safe(period),
+                       _excel_safe(entry.get('text', '')),
+                       _excel_safe(entry.get('user', '')),
+                       _excel_safe(entry.get('updated_at', ''))])
     for col, width in zip('ABCDEF', (22, 20, 12, 60, 16, 20)):
         ws.column_dimensions[col].width = width
     wb.save(path)
@@ -192,7 +201,12 @@ def create_exports_blueprint(
             previous_cycle_df=previous_df,
         )
         _apply_edit_highlights(str(export_path), current_engine)
-        _append_comments_sheet(str(export_path), (sess or {}).get('comments', {}))
+        try:
+            _append_comments_sheet(str(export_path), (sess or {}).get('comments', {}))
+        except Exception as exc:
+            # Annotations must never fail the export itself (same degrade
+            # pattern as the chart blocks in to_excel_with_values).
+            print(f'[export] Opmerkingen sheet skipped: {exc}')
 
         return send_file(str(export_path), as_attachment=True)
 
