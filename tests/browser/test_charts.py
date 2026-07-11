@@ -93,10 +93,10 @@ def test_chart_zoom_affordances_are_injected(browser_page):
     _open_tab(page, "dashboard")
     _require_chartjs(page)
 
+    # Panels carry data-panel-id (not id); count injected zoom buttons there.
     count = page.evaluate(
-        """() => document.querySelectorAll('#panel-fin-metrics button')
-                    .length && Array.from(
-                        document.querySelectorAll('#panel-fin-metrics button'))
+        """() => Array.from(document.querySelectorAll(
+                    '[data-panel-id="panel-fin-metrics"] button'))
                     .filter(b => /Vergroot/.test(b.textContent)).length"""
     )
     assert count >= 1
