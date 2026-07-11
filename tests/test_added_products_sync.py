@@ -227,6 +227,57 @@ def test_snapshot_prefers_live_engine_products():
     assert sessions[new_id]["added_products"] == [PRODUCT]
 
 
+# ----------------------------------------------------------- workbook drift
+
+def test_switch_restore_fails_cleanly_when_overlay_rejected():
+    """Workbook drift: a new monthly workbook can contain a number that was
+    added as a dynamic product earlier. The rebuild then (correctly) raises;
+    the switch must surface a clean failed status + message, not crash or
+    half-install an engine."""
+    import contextlib
+
+    from flask import Flask
+
+    from ui.routes.sessions import create_sessions_blueprint
+
+    sess = {
+        "id": "a", "file_path": "x.xlsm", "filename": "x.xlsm", "engine": None,
+        "custom_name": "A", "metadata": {}, "uploaded_at": "",
+        "parameters": {"planning_month": "2025-12", "months_actuals": 11,
+                       "months_forecast": 12},
+        "pending_edits": {}, "value_aux_overrides": {}, "machine_overrides": {},
+        "added_products": [PRODUCT],
+    }
+    sessions = {"a": sess}
+
+    def failing_build(s, params=None):
+        raise ValueError(
+            "Materiaalnummer 900000001 bestaat al in het bronbestand. "
+            "Kies een eigen nummerreeks (bijv. 9xxxxxxxx).")
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("unexpected callback")
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    app.register_blueprint(create_sessions_blueprint(
+        sessions, lambda: None, lambda sid: None,
+        lambda: (sess, None), {}, lambda s, e: {}, lambda: None,
+        lambda e: None,
+        failing_build, crash, crash,
+        lambda snap: False, lambda e: False,
+        lambda: contextlib.nullcontext(),
+        start_session_warmup=None, wait_for_session_warmup=None,
+    ))
+
+    resp = app.test_client().post("/api/sessions/switch", json={"session_id": "a"})
+    assert resp.status_code == 500
+    assert "bestaat al in het bronbestand" in resp.get_json()["error"]
+    assert sess["restore_status"] == "failed"
+    assert "900000001" in (sess["restore_error"] or "")
+    assert sess["engine"] is None  # nothing half-installed
+
+
 # ------------------------------------------------------------ global mirror
 
 def test_sync_global_mirrors_active_session_and_clears_stale():

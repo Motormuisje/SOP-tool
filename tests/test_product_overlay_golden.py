@@ -382,6 +382,33 @@ def test_matrix_consolidated_turnover_rises_by_product_revenue(
         assert overlay[period] - base_val == pytest.approx(expected_delta), period
 
 
+# -------------------------------------------------------------- export smoke
+
+def test_full_excel_export_with_added_product(integrated_engine, tmp_path):
+    """to_excel_with_values (all sheets, charts, formatting) must not choke on
+    an overlay product, and its rows must land in the exported workbook."""
+    import openpyxl
+
+    out = tmp_path / "overlay_export.xlsx"
+    with contextlib.redirect_stdout(io.StringIO()):
+        integrated_engine.to_excel_with_values(str(out))
+    assert out.exists() and out.stat().st_size > 0
+
+    workbook = openpyxl.load_workbook(str(out), read_only=True)
+    try:
+        found = False
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(min_col=1, max_col=1, values_only=True):
+                if str(row[0]) == MN:
+                    found = True
+                    break
+            if found:
+                break
+        assert found, "added product missing from the exported workbook"
+    finally:
+        workbook.close()
+
+
 # ------------------------------------------------------------------- TP3-04
 
 def test_restart_rebuild_and_replay_restore_product_and_edit(

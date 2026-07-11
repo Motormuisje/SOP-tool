@@ -45,6 +45,35 @@ def derive_override_stores(pending_edits: dict) -> tuple[dict, dict]:
     return capacity, inventory
 
 
+def _added_products_warnings(sc: dict, sess: dict) -> list:
+    """Dutch warnings when a scenario's dynamic products no longer match the
+    session's. Loading does not restore products (that would be a structural
+    rebuild); edits on missing products are skipped at replay, so say so
+    instead of failing silently. Scenarios saved before this field existed
+    (None) yield no warning."""
+    saved = sc.get('added_products')
+    if saved is None:
+        return []
+    saved_numbers = {str(p.get('material_number')) for p in saved}
+    current_numbers = {str(p.get('material_number'))
+                       for p in (sess.get('added_products') or [])}
+    missing = sorted(saved_numbers - current_numbers)
+    extra = sorted(current_numbers - saved_numbers)
+    if not missing and not extra:
+        return []
+    parts = []
+    if missing:
+        parts.append(f"ontbreekt in de sessie: {', '.join(missing)}")
+    if extra:
+        parts.append(f"niet in het scenario: {', '.join(extra)}")
+    return [
+        'Dit scenario is opgeslagen met andere dynamische producten ('
+        + '; '.join(parts) + '). Bewerkingen op ontbrekende producten worden '
+        'overgeslagen; voeg de producten toe of verwijder ze om de planning '
+        'kloppend te maken.'
+    ]
+
+
 def create_scenarios_blueprint(
     scenarios: dict,
     sessions: dict,
@@ -153,6 +182,11 @@ def create_scenarios_blueprint(
             'value_aux_overrides': json.loads(json.dumps(active_session.get('value_aux_overrides', {}))),
             'valuation_params': {str(k): float(v) for k, v in (global_config.get('valuation_params') or {}).items()},
             'purchased_and_produced': global_config.get('purchased_and_produced', ''),
+            # Dynamic products active at save time (Fase 3). Loading does NOT
+            # restore them (that would be a structural rebuild) — the list is
+            # recorded so load can WARN when it no longer matches the session.
+            'added_products': json.loads(json.dumps(
+                active_session.get('added_products') or [])),
         }
         return jsonify({'success': True, 'scenario_id': scenario_id, 'name': name, 'edit_count': total_edits})
 
@@ -264,6 +298,9 @@ def create_scenarios_blueprint(
             'pending_edits': sess.get('pending_edits', {}),
             'value_aux_overrides': sess.get('value_aux_overrides', {}),
         }
+        warnings = _added_products_warnings(sc, sess)
+        if warnings:
+            resp['warnings'] = warnings
         if restored_vp is not None:
             resp['restored_valuation_params'] = restored_vp
         if baseline_results:

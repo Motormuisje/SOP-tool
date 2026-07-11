@@ -243,6 +243,32 @@ rebuild + rollback), beheer-kaart in de Config-tab met product-modal
   (9xxxxxxxx). Producten toevoegen kan pas ná de eerste berekening.
 - Reset behoudt toegevoegde producten (het is configuratie, geen bewerking).
 
+### Teststrategie-uitbreiding sessiegrenzen (2026-07-11)
+
+Naar aanleiding van de bug "producten verdwijnen na sessiewissel" is de
+teststrategie uitgebreid van geïsoleerde sync-punt-tests naar **overgangen**:
+
+- **Sessie-first herberekenen**: `/api/calculate` neemt per-sessie config
+  (forecast-defaults, VP, PAP, producten) via `get_calculate_config_overrides`
+  — een stale global-spiegel kan niets meer droppen of laten erven. Unit-tests
+  dekken beide richtingen; integratietests dekken wissel + herberekenen.
+- **Gedeelde rebuild-lock** (`ui/locks.py`): calculate, product-CRUD,
+  structurele config-rebuilds en switch-restore zijn geserialiseerd;
+  concurrency-test met overlap-detectie.
+- **Echte herstart-integratietest** (`tests/test_session_switch_products.py`):
+  proces killen + herstarten op dezelfde app-data; elke sessie behoudt eigen
+  producten/defaults, geen kruisbesmetting. Plus snapshot-, Reset- en
+  upload-erfenis-scenario's.
+- **Scenario's × producten (besluit)**: een scenario registreert de
+  productenlijst bij opslaan; laden herstelt producten NIET (dat zou een
+  structurele rebuild zijn) maar waarschuwt in het Nederlands wanneer de
+  lijst niet meer klopt. Oude scenario's (zonder veld) waarschuwen niet.
+- **Reset-contract**: Reset wist bewerkingen, behoudt dynamische producten.
+- **Export-smoke**: volledige `to_excel_with_values` met overlay-product.
+- **Werkboek-drift**: botst een nieuw bronbestand met een eerder toegevoegd
+  productnummer, dan faalt de switch-restore netjes (`failed` + NL-melding).
+- **UI**: de productenkaart ververst bij sessiewissel (browser-test).
+
 ### Nog open uit het oorspronkelijke fase-3-verhaal
 
 **Integratiegradatie (vraag 5, a/b/c)** — master-sheet-vervanging/koppeling

@@ -6570,6 +6570,9 @@ async function loadScenarioFromDrop(selectEl) {
         });
         const data = await res.json();
         if (data.error) { alert('Load failed: ' + data.error); return; }
+        // Fase 3: het scenario kan met andere dynamische producten zijn
+        // opgeslagen — meld dat expliciet in plaats van stil te laden.
+        if (data.warnings && data.warnings.length) alert(data.warnings.join('\n'));
         state.results = data.results;
         state.valueResults = data.value_results;
         if (data.pending_edits && Object.keys(data.pending_edits).length > 0) {
@@ -9751,6 +9754,12 @@ async function switchSession(sessionId) {
         _loadPendingEditsIntoState(data.pending_edits || {});
         _loadValueAuxOverridesIntoState(data.value_aux_overrides || {});
         updateEditBadge();
+        // Fase 3: de productenkaart toont per-sessie data — cache legen en
+        // herladen als de Config-tab zichtbaar is, anders bij de volgende
+        // loadConfigTab.
+        _addedProductsData = { added_products: [], machines: [], materials: [], periods: [] };
+        const cfgTab = document.getElementById('config-tab');
+        if (cfgTab && !cfgTab.classList.contains('hidden')) loadAddedProducts();
         if (data.restore_status === 'warming' && !data.calculated) {
             state.results = null; state.valueResults = null; state.consolidation = [];
             document.getElementById('exportBtn').disabled = true;

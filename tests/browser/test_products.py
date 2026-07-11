@@ -182,6 +182,63 @@ def test_add_produced_product_end_to_end(browser_page):
             pass
 
 
+def test_products_card_refreshes_on_session_switch(browser_page):
+    """De productenkaart toont per-sessie data: na een sessiewissel moet de
+    kaart de producten van de NIEUWE sessie tonen, niet die van de vorige."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    sid_orig = page.server["session_id"]
+    mn = "900000055"
+    sid_b = None
+    try:
+        # Instantie B aanmaken VÓÓR het product bestaat: B blijft leeg.
+        snap = requests.post(base_url + "/api/sessions/snapshot",
+                             json={"name": "Wisseltest B"}, timeout=120)
+        assert snap.ok, snap.text
+        sid_b = snap.json()["session"]["id"]
+
+        resp = requests.post(base_url + "/api/products/added", json={
+            "material_number": mn, "name": "Wisseltest product",
+            "product_type": "other", "sourcing": "purchased",
+            "flat_volume": 10.0,
+        }, timeout=300)
+        assert resp.ok, resp.text
+
+        page.reload(wait_until="networkidle")
+        _open_config(page)
+        page.evaluate("() => loadAddedProducts()")
+        page.wait_for_selector(f'tr[data-added-product="{mn}"]', timeout=30000)
+
+        # Wissel naar B via de UI: kaart moet leeg worden (B heeft niets).
+        page.evaluate("(sid) => switchSession(sid)", sid_b)
+        page.wait_for_function(
+            "(sid) => state.activeSessionId === sid", arg=sid_b, timeout=180000)
+        page.wait_for_function(
+            """() => {
+                const tbody = document.getElementById('addedProductsTbody');
+                return tbody && tbody.textContent.includes('Nog geen producten');
+            }""",
+            timeout=60000,
+        )
+        assert page.locator(f'tr[data-added-product="{mn}"]').count() == 0
+
+        # Terug naar de oorspronkelijke sessie: product weer zichtbaar.
+        page.evaluate("(sid) => switchSession(sid)", sid_orig)
+        page.wait_for_function(
+            "(sid) => state.activeSessionId === sid", arg=sid_orig, timeout=180000)
+        page.wait_for_selector(f'tr[data-added-product="{mn}"]', timeout=60000)
+        assert page.js_errors == []
+    finally:
+        try:
+            requests.post(base_url + "/api/sessions/switch",
+                          json={"session_id": sid_orig}, timeout=300)
+            requests.delete(base_url + f"/api/products/added/{mn}", timeout=300)
+            if sid_b:
+                requests.delete(base_url + f"/api/sessions/{sid_b}", timeout=60)
+        except requests.RequestException:
+            pass
+
+
 def test_add_rejects_workbook_collision_with_dutch_error(browser_page):
     page = browser_page
     base_url = page.server["base_url"]

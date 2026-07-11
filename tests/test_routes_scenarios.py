@@ -527,3 +527,64 @@ def test_scenarios_persist_round_trip(tmp_path):
     store.write_text("{ corrupt", encoding="utf-8")
     assert load_scenarios_from_disk(store) == {}
     assert not store.exists()  # quarantined
+
+
+# ----------------------------------------------- dynamische producten (Fase 3)
+
+DYN_PRODUCT = {"material_number": "900000001", "name": "Dyn",
+               "product_type": "bulk", "flat_volume": 1.0}
+
+
+def test_save_records_added_products_deep(scenarios_route_app):
+    sess = scenarios_route_app.sessions["session-a"]
+    sess["added_products"] = [dict(DYN_PRODUCT)]
+    response = scenarios_route_app.client.post(
+        "/api/scenarios/save", json={"name": "Met product"})
+    assert response.status_code == 200
+    scenario_id = response.get_json()["scenario_id"]
+    saved = scenarios_route_app.scenarios[scenario_id]["added_products"]
+    assert saved == [DYN_PRODUCT]
+    assert saved is not sess["added_products"]
+    assert saved[0] is not sess["added_products"][0]
+
+
+def test_load_warns_when_scenario_products_missing_from_session(scenarios_route_app):
+    """Scenario opgeslagen mét product, product daarna verwijderd: laden moet
+    dat expliciet melden (bewerkingen op het product worden geskipt) in
+    plaats van stil een kloppend-lijkende toestand te tonen."""
+    scenarios_route_app.scenarios["sc1"] = _scenario(
+        "session-a", "SC1", added_products=[dict(DYN_PRODUCT)])
+    scenarios_route_app.sessions["session-a"]["added_products"] = []
+
+    response = scenarios_route_app.client.post(
+        "/api/scenarios/load", json={"scenario_id": "sc1"})
+    assert response.status_code == 200
+    warnings = response.get_json().get("warnings")
+    assert warnings, "verwachtte een waarschuwing over dynamische producten"
+    assert "dynamische producten" in warnings[0]
+    assert "900000001" in warnings[0]
+
+
+def test_load_warns_about_products_added_after_save(scenarios_route_app):
+    scenarios_route_app.scenarios["sc1"] = _scenario(
+        "session-a", "SC1", added_products=[])
+    scenarios_route_app.sessions["session-a"]["added_products"] = [dict(DYN_PRODUCT)]
+
+    response = scenarios_route_app.client.post(
+        "/api/scenarios/load", json={"scenario_id": "sc1"})
+    assert response.status_code == 200
+    warnings = response.get_json().get("warnings")
+    assert warnings and "niet in het scenario" in warnings[0]
+
+
+def test_load_is_silent_when_products_match_or_scenario_predates_field(scenarios_route_app):
+    scenarios_route_app.scenarios["match"] = _scenario(
+        "session-a", "Match", added_products=[dict(DYN_PRODUCT)])
+    scenarios_route_app.scenarios["legacy"] = _scenario("session-a", "Legacy")
+    scenarios_route_app.sessions["session-a"]["added_products"] = [dict(DYN_PRODUCT)]
+
+    for scenario_id in ("match", "legacy"):
+        response = scenarios_route_app.client.post(
+            "/api/scenarios/load", json={"scenario_id": scenario_id})
+        assert response.status_code == 200
+        assert "warnings" not in response.get_json(), scenario_id
