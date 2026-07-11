@@ -292,6 +292,11 @@
         }
         .edit-mode-btn { transition:background 0.15s, color 0.15s; }
         .edit-mode-btn.active { background:rgba(217,119,6,0.35) !important; color:#fcd34d !important; border:1px solid #d97706; }
+        /* ===== COMMENTS (Fase 2.1) ===== */
+        td.has-comment { position:relative; }
+        td.has-comment::after { content:''; position:absolute; top:1px; right:1px; border-width:0 5px 5px 0; border-style:solid; border-color:transparent #f59e0b transparent transparent; }
+        body.comment-mode #planBody td[data-period] { cursor: help; }
+        body.comment-mode #planBody td[data-period]:hover { outline:1px dashed #f59e0b; }
         /* ===== DEPENDENCY HIGHLIGHTING ===== */
         /* background-color and outline are set directly via inline style in JS */
         #ltInfoTooltip {
@@ -993,6 +998,7 @@
                             <button id="undoBtn" onclick="undoEdit()" class="ml-1 px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300 hover:bg-blue-700 hover:text-white" title="Undo last edit (Ctrl+Z)">&#8630; Undo</button>
                             <button id="redoBtn" onclick="redoEdit()" class="ml-1 px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300 hover:bg-blue-700 hover:text-white" title="Redo last undone edit (Ctrl+Y)">&#8631; Redo</button>
                         </div>
+                        <button type="button" id="commentModeBtn" onclick="toggleCommentMode()" class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-300 hover:bg-amber-700 hover:text-white" title="Opmerkingen: klik daarna op een cel om een notitie toe te voegen">&#128172; Opmerkingen</button>
                         <span class="text-xs text-slate-500 italic">Gebruik ✎ Bewerken om waarden aan te passen</span>
                         <button type="button" id="editBadge" onclick="toggleEditedOnlyFilter()" class="edit-filter-toggle bg-yellow-600 text-white text-xs px-2 py-0.5 rounded-full" style="display:none;border:none" title="Klik om alle ge-edite rijen te tonen">0</button>
                         <button onclick="saveEditsJSON()" class="px-3 py-1 rounded text-sm bg-slate-600 text-slate-300 hover:bg-slate-500" style="display:none">Save Edits JSON</button>
@@ -1506,6 +1512,18 @@
     <div id="planTooltip"></div>
     <div id="valueTooltip"></div>
     <div id="ltInfoTooltip"></div>
+    <!-- Comment popover (Fase 2.1) -->
+    <div id="commentPopover" style="display:none;position:absolute;z-index:9500;width:280px" class="card rounded-lg p-3 shadow-xl border border-slate-600 bg-slate-800">
+        <div class="text-xs text-slate-400 mb-1" id="commentPopoverAnchor">Opmerking</div>
+        <textarea id="commentPopoverText" rows="3" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 focus:border-blue-500 focus:outline-none" placeholder="Typ een opmerking..."></textarea>
+        <div id="commentPopoverMeta" class="text-[10px] text-slate-500 mt-1"></div>
+        <div class="flex gap-2 mt-2 justify-end">
+            <button type="button" onclick="deleteCommentFromPopover()" class="px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-red-800 text-slate-300" title="Verwijderen">Verwijderen</button>
+            <button type="button" onclick="closeCommentPopover()" class="px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300">Annuleren</button>
+            <button type="button" onclick="saveCommentFromPopover()" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white">Opslaan</button>
+        </div>
+    </div>
+
     <!-- Chart zoom modal (Fase 1.1). display toggled in JS; no Tailwind .hidden
          because the inline flex layout would override it and keep the overlay
          capturing clicks across the whole page. -->
@@ -1522,7 +1540,7 @@
     </div>
 <script src="{{ url_for('static', filename='sop_planning.js') }}?v=20260711b"></script>
 <script>
-let state = { periods: [], results: null, lineTypes: [], valueResults: null, valueLineTypes: [], consolidation: [], cellEdits: {}, valueAuxEdits: {}, valueRowDeltas: {}, demandTurnoverDeltas: {}, top10Overstocks: [], activeSessionId: null, dashboardDirty: false, moqRawNeeds: {}, machineDeltaSummary: null, machineDeltaSummaries: {} };
+let state = { periods: [], results: null, lineTypes: [], valueResults: null, valueLineTypes: [], consolidation: [], cellEdits: {}, valueAuxEdits: {}, valueRowDeltas: {}, demandTurnoverDeltas: {}, top10Overstocks: [], activeSessionId: null, dashboardDirty: false, moqRawNeeds: {}, machineDeltaSummary: null, machineDeltaSummaries: {}, comments: {} };
 // Resize all Chart.js charts when window is restored from minimized state
 let _resizeTimer = null;
 window.addEventListener('resize', () => {
@@ -2595,6 +2613,7 @@ async function loadResults() {
     _renderViewOrDefer('planning'); _renderViewOrDefer('capacity'); _renderViewOrDefer('inventory');
     updateEditBadge();
     refreshScenarioDrop();
+    loadComments();
 }
 
 /* ===== VALUE PLANNING ===== */
@@ -3376,6 +3395,137 @@ function _installChartZoomAffordances() {
 }
 
 document.addEventListener('DOMContentLoaded', _installChartZoomAffordances);
+
+// ===== Comments / annotations (Fase 2.1) =====
+let commentMode = false;
+let _commentPopoverAnchor = null; // { scope, target, period, cell }
+
+function _commentUser() {
+    let u = localStorage.getItem('sop_comment_user');
+    if (!u) {
+        u = (prompt('Uw naam (voor opmerkingen):', '') || '').trim();
+        if (u) localStorage.setItem('sop_comment_user', u);
+    }
+    return u || 'onbekend';
+}
+
+function _commentKey(scope, target, period) { return `${scope}||${target}||${period || ''}`; }
+
+async function loadComments() {
+    try {
+        const res = await fetch('/api/comments');
+        const data = await res.json();
+        state.comments = data.comments || {};
+    } catch (e) { state.comments = {}; }
+    _renderCommentMarkers();
+}
+
+function _renderCommentMarkers() {
+    const tbody = document.getElementById('planBody');
+    if (!tbody) return;
+    tbody.querySelectorAll('td.has-comment').forEach(td => {
+        td.classList.remove('has-comment'); td.removeAttribute('data-comment-title');
+    });
+    const comments = state.comments || {};
+    tbody.querySelectorAll('tr[data-linetype][data-material]').forEach(tr => {
+        const lt = tr.dataset.linetype, mat = tr.dataset.material;
+        tr.querySelectorAll('td[data-period]').forEach(td => {
+            const key = _commentKey(lt, mat, td.dataset.period);
+            const c = comments[key];
+            if (c) {
+                td.classList.add('has-comment');
+                td.title = `💬 ${c.user}: ${c.text}`;
+            }
+        });
+    });
+}
+
+function toggleCommentMode() {
+    commentMode = !commentMode;
+    document.body.classList.toggle('comment-mode', commentMode);
+    const btn = document.getElementById('commentModeBtn');
+    if (btn) btn.classList.toggle('active', commentMode);
+    if (commentMode) { _commentUser(); notify('Opmerkingen-modus aan: klik op een cel.', 'info'); }
+    else closeCommentPopover();
+}
+
+function _onPlanBodyCommentClick(e) {
+    if (!commentMode) return;
+    const cell = e.target.closest('td[data-period]');
+    if (!cell) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const tr = cell.closest('tr[data-linetype][data-material]');
+    if (!tr) return;
+    openCommentPopover({
+        scope: tr.dataset.linetype,
+        target: tr.dataset.material,
+        period: cell.dataset.period,
+        cell,
+    });
+}
+
+function openCommentPopover(anchor) {
+    _commentPopoverAnchor = anchor;
+    const pop = document.getElementById('commentPopover');
+    const key = _commentKey(anchor.scope, anchor.target, anchor.period);
+    const existing = (state.comments || {})[key];
+    document.getElementById('commentPopoverAnchor').textContent =
+        `${anchor.target} — ${anchor.scope} — ${anchor.period}`;
+    document.getElementById('commentPopoverText').value = existing ? existing.text : '';
+    document.getElementById('commentPopoverMeta').textContent =
+        existing ? `Laatst: ${existing.user} @ ${existing.updated_at}` : '';
+    const r = anchor.cell.getBoundingClientRect();
+    pop.style.left = Math.min(window.scrollX + r.left, window.scrollX + window.innerWidth - 300) + 'px';
+    pop.style.top = (window.scrollY + r.bottom + 4) + 'px';
+    pop.style.display = 'block';
+    document.getElementById('commentPopoverText').focus();
+}
+
+function closeCommentPopover() {
+    const pop = document.getElementById('commentPopover');
+    if (pop) pop.style.display = 'none';
+    _commentPopoverAnchor = null;
+}
+
+async function saveCommentFromPopover() {
+    if (!_commentPopoverAnchor) return;
+    const a = _commentPopoverAnchor;
+    const text = document.getElementById('commentPopoverText').value.trim();
+    try {
+        const res = await fetch('/api/comments', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scope: a.scope, target: a.target, period: a.period, text, user: _commentUser() }),
+        });
+        const data = await res.json();
+        if (data.error) { notify(data.error, 'error'); return; }
+        state.comments = data.comments || {};
+        _renderCommentMarkers();
+        _markAutoSaved();
+        closeCommentPopover();
+    } catch (e) { notify('Opmerking-fout: ' + e, 'error'); }
+}
+
+async function deleteCommentFromPopover() {
+    if (!_commentPopoverAnchor) return;
+    const a = _commentPopoverAnchor;
+    try {
+        const res = await fetch('/api/comments/delete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: _commentKey(a.scope, a.target, a.period) }),
+        });
+        const data = await res.json();
+        state.comments = data.comments || {};
+        _renderCommentMarkers();
+        closeCommentPopover();
+    } catch (e) { notify('Opmerking-fout: ' + e, 'error'); }
+}
+
+// Capture-phase so comment mode intercepts before the edit/selection handlers.
+document.addEventListener('DOMContentLoaded', () => {
+    const tbody = document.getElementById('planBody');
+    if (tbody) tbody.addEventListener('click', _onPlanBodyCommentClick, true);
+});
 
 function renderTop10Overstocks(top10) {
     const canvas = document.getElementById('overstocksChart');
@@ -5287,6 +5437,7 @@ function renderPlanningTable(results, periods) {
     _restoreActiveTableCell();
     filterTable();
     requestAnimationFrame(() => _applyStickyColumns('plan'));
+    if (typeof _renderCommentMarkers === 'function') _renderCommentMarkers();
 }
 
 // ── Long-press paste ──────────────────────────────────────────────────────────

@@ -150,6 +150,7 @@ def create_sessions_blueprint(
                 else copy.deepcopy(sess.get('machine_overrides', {}))
             ),
             'reset_baseline': copy.deepcopy(sess.get('reset_baseline')),
+            'comments': copy.deepcopy(sess.get('comments', {})),
             'undo_stack': [],
             'redo_stack': [],
             'restore_status': 'cold',

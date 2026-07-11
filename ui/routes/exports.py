@@ -112,6 +112,36 @@ def _apply_edit_highlights(path: str, engine):
     wb.save(path)
 
 
+def _append_comments_sheet(path: str, comments: dict):
+    """Add an 'Opmerkingen' sheet listing session annotations (Fase 2.1)."""
+    if not comments:
+        return
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.load_workbook(path)
+    if 'Opmerkingen' in wb.sheetnames:
+        del wb['Opmerkingen']
+    ws = wb.create_sheet('Opmerkingen')
+    header_fill = PatternFill(start_color='1F3864', end_color='1F3864', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    ws.append(['Scope', 'Materiaal/Machine', 'Periode', 'Opmerking', 'Gebruiker', 'Bijgewerkt'])
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    for key, entry in comments.items():
+        parts = str(key).split('||')
+        scope = parts[0] if len(parts) > 0 else ''
+        target = parts[1] if len(parts) > 1 else ''
+        period = parts[2] if len(parts) > 2 else ''
+        if isinstance(entry, dict):
+            ws.append([scope, target, period, entry.get('text', ''),
+                       entry.get('user', ''), entry.get('updated_at', '')])
+    for col, width in zip('ABCDEF', (22, 20, 12, 60, 16, 20)):
+        ws.column_dimensions[col].width = width
+    wb.save(path)
+
+
 def create_exports_blueprint(
     get_active: Callable[[], tuple],
     export_dir: Callable[[], object],
@@ -121,7 +151,7 @@ def create_exports_blueprint(
 
     @bp.route('/api/export')
     def export():
-        _, current_engine = get_active()
+        sess, current_engine = get_active()
 
         if current_engine is None:
             return jsonify({'error': 'No calculations run'}), 400
@@ -162,6 +192,7 @@ def create_exports_blueprint(
             previous_cycle_df=previous_df,
         )
         _apply_edit_highlights(str(export_path), current_engine)
+        _append_comments_sheet(str(export_path), (sess or {}).get('comments', {}))
 
         return send_file(str(export_path), as_attachment=True)
 

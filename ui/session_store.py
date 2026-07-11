@@ -73,6 +73,8 @@ def save_sessions_to_disk(
             'capacity_overrides': sess.get('capacity_overrides', {}),
             'valuation_params': sess_vp,
             'purchased_and_produced': sess_pap,
+            # Annotations (Fase 2.1): pure metadata, JSON-safe.
+            'comments': sess.get('comments', {}),
         }
     store = {
         'active_session_id': active_session_id,
@@ -156,6 +158,7 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 'valuation_params': data.get('valuation_params'),
                 # None for store files written before this field existed.
                 'purchased_and_produced': data.get('purchased_and_produced'),
+                'comments': data.get('comments') or {},
                 'undo_stack': [],
                 'redo_stack': [],
                 'restore_status': 'cold' if data.get('parameters') is not None else 'pending',

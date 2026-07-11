@@ -35,6 +35,7 @@ from ui.replay import (
     recalculate_value_results,
     replay_pending_edits,
 )
+from ui.routes.comments import create_comments_blueprint
 from ui.routes.config import create_config_blueprint
 from ui.routes.edit_state import create_edit_state_blueprint
 from ui.routes.edits import create_edits_blueprint
@@ -372,6 +373,10 @@ app.register_blueprint(create_edit_state_blueprint(
     EDITABLE_LINE_TYPES,
     _save_sessions_to_disk,
 ))
+app.register_blueprint(create_comments_blueprint(
+    lambda: _get_active(),
+    _save_sessions_to_disk,
+))
 app.register_blueprint(create_edits_blueprint(
     lambda: _get_active(),
     VALUE_AUX_EDITABLE_LINE_TYPES,
@@ -514,6 +519,8 @@ _SESSION_SAVE_PATHS = {
     '/api/scenarios/save',
     '/api/scenarios/load',
     '/api/export_db',
+    '/api/comments',
+    '/api/comments/delete',
 }
 
 _SESSION_SAVE_METHODS = {'POST', 'DELETE'}
