@@ -3561,6 +3561,19 @@ function openMachineDrilldown(mcCode) {
             Object.entries(m.edit_meta).map(([f, d]) => `${f} (${d.original_display} → ${d.new_display})`).join(', ') + '</div>';
     }
 
+    // Direct effective-throughput control (Fase 2.3). Because required hours =
+    // raw_hours / OEE, effective throughput is exactly proportional to OEE, so
+    // a target throughput back-computes to an OEE override applied through the
+    // existing (tested) machine-edit path — no new formula or state.
+    html += `<div class="card rounded-lg p-3 mb-4 flex items-center gap-2 flex-wrap">
+        <span class="text-xs text-slate-400">Effectieve doorzet instellen</span>
+        <input id="drillThroughputInput" type="text" inputmode="decimal" placeholder="doel (huidig ${m.throughput_effective.toFixed(2)})"
+               class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm w-32 text-slate-200">
+        <button type="button" onclick="applyDirectThroughput('${escapeHtml(m.code)}')"
+                class="px-3 py-1 rounded text-sm bg-indigo-700 hover:bg-indigo-600 text-white">Toepassen</button>
+        <span class="text-[10px] text-slate-500 italic">Past de OEE evenredig aan om de doeldoorzet te bereiken (automatische herberekening).</span>
+    </div>`;
+
     const rows = [
         ['Benodigde uren', m.req_hours_by_period, 'h'],
         ['Beschikbare capaciteit (uren)', m.capacity_hours_by_period, 'h'],
@@ -3588,6 +3601,40 @@ function openMachineDrilldown(mcCode) {
 function closeMachineDrilldown() {
     const modal = document.getElementById('machineDrillModal');
     if (modal) modal.style.display = 'none';
+}
+
+async function applyDirectThroughput(mcCode) {
+    if (!_machinesData || !_machinesData.machines) return;
+    const m = _machinesData.machines.find(x => String(x.code) === String(mcCode));
+    if (!m) return;
+    const target = parseLocaleNumber(document.getElementById('drillThroughputInput').value);
+    if (isNaN(target) || target <= 0) { notify('Voer een geldige doeldoorzet in.', 'warning'); return; }
+    const curEff = m.throughput_effective;
+    if (!curEff || curEff <= 0) { notify('Huidige doorzet is 0 — kan niet evenredig schalen. Pas OEE direct aan.', 'warning'); return; }
+    // effective ∝ OEE  ⇒  new_oee = oee × (target / current_effective)
+    let newOee = m.oee * (target / curEff);
+    newOee = Math.max(0.01, Math.min(2.0, newOee)); // clamp OEE fraction
+    setBusy(true, 'Doorzet toepassen (OEE aanpassen)...');
+    try {
+        const res = await fetch('/api/machines/update', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ machine: mcCode, field: 'oee', value: newOee }),
+        });
+        const out = await res.json();
+        if (!res.ok || out.error) { notify(out.error || 'Fout bij toepassen doorzet', 'error'); return; }
+        _machinesUndoDepth = out.undo_depth || 0;
+        _machinesRedoDepth = out.redo_depth || 0;
+        try { await _applyServerPayload(out, { deltaSource: 'plan', skipDeltaRecording: true, skipDashboard: true }); }
+        catch (e) { console.warn('applyServerPayload after throughput edit:', e); }
+        await loadMachinesData();   // always refresh machine numbers
+        if (typeof renderOeeTable === 'function') renderOeeTable();
+        openMachineDrilldown(mcCode); // reopen with refreshed numbers
+        notify(`Doeldoorzet toegepast: OEE → ${(newOee * 100).toFixed(1)}%. Undo via de machines-tab.`, 'success');
+    } catch (e) {
+        notify('Fout: ' + e, 'error');
+    } finally {
+        setBusy(false);
+    }
 }
 
 function renderTop10Overstocks(top10) {
