@@ -865,7 +865,10 @@
                             <span class="text-slate-500 text-base leading-none">&#8597;&#8596;</span>
                             <h3 class="font-semibold text-sm">Projected Financial Metrics <span class="text-xs font-normal text-slate-500">(000s EUR)</span></h3>
                         </div>
-                        <button onclick="exportChartPNG(financialChart,'projected_financial_metrics.png')" class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded">&#8595; PNG</button>
+                        <div class="flex gap-2">
+                            <button onclick="openFinancialDeviation()" class="px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded" title="Afwijking t.o.v. baseline + drilldown">&#9878; Afwijking</button>
+                            <button onclick="exportChartPNG(financialChart,'projected_financial_metrics.png')" class="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded">&#8595; PNG</button>
+                        </div>
                     </div>
                     <canvas id="financialChart" height="220"></canvas>
                 </div>
@@ -1521,6 +1524,18 @@
             <button type="button" onclick="deleteCommentFromPopover()" class="px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-red-800 text-slate-300" title="Verwijderen">Verwijderen</button>
             <button type="button" onclick="closeCommentPopover()" class="px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300">Annuleren</button>
             <button type="button" onclick="saveCommentFromPopover()" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white">Opslaan</button>
+        </div>
+    </div>
+
+    <!-- Financial deviation + drilldown modal (Fase 2.4) -->
+    <div id="finDevModal" style="display:none;position:fixed;inset:0;z-index:9100;background:rgba(2,6,23,0.82);align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)closeFinancialDeviation()">
+        <div class="card rounded-xl" style="width:min(1150px,96vw);max-height:86vh;display:flex;flex-direction:column;padding:16px 18px;overflow:hidden">
+            <div class="flex items-center justify-between mb-1">
+                <h3 class="font-semibold text-base">Financiële metrics — afwijking t.o.v. baseline</h3>
+                <button type="button" onclick="closeFinancialDeviation()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
+            </div>
+            <div class="text-xs text-slate-500 mb-3">Baseline = de schone berekening van deze instance (vóór edits). Klik op een metric voor de onderliggende regels.</div>
+            <div id="finDevBody" class="overflow-auto" style="flex:1"></div>
         </div>
     </div>
 
@@ -3600,6 +3615,76 @@ function openMachineDrilldown(mcCode) {
 
 function closeMachineDrilldown() {
     const modal = document.getElementById('machineDrillModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// ===== Financial metrics deviation + drilldown (Fase 2.4) =====
+async function openFinancialDeviation() {
+    const modal = document.getElementById('finDevModal');
+    const body = document.getElementById('finDevBody');
+    body.innerHTML = '<div class="text-slate-400 text-sm p-4">Laden...</div>';
+    modal.style.display = 'flex';
+    try {
+        const res = await fetch('/api/financial_metrics');
+        const data = await res.json();
+        if (data.error) { body.innerHTML = `<div class="text-red-400 p-4">${escapeHtml(data.error)}</div>`; return; }
+        _renderFinancialDeviation(data);
+    } catch (e) { body.innerHTML = `<div class="text-red-400 p-4">Fout: ${escapeHtml(String(e))}</div>`; }
+}
+
+function _renderFinancialDeviation(data) {
+    const periods = data.periods || [];
+    const trendGlyph = t => t === 'up' ? '<span style="color:#4ade80">▲</span>' : t === 'down' ? '<span style="color:#f87171">▼</span>' : '<span class="text-slate-500">▬</span>';
+    const fmtNum = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    let head = '<th class="text-left p-1 sticky left-0 bg-slate-800">Metric</th><th class="text-center p-1">Trend</th><th class="text-right p-1">Δ totaal</th>'
+        + periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('');
+    let rows = (data.metrics || []).map(m => {
+        const totalDelta = periods.reduce((a, p) => a + (m.delta[p] || 0), 0);
+        const deltaCls = totalDelta > 0.5 ? 'text-emerald-400' : totalDelta < -0.5 ? 'text-red-400' : 'text-slate-400';
+        const drillable = m.source_line_type ? 'cursor-pointer hover:bg-slate-700/50' : '';
+        const cells = periods.map(p => {
+            const d = m.delta[p] || 0;
+            const cls = d > 0.5 ? 'text-emerald-400' : d < -0.5 ? 'text-red-400' : 'text-slate-500';
+            const title = `huidig ${fmtNum(m.current[p])} vs baseline ${fmtNum(m.baseline[p])}`;
+            return `<td class="text-right p-1 font-mono ${cls}" title="${title}">${d ? (d > 0 ? '+' : '') + fmtNum(d) : '·'}</td>`;
+        }).join('');
+        const onclick = m.source_line_type ? `onclick="drillFinancialMetric('${escapeHtml(m.name)}')"` : '';
+        return `<tr class="${drillable}" ${onclick} title="${m.source_line_type ? 'Klik voor onderliggende regels' : 'Afgeleide metric'}">
+            <td class="p-1 text-slate-300 sticky left-0 bg-slate-800">${escapeHtml(m.name)}${m.source_line_type ? ' <span class="text-[9px] text-indigo-400">▸</span>' : ''}</td>
+            <td class="text-center p-1">${trendGlyph(m.trend)}</td>
+            <td class="text-right p-1 font-mono ${deltaCls}">${totalDelta ? (totalDelta > 0 ? '+' : '') + fmtNum(totalDelta) : '·'}</td>
+            ${cells}</tr>`;
+    }).join('');
+    document.getElementById('finDevBody').innerHTML =
+        `<div class="overflow-auto"><table class="w-full text-xs"><thead class="text-slate-400">${head}</thead><tbody>${rows}</tbody></table></div>
+         <div id="finDrillHost" class="mt-4"></div>`;
+    if (!data.baseline_available) {
+        document.getElementById('finDevBody').insertAdjacentHTML('afterbegin',
+            '<div class="text-amber-300 text-xs mb-2">Geen baseline beschikbaar — herbereken deze instance voor afwijkingsdata.</div>');
+    }
+}
+
+async function drillFinancialMetric(name) {
+    const host = document.getElementById('finDrillHost');
+    if (!host) return;
+    host.innerHTML = '<div class="text-slate-400 text-sm">Onderliggende regels laden...</div>';
+    try {
+        const res = await fetch('/api/financial_metrics/drill?metric=' + encodeURIComponent(name));
+        const data = await res.json();
+        if (data.derived) { host.innerHTML = `<div class="text-slate-400 text-sm">${escapeHtml(data.message || 'Afgeleide metric.')}</div>`; return; }
+        const fmtNum = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        const rows = (data.contributors || []).map(c =>
+            `<tr><td class="p-1 font-mono text-slate-400">${escapeHtml(c.material_number)}</td>
+                 <td class="p-1 text-slate-300">${escapeHtml(c.material_name)}</td>
+                 <td class="p-1 text-right font-mono text-slate-200">${fmtNum(c.total)}</td></tr>`).join('');
+        host.innerHTML = `<div class="card rounded-lg p-3">
+            <div class="text-sm font-semibold text-slate-200 mb-2">Onderliggende regels: ${escapeHtml(name)} <span class="text-xs font-normal text-slate-500">(bron: ${escapeHtml(data.source_line_type)}, top ${(data.contributors || []).length})</span></div>
+            <table class="w-full text-xs"><thead class="text-slate-400"><th class="text-left p-1">Materiaal</th><th class="text-left p-1">Naam</th><th class="text-right p-1">Totaal</th></thead><tbody>${rows}</tbody></table></div>`;
+    } catch (e) { host.innerHTML = `<div class="text-red-400 text-sm">Fout: ${escapeHtml(String(e))}</div>`; }
+}
+
+function closeFinancialDeviation() {
+    const modal = document.getElementById('finDevModal');
     if (modal) modal.style.display = 'none';
 }
 
@@ -6827,6 +6912,8 @@ document.addEventListener('keydown', function(e) {
         if (zoom && zoom.style.display !== 'none' && zoom.style.display !== '') { e.preventDefault(); closeChartZoom(); return; }
         const drill = document.getElementById('machineDrillModal');
         if (drill && drill.style.display !== 'none' && drill.style.display !== '') { e.preventDefault(); closeMachineDrilldown(); return; }
+        const findev = document.getElementById('finDevModal');
+        if (findev && findev.style.display !== 'none' && findev.style.display !== '') { e.preventDefault(); closeFinancialDeviation(); return; }
         const cpop = document.getElementById('commentPopover');
         if (cpop && cpop.style.display === 'block') { e.preventDefault(); closeCommentPopover(); return; }
     }
