@@ -7,6 +7,16 @@ from flask import Blueprint, jsonify
 
 from modules.inventory_quality_engine import InventoryQualityEngine
 from modules.models import LineType
+from ui.scoping import (
+    group_material_set,
+    material_l07_hours_by_machine,
+    resolve_active_group,
+    scale_utilization,
+    scope_inventory_quality,
+    scope_trend,
+    scoped_financials,
+    scoped_marker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +100,21 @@ def create_read_blueprint(
         }
         if baseline_value_results:
             response['baseline_value_results'] = baseline_value_results
+
+        # Material groups (view scoping): add the honest scoped P&L block
+        # next to the untouched full payload. No group active → no extra
+        # keys, byte-identical response.
+        group = resolve_active_group(sess)
+        if group is not None:
+            mats, _ = group_material_set(group, current_engine.data)
+            response['scoped_consolidation'] = scoped_financials(
+                current_engine, mats, current_engine.data.periods)
+            response['scoped'] = scoped_marker(group, current_engine.data)
         return jsonify(response)
 
     @bp.route('/api/dashboard')
     def get_dashboard():
-        _, current_engine = get_active()
+        sess, current_engine = get_active()
         if current_engine is None:
             return jsonify({'error': 'No calculations run'}), 400
 
@@ -173,7 +193,7 @@ def create_read_blueprint(
             for period in periods:
                 target_trend[period] = round(target_trend.get(period, 0.0) + row.values.get(period, 0.0), 1)
 
-        return jsonify({
+        payload = {
             'periods': periods,
             'kpis': {
                 'materials': materials_count,
@@ -189,7 +209,59 @@ def create_read_blueprint(
             'demand_trend': demand_trend,
             'inventory_trend': inventory_trend,
             'target_trend': target_trend,
-        })
+        }
+
+        # Material groups (view scoping, Fase materiaalgroepen): with an
+        # active group the per-material aggregates are re-summed over the
+        # group; machine utilization becomes the group's SHARE (ratio of
+        # material-L07 hours); fixed-cost/derived financials are replaced by
+        # the honest scoped block. Without an active group the code above is
+        # untouched and the payload stays byte-identical (golden parity).
+        group = resolve_active_group(sess)
+        if group is not None:
+            data = current_engine.data
+            mats, _missing = group_material_set(group, data)
+            results = current_engine.results
+            payload['demand_trend'] = scope_trend(
+                results.get(LineType.TOTAL_DEMAND.value, []), mats, periods)
+            payload['inventory_trend'] = scope_trend(
+                results.get(LineType.INVENTORY.value, []), mats, periods)
+            payload['target_trend'] = scope_trend(
+                results.get(LineType.MIN_TARGET_STOCK.value, []), mats, periods)
+
+            scoped_iq, scoped_top10, scoped_overstock = scope_inventory_quality(
+                inventory_quality, mats)
+            payload['inventory_quality'] = scoped_iq
+            payload['top_10_overstocks'] = scoped_top10
+
+            payload['financials'] = scoped_financials(current_engine, mats, periods)
+
+            l07_rows = results.get(LineType.CAPACITY_UTILIZATION.value, [])
+            full_hours = material_l07_hours_by_machine(l07_rows, None, periods)
+            group_hours = material_l07_hours_by_machine(l07_rows, mats, periods)
+            scoped_util = []
+            scoped_util_vals = []
+            for entry in utilization_by_machine:
+                mc_code = entry['machine']
+                scaled = scale_utilization(
+                    entry['values'],
+                    group_hours.get(mc_code, {}),
+                    full_hours.get(mc_code, {}),
+                )
+                scoped_util.append({**entry, 'values': scaled})
+                scoped_util_vals.extend(v for v in scaled.values() if v is not None)
+            payload['utilization_by_machine'] = scoped_util
+
+            payload['kpis'] = {
+                'materials': len(mats),
+                'avg_utilization': round(
+                    sum(scoped_util_vals) / len(scoped_util_vals), 1
+                ) if scoped_util_vals else 0.0,
+                'total_fte': total_fte,  # niet toerekenbaar; frontend toont "—"
+                'total_overstock': scoped_overstock,
+            }
+            payload['scoped'] = scoped_marker(group, data)
+        return jsonify(payload)
 
     @bp.route('/api/capacity')
     def get_capacity():

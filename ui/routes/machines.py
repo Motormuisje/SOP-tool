@@ -5,6 +5,12 @@ from typing import Callable
 from flask import Blueprint, jsonify, request
 
 from modules.models import LineType
+from ui.scoping import (
+    group_material_set,
+    material_l07_hours_by_machine,
+    resolve_active_group,
+    scoped_marker,
+)
 
 
 def create_machines_blueprint(
@@ -161,6 +167,58 @@ def create_machines_blueprint(
                 result[period] = (out_p.get(period, 0.0) / hours) if hours > 0 else 0.0
             return result
 
+        # Material-group scoping (view-only, Fase materiaalgroepen): swap the
+        # per-machine lookups for group-scoped variants BEFORE the payload is
+        # built, so machines_out/groups_out/effective-throughput all derive
+        # consistently. Capacity properties (OEE, shift hours, availability,
+        # capacity_hours) stay whole-machine; utilization becomes the group's
+        # SHARE (hours ratio — exact, OEE cancels). Without an active group
+        # nothing below this comment changes any value.
+        active_group = resolve_active_group(sess)
+        if active_group is not None:
+            mats, _missing = group_material_set(active_group, data)
+            full_raw = material_l07_hours_by_machine(cap_rows, None, periods)
+            group_raw = material_l07_hours_by_machine(cap_rows, mats, periods)
+
+            def _group_share(mc_code, period):
+                total = full_raw.get(mc_code, {}).get(period, 0.0)
+                if abs(total) < 1e-12:
+                    return 0.0
+                return group_raw.get(mc_code, {}).get(period, 0.0) / total
+
+            # Display convention for machine req-hours is raw/OEE (like the
+            # engine's machine rows) — apply the same to the group's hours.
+            req_hours_by_machine = {}
+            for mc_code, machine in data.machines.items():
+                oee = machine.oee if machine.oee > 0 else 1.0
+                raw = group_raw.get(mc_code, {})
+                req_hours_by_machine[mc_code] = {
+                    period: raw.get(period, 0.0) / oee for period in periods
+                }
+            util_by_machine = {
+                mc_code: {period: values.get(period, 0.0) * _group_share(mc_code, period)
+                          for period in periods}
+                for mc_code, values in util_by_machine.items()
+            }
+            scoped_output = {mc: {period: 0.0 for period in periods} for mc in data.machines}
+            prod_plan = getattr(current_engine, 'all_production_plans', {}) or {}
+            for mat_num, plan_data in prod_plan.items():
+                if str(mat_num) not in mats:
+                    continue
+                try:
+                    routings = data.get_all_routings(mat_num)
+                except Exception:
+                    continue
+                for routing in routings:
+                    wc = routing.work_center
+                    if wc not in scoped_output:
+                        continue
+                    for period in periods:
+                        qty = plan_data.get(period, 0.0)
+                        if qty > 0:
+                            scoped_output[wc][period] += qty
+            output_by_machine_period = scoped_output
+
         machines_out = []
         for mc_code, machine in data.machines.items():
             req_p = {period: round(req_hours_by_machine.get(mc_code, {}).get(period, 0.0), 2) for period in periods}
@@ -263,6 +321,9 @@ def create_machines_blueprint(
                     'fte_avg': round(_avg(fte_p), 2),
                 })
 
+        payload_extra = {}
+        if active_group is not None:
+            payload_extra['scoped'] = scoped_marker(active_group, data)
         return jsonify({
             'periods': periods,
             'machines': machines_out,
@@ -272,6 +333,7 @@ def create_machines_blueprint(
             'machine_overrides': machine_overrides,
             'undo_depth': len(sess.get('machine_undo') or []),
             'redo_depth': len(sess.get('machine_redo') or []),
+            **payload_extra,
         })
 
     @bp.route('/api/machines/<mc_code>/products', methods=['GET'])
@@ -279,7 +341,7 @@ def create_machines_blueprint(
         """Products (materials) routed over this machine with their production
         plan volumes per period — volumes only, deliberately not all line
         types, to keep the view compact (Fase 2.2 follow-up)."""
-        _, current_engine = get_active()
+        sess, current_engine = get_active()
         if current_engine is None:
             return jsonify({'error': 'No calculations run'}), 400
         data = current_engine.data
@@ -288,8 +350,16 @@ def create_machines_blueprint(
         periods = data.periods
         plans = getattr(current_engine, 'all_production_plans', {}) or {}
 
+        # Active material group: only its products (view scoping).
+        active_group = resolve_active_group(sess)
+        group_mats = None
+        if active_group is not None:
+            group_mats, _ = group_material_set(active_group, data)
+
         products = []
         for mat_num, plan in plans.items():
+            if group_mats is not None and str(mat_num) not in group_mats:
+                continue
             try:
                 routings = data.get_all_routings(mat_num)
             except Exception:
@@ -308,7 +378,10 @@ def create_machines_blueprint(
                 'total': total,
             })
         products.sort(key=lambda item: item['total'], reverse=True)
-        return jsonify({'machine': mc_code, 'periods': periods, 'products': products})
+        payload = {'machine': mc_code, 'periods': periods, 'products': products}
+        if active_group is not None:
+            payload['scoped'] = scoped_marker(active_group, data)
+        return jsonify(payload)
 
     @bp.route('/api/machines/update', methods=['POST'])
     def update_machine_param():
