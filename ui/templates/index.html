@@ -1524,6 +1524,17 @@
         </div>
     </div>
 
+    <!-- Machine drilldown modal (Fase 2.2) -->
+    <div id="machineDrillModal" style="display:none;position:fixed;inset:0;z-index:9100;background:rgba(2,6,23,0.82);align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)closeMachineDrilldown()">
+        <div class="card rounded-xl" style="width:min(1100px,95vw);max-height:85vh;display:flex;flex-direction:column;padding:16px 18px;overflow:hidden">
+            <div class="flex items-center justify-between mb-3">
+                <h3 id="machineDrillTitle" class="font-semibold text-base">Machine detail</h3>
+                <button type="button" onclick="closeMachineDrilldown()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
+            </div>
+            <div id="machineDrillBody" class="overflow-auto" style="flex:1"></div>
+        </div>
+    </div>
+
     <!-- Chart zoom modal (Fase 1.1). display toggled in JS; no Tailwind .hidden
          because the inline flex layout would override it and keep the overlay
          capturing clicks across the whole page. -->
@@ -3526,6 +3537,58 @@ document.addEventListener('DOMContentLoaded', () => {
     const tbody = document.getElementById('planBody');
     if (tbody) tbody.addEventListener('click', _onPlanBodyCommentClick, true);
 });
+
+// ===== Machine drilldown (Fase 2.2) — read-only per-period detail =====
+function openMachineDrilldown(mcCode) {
+    if (!_machinesData || !_machinesData.machines) return;
+    const m = _machinesData.machines.find(x => String(x.code) === String(mcCode));
+    if (!m) { notify('Machine niet gevonden.', 'warning'); return; }
+    const periods = _machinesData.periods || [];
+    document.getElementById('machineDrillTitle').textContent =
+        `${m.code} — ${m.name || ''} (groep ${m.group || '-'})`;
+
+    const kpi = (label, val) =>
+        `<div class="card rounded-lg px-3 py-2"><div class="text-[10px] uppercase text-slate-500">${label}</div><div class="text-sm font-semibold text-slate-200">${val}</div></div>`;
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        ${kpi('OEE', (m.oee * 100).toFixed(1) + '%')}
+        ${kpi('Shift-uren/mnd', m.shift_hours.toFixed(1) + 'h')}
+        ${kpi('Gem. bezetting', m.util_avg.toFixed(1) + '%')}
+        ${kpi('Doorzet (eff/theo)', m.throughput_effective.toFixed(2) + ' / ' + m.throughput_theoretical.toFixed(2))}
+    </div>`;
+
+    if (m.edit_meta && Object.keys(m.edit_meta).length) {
+        html += '<div class="mb-3 text-xs text-amber-300">Actieve overrides: ' +
+            Object.entries(m.edit_meta).map(([f, d]) => `${f} (${d.original_display} → ${d.new_display})`).join(', ') + '</div>';
+    }
+
+    const rows = [
+        ['Benodigde uren', m.req_hours_by_period, 'h'],
+        ['Beschikbare capaciteit (uren)', m.capacity_hours_by_period, 'h'],
+        ['Bezetting', m.util_by_period, '%'],
+        ['Beschikbaarheid', m.availability_by_period, '%'],
+        ['Output (volume)', m.output_by_period, ''],
+        ['Effectieve doorzet', m.throughput_effective_by_period, ''],
+    ];
+    let thead = '<th class="text-left p-1 sticky left-0 bg-slate-800">Metriek</th>' +
+        periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('');
+    let tbody = rows.map(([label, map, unit]) => {
+        const cells = periods.map(p => {
+            const v = (map || {})[p];
+            const disp = (v === undefined || v === null) ? '-' : (Number(v).toLocaleString(undefined, {maximumFractionDigits: 2}) + unit);
+            return `<td class="text-right p-1 font-mono text-slate-300">${disp}</td>`;
+        }).join('');
+        return `<tr><td class="p-1 text-slate-400 sticky left-0 bg-slate-800">${label}</td>${cells}</tr>`;
+    }).join('');
+    html += `<div class="overflow-auto"><table class="w-full text-xs"><thead class="text-slate-400">${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+
+    document.getElementById('machineDrillBody').innerHTML = html;
+    document.getElementById('machineDrillModal').style.display = 'flex';
+}
+
+function closeMachineDrilldown() {
+    const modal = document.getElementById('machineDrillModal');
+    if (modal) modal.style.display = 'none';
+}
 
 function renderTop10Overstocks(top10) {
     const canvas = document.getElementById('overstocksChart');
@@ -6715,6 +6778,10 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         const zoom = document.getElementById('chartZoomModal');
         if (zoom && zoom.style.display !== 'none' && zoom.style.display !== '') { e.preventDefault(); closeChartZoom(); return; }
+        const drill = document.getElementById('machineDrillModal');
+        if (drill && drill.style.display !== 'none' && drill.style.display !== '') { e.preventDefault(); closeMachineDrilldown(); return; }
+        const cpop = document.getElementById('commentPopover');
+        if (cpop && cpop.style.display === 'block') { e.preventDefault(); closeCommentPopover(); return; }
     }
     if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -7618,7 +7685,10 @@ function renderOeeTable() {
                 <td class="text-center font-semibold ${mUtilCls}">${m.util_avg.toFixed(1)}%</td>
                 <td class="text-center text-slate-300">${m.throughput_theoretical.toFixed(2)}</td>
                 <td class="text-center text-slate-300">${m.throughput_effective.toFixed(2)}</td>
-                <td class="text-center">${editBtn(`focusMachineOee('${escapeHtml(m.code)}')`, 'Bewerk OEE van deze machine')}</td>
+                <td class="text-center whitespace-nowrap">
+                    <button onclick="event.stopPropagation();openMachineDrilldown('${escapeHtml(m.code)}')" title="Bekijk detail per periode" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-indigo-600 text-slate-400 hover:text-white transition-colors">&#128269;</button>
+                    ${editBtn(`focusMachineOee('${escapeHtml(m.code)}')`, 'Bewerk OEE van deze machine')}
+                </td>
             </tr>`;
         });
     });

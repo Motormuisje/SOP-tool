@@ -169,6 +169,10 @@ def create_machines_blueprint(
             eff_p = {period: round(value, 2) for period, value in _effective_throughput_period(mc_code).items()}
             shift_hours = shift_hours_lookup(machine, data)
             edit_meta = _machine_edit_meta(mc_code, machine, avail_p)
+            # Drilldown extras (Fase 2.2) — read-only, derived from existing data:
+            # produced output volume and available capacity hours per period.
+            output_p = {period: round(output_by_machine_period.get(mc_code, {}).get(period, 0.0), 2) for period in periods}
+            capacity_hours_p = {period: round(shift_hours * (avail_p.get(period, 0.0) / 100.0), 2) for period in periods}
 
             machines_out.append({
                 'code': mc_code,
@@ -185,6 +189,8 @@ def create_machines_blueprint(
                 'util_by_period': util_p,
                 'availability_by_period': avail_p,
                 'throughput_effective_by_period': eff_p,
+                'output_by_period': output_p,
+                'capacity_hours_by_period': capacity_hours_p,
                 'edit_meta': edit_meta,
                 'has_edits': bool(edit_meta),
             })
