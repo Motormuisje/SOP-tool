@@ -819,6 +819,15 @@
         <span class="text-indigo-400 text-xs font-semibold uppercase tracking-wide">Horizon</span>
         <span class="text-indigo-200 text-sm" id="horizonText">-</span>
     </div>
+    <!-- Actieve materiaalgroep: zichtbaar op ELK tabblad zodat niemand zich
+         afvraagt waarom de cijfers klein zijn. -->
+    <div id="activeGroupBanner" class="hidden bg-emerald-900/50 border-b border-emerald-600/60 py-2 px-4 flex items-center gap-3">
+        <span class="text-emerald-300 text-xs font-semibold uppercase tracking-wide">Actieve groep</span>
+        <span class="text-emerald-100 text-sm font-semibold" id="activeGroupName">-</span>
+        <span class="text-emerald-300/80 text-xs" id="activeGroupCount"></span>
+        <span class="text-emerald-200/70 text-xs italic hidden sm:inline">Alle cijfers tonen alleen de bijdrage van deze groep.</span>
+        <button onclick="deactivateMaterialGroup()" class="ml-auto px-3 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white">Deactiveer</button>
+    </div>
     <main class="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-6">
         <div class="flex gap-1 md:gap-2 mb-4 md:mb-6 overflow-x-auto bg-slate-800/50 p-1 rounded-xl">
             <button class="tab-btn active px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('dashboard',this)">Dashboard</button>
@@ -1042,6 +1051,12 @@
                                 <span id="ltFilterLabel">All Line Types</span> <span class="text-slate-400 text-xs">&#9662;</span>
                             </button>
                             <div id="ltDropdown" class="hidden absolute right-0 top-full mt-1 bg-slate-800 border border-slate-600 rounded shadow-xl z-50 min-w-56 max-h-64 overflow-y-auto"></div>
+                        </div>
+                        <!-- Materiaalgroepen (filtermodus): vrij combineerbaar met linetypes/zoeken -->
+                        <select id="matGroupSelect" onfocus="pushFilterHistory()" onchange="onMatGroupFilterChange(this)" class="bg-slate-700 rounded px-2 py-1 text-sm hidden" style="max-width:170px" title="Filter de planningstabel op een materiaalgroep"></select>
+                        <div class="relative hidden" id="matGroupMenuWrap">
+                            <button id="matGroupMenuBtn" onclick="toggleMatGroupMenu()" class="bg-slate-700 rounded px-2 py-1 text-sm" title="Materiaalgroepen beheren">&#9881;</button>
+                            <div id="matGroupMenu" class="hidden absolute right-0 top-full mt-1 bg-slate-800 border border-slate-600 rounded shadow-xl z-50 min-w-72 max-h-72 overflow-y-auto p-1"></div>
                         </div>
                         <button onclick="undoFilterState()" class="px-2 py-1 rounded text-sm bg-slate-700 text-slate-300 hover:bg-slate-500" title="Undo laatste filterwijziging">&#8592;</button>
                         <input id="matSearch" onfocus="pushFilterHistory()" oninput="filterTable()" placeholder="Search..." class="bg-slate-700 rounded px-2 py-1 text-sm w-32">
@@ -2724,6 +2739,9 @@ async function loadValueResults() {
         state.valueResults = data.results;
         state.valueLineTypes = Object.keys(data.results).sort();
         state.consolidation = data.consolidation || [];
+        // Actieve materiaalgroep: eerlijk gescoopt P&L-blok van de server.
+        state.scopedConsolidation = data.scoped_consolidation || null;
+        state.scopedInfo = data.scoped || null;
         populateLtDropdown('vpLtDropdown', 'vpLtFilterLabel', state.valueLineTypes, state.valueResults, 'vp');
         updateValueKPIs();
         _renderViewOrDefer('values');
@@ -2850,7 +2868,12 @@ function filterVPTable() {
             || _vpEditFilterMode === 'value' && matchValueEdit
             || _vpEditFilterMode === 'all' && (matchPlanEdit || matchValueEdit || vpEditedRows.has(valueKey) || r.dataset.hasEdits === '1');
         const matchMaterialScope = !_vpMaterialScope || _vpMaterialScope.has(r.dataset.material || '');
-        const show = matchSearch && matchEdited && matchMaterialScope;
+        // Actieve materiaalgroep: per-materiaal-rijen volgen de groep;
+        // consolidatierijen blijven zichtbaar (gescoopte weergave hierboven).
+        const activeGroupSet = _activeGroupMaterialSet();
+        const matchActiveGroup = !activeGroupSet || isConsol
+            || activeGroupSet.has(r.dataset.material || '');
+        const show = matchSearch && matchEdited && matchMaterialScope && matchActiveGroup;
         r.style.display = show ? '' : 'none';
         if (show) visibleCount += 1;
     });
@@ -3048,9 +3071,45 @@ function updateValueKPIs() {
     document.getElementById('vp-roce').textContent = (avgOf(findRow('ZZZZZZ_ROCE')) * 100).toFixed(1) + '%';
 }
 
+const _SCOPED_CONSOL_ROWS = [
+    { key: 'TURNOVER', label: 'Groepsomzet', color: 'text-green-400', bold: true },
+    { key: 'RAW MATERIAL COST', label: 'Grondstofkost', color: 'text-orange-300' },
+    { key: 'MACHINE COST', label: 'Machinekost', color: 'text-orange-300' },
+    { key: 'BIJDRAGEMARGE', label: 'Bijdragemarge (excl. vaste kosten)', color: 'text-blue-400', bold: true, sep: true },
+    { key: 'INVENTORY VALUE', label: 'Voorraadwaarde', color: 'text-indigo-300' },
+    { key: 'RECEIVABLES', label: 'Debiteuren', color: 'text-indigo-300' },
+    { key: 'PAYABLES', label: 'Crediteuren', color: 'text-indigo-300' },
+    { key: 'WORKING CAPITAL REQUIREMENTS', label: 'Werkkapitaal', color: 'text-indigo-400', bold: true, sep: true },
+];
+
+function _renderScopedConsolidation(wrap) {
+    const block = state.scopedConsolidation;
+    const periods = state.periods;
+    const name = state.activeMaterialGroup ? state.activeMaterialGroup.name : '';
+    let html = `<p class="text-xs text-emerald-300 px-2 pt-2">Actieve groep <b>${escapeHtml(name)}</b>: onderstaande cijfers zijn de bijdrage van de groep. Vaste kosten (overhead, SG&amp;A, afschrijvingen, FTE) en afgeleide cijfers (EBIT(DA), brutomarge, ROCE, kapitaal, kasstroom) zijn niet aan producten toe te rekenen en worden daarom niet getoond.</p>`;
+    html += `<table class="w-full text-sm"><thead><tr class="text-slate-400 text-xs"><th class="text-left p-2 w-56">Metric</th>${periods.map(p => `<th class="text-right p-2">${p}</th>`).join('')}</tr></thead><tbody>`;
+    _SCOPED_CONSOL_ROWS.forEach(rowDef => {
+        const series = block[rowDef.key] || {};
+        const fw = rowDef.bold ? 'font-semibold' : '';
+        html += `<tr class="consol-row ${rowDef.sep ? 'consol-separator' : ''}"><td class="p-2 ${rowDef.color} ${fw}">${rowDef.label}</td>`;
+        periods.forEach(p => {
+            const v = series[p] || 0;
+            const negCls = v < 0 ? 'text-red-400' : '';
+            html += `<td class="text-right p-2 ${negCls} ${fw}" title="${fmtFull(v)}">${fmtSig3(v)}</td>`;
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+}
+
 function renderConsolidation() {
     const wrap = document.getElementById('consolDiv');
     if (!wrap) return;
+    if (state.activeMaterialGroup && state.scopedConsolidation) {
+        _renderScopedConsolidation(wrap);
+        return;
+    }
     if (!state.consolidation.length) {
         wrap.innerHTML = '<p class="text-slate-500 text-sm p-3">Run calculations</p>';
         return;
@@ -3099,6 +3158,38 @@ function renderConsolidation() {
 }
 
 function renderFinChart() {
+    // Actieve materiaalgroep: toon de eerlijke groepsweergave (omzet,
+    // variabele kosten, bijdragemarge) — EBIT/ROCE zijn niet toerekenbaar.
+    if (state.activeMaterialGroup && state.scopedConsolidation) {
+        const periods = state.periods;
+        const block = state.scopedConsolidation;
+        const series = key => periods.map(p => (block[key] || {})[p] || 0);
+        const varCosts = periods.map((p, i) =>
+            ((block['RAW MATERIAL COST'] || {})[p] || 0) + ((block['MACHINE COST'] || {})[p] || 0));
+        const ctxScoped = document.getElementById('finChart').getContext('2d');
+        if (finChart) finChart.destroy();
+        finChart = new Chart(ctxScoped, {
+            type: 'bar',
+            data: {
+                labels: periods,
+                datasets: [
+                    { label: 'Groepsomzet', data: series('TURNOVER'), backgroundColor: 'rgba(34,197,94,0.4)', borderColor: '#22c55e', borderWidth: 1, order: 2 },
+                    { label: 'Variabele kosten', data: varCosts, backgroundColor: 'rgba(249,115,22,0.4)', borderColor: '#f97316', borderWidth: 1, order: 2 },
+                    { label: 'Bijdragemarge (excl. vaste kosten)', type: 'line', data: series('BIJDRAGEMARGE'), borderColor: '#3b82f6', borderWidth: 2, tension: 0.3, pointRadius: 3, order: 1 },
+                ],
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } } } },
+                scales: {
+                    y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8', callback: v => fmtVal(v) } },
+                    x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8', maxRotation: 45 } }
+                }
+            }
+        });
+        return;
+    }
     if (!state.consolidation.length) return;
     const periods = state.periods;
     const findRow = (name) => state.consolidation.find(r => r.material_number === name);
@@ -3168,9 +3259,52 @@ async function renderDashboard() {
         renderInventoryHeatmap(data.inventory_quality || [], per);
         renderDemandTrendChart(per, data.demand_trend || {});
         renderInvTargetChart(per, data.inventory_trend || {}, data.target_trend || {});
+        _updateScopedPanelNotes(data.scoped || null);
         // ── restore panel order ──
         _restorePanelOrder();
     } catch (err) { log('Dashboard error: ' + err); }
+}
+
+// Dutch honesty notes on dashboard panels while a material group is active.
+function _updateScopedPanelNotes(scoped) {
+    const NOTES = {
+        'panel-fin-metrics': 'Groepsweergave: bijdragemarge excl. vaste kosten.',
+        'panel-kpi': 'Groepsweergave: alleen eerlijk toerekenbare cijfers.',
+        'panel-roce-comp': 'Niet beschikbaar bij actieve productgroep: vaste kosten en kapitaal zijn niet toerekenbaar.',
+        'panel-roce': 'Niet beschikbaar bij actieve productgroep.',
+    };
+    Object.entries(NOTES).forEach(([panelId, text]) => {
+        const panel = document.querySelector(`[data-panel-id="${panelId}"]`);
+        if (!panel) return;
+        let note = panel.querySelector('.scoped-note');
+        if (scoped) {
+            if (!note) {
+                note = document.createElement('div');
+                note.className = 'scoped-note text-[11px] text-emerald-300 mb-1';
+                const h3 = panel.querySelector('h3');
+                (h3 ? h3.parentElement : panel).insertAdjacentElement('afterend', note);
+            }
+            note.textContent = text;
+        } else if (note) {
+            note.remove();
+        }
+    });
+    // FTE-grafiek: fabrieksbrede data, expliciet zeggen.
+    const fteCanvas = document.getElementById('fteChart');
+    const fteCard = fteCanvas ? fteCanvas.closest('.card, .db-panel') : null;
+    if (fteCard) {
+        let note = fteCard.querySelector('.scoped-note');
+        if (scoped) {
+            if (!note) {
+                note = document.createElement('div');
+                note.className = 'scoped-note text-[11px] text-emerald-300 mb-1';
+                fteCard.insertAdjacentElement('afterbegin', note);
+            }
+            note.textContent = 'FTE is niet toerekenbaar aan een productgroep en wordt fabrieksbreed getoond.';
+        } else if (note) {
+            note.remove();
+        }
+    }
 }
 
 // ── Drag-and-drop panel reordering ──────────────────────────────────────────
@@ -3225,9 +3359,12 @@ document.addEventListener('DOMContentLoaded', _initDragDrop);
 function renderKPIs(kpis, demandTrend) {
     if (!kpis) return;
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    const scoped = !!(window._dashboardData && window._dashboardData.scoped);
     set('kpi-mat',       kpis.materials ?? '-');
     set('kpi-util',      kpis.avg_utilization != null ? kpis.avg_utilization.toFixed(1) + '%' : '-');
-    set('kpi-fte',       kpis.total_fte != null ? kpis.total_fte.toFixed(1) : '-');
+    // FTE is niet toerekenbaar aan een productgroep — toon "—" i.p.v. het
+    // fabrieksbrede getal dat naast gescoopte cijfers zou misleiden.
+    set('kpi-fte',       scoped ? '—' : (kpis.total_fte != null ? kpis.total_fte.toFixed(1) : '-'));
     set('kpi-overstock', kpis.total_overstock != null ? fmtVal(kpis.total_overstock) : '-');
     const totalDemand = demandTrend ? Object.values(demandTrend).reduce((s, v) => s + (v || 0), 0) : null;
     set('kpi-demand', totalDemand != null ? totalDemand.toLocaleString(undefined, {maximumFractionDigits: 0}) : '-');
@@ -3831,8 +3968,9 @@ async function openChartAnalysis() {
         <div id="chartAnalysisHeadline" class="text-sm font-semibold text-slate-100 mb-1">Analyse laden...</div>
         <div id="chartAnalysisNotes" class="text-xs text-slate-400 mb-2"></div>
         <div id="chartAnalysisTableHost"></div>
-        <div id="chartAnalysisActions" class="flex gap-2 mt-3" style="display:none">
-            <button type="button" onclick="_analysisShowMoversInPlanning()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Filter de planningstabel op de grootste bijdragers zodat je invoerfouten direct kunt corrigeren">&#9998; Toon in planningstabel</button>
+        <div id="chartAnalysisActions" class="flex flex-wrap gap-2 mt-3" style="display:none">
+            <button type="button" id="chartAnalysisPlanBtn" onclick="_analysisShowMoversInPlanning()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Filter de planningstabel op de grootste bijdragers zodat je invoerfouten direct kunt corrigeren">&#9998; Toon in planningstabel</button>
+            <button type="button" id="chartAnalysisGroupBtn" onclick="_analysisSaveAsGroup()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Bewaar deze producten als materiaalgroep (filter of activeer via de planningstoolbar)">&#128190; Bewaar als groep</button>
             <button type="button" onclick="_analysisExportExcel()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Exporteer deze analyse naar Excel">&#11015; Exporteer (Excel)</button>
         </div>
         <p class="text-[10px] text-slate-500 mt-2 italic">Klik twee punten in de grafiek om precies dat segment te analyseren.</p>`;
@@ -3997,8 +4135,11 @@ function _renderChartAnalysisPanel(model) {
     const actions = document.getElementById('chartAnalysisActions');
     if (actions) {
         actions.style.display = '';
-        const planBtn = actions.querySelector('button');
-        if (planBtn) planBtn.style.display = model.rows.some(r => r.material) ? '' : 'none';
+        const hasMaterials = model.rows.some(r => r.material);
+        const planBtn = document.getElementById('chartAnalysisPlanBtn');
+        if (planBtn) planBtn.style.display = hasMaterials ? '' : 'none';
+        const groupBtn = document.getElementById('chartAnalysisGroupBtn');
+        if (groupBtn) groupBtn.style.display = hasMaterials ? '' : 'none';
     }
 }
 
@@ -4594,6 +4735,196 @@ async function _analysisDrillMachineProducts(mcCode, pA, pB) {
     }
 }
 
+/* ===== Materiaalgroepen (filter + actieve groep) ===== */
+
+async function loadMaterialGroups() {
+    try {
+        const res = await fetch('/api/material_groups');
+        const data = await res.json();
+        if (data.error) return;  // geen sessie/berekening: stil overslaan
+        _applyMaterialGroupsPayload(data.groups || [], data.active_group_id || null,
+                                    data.unknown_counts || {});
+    } catch (e) { /* netwerkfout: UI blijft bruikbaar zonder groepen */ }
+}
+
+function _applyMaterialGroupsPayload(groups, activeGroupId, unknownCounts) {
+    state.materialGroups = groups || [];
+    state.activeMaterialGroup = (groups || []).find(g => g.id === activeGroupId) || null;
+    state.materialGroupUnknownCounts = unknownCounts || {};
+    if (_materialGroupFilterId && !(groups || []).some(g => g.id === _materialGroupFilterId)) {
+        _materialGroupFilterId = null;
+    }
+    _renderMatGroupSelect();
+    _updateActiveGroupBanner();
+}
+
+function _renderMatGroupSelect() {
+    const sel = document.getElementById('matGroupSelect');
+    const wrap = document.getElementById('matGroupMenuWrap');
+    if (!sel) return;
+    const groups = state.materialGroups || [];
+    const show = groups.length > 0;
+    sel.classList.toggle('hidden', !show);
+    if (wrap) wrap.classList.toggle('hidden', !show);
+    sel.innerHTML = '<option value="">Alle groepen</option>' + groups.map(g =>
+        `<option value="${escapeHtml(g.id)}" ${g.id === _materialGroupFilterId ? 'selected' : ''}>${escapeHtml(g.name)} (${(g.materials || []).length})</option>`
+    ).join('');
+    sel.value = _materialGroupFilterId || '';
+}
+
+function onMatGroupFilterChange(sel) {
+    _setMaterialGroupFilter(sel.value || null);
+}
+
+function _activeGroupMaterialSet() {
+    const group = state.activeMaterialGroup;
+    if (!group) return null;
+    return new Set((group.materials || []).map(String));
+}
+
+function _updateActiveGroupBanner() {
+    const banner = document.getElementById('activeGroupBanner');
+    if (!banner) return;
+    const group = state.activeMaterialGroup;
+    banner.classList.toggle('hidden', !group);
+    if (!group) return;
+    document.getElementById('activeGroupName').textContent = group.name;
+    const unknown = (state.materialGroupUnknownCounts || {})[group.id] || 0;
+    const count = (group.materials || []).length;
+    document.getElementById('activeGroupCount').textContent = unknown > 0
+        ? `(${count} producten, waarvan ${unknown} onbekend in dit bronbestand)`
+        : `(${count} producten)`;
+}
+
+// ---- beheer-menu (⚙) ----
+function toggleMatGroupMenu() {
+    const menu = document.getElementById('matGroupMenu');
+    if (!menu) return;
+    if (menu.classList.contains('hidden')) {
+        _renderMatGroupMenu();
+        menu.classList.remove('hidden');
+    } else {
+        menu.classList.add('hidden');
+    }
+}
+
+function _renderMatGroupMenu() {
+    const menu = document.getElementById('matGroupMenu');
+    if (!menu) return;
+    const groups = state.materialGroups || [];
+    const activeId = state.activeMaterialGroup ? state.activeMaterialGroup.id : null;
+    menu.innerHTML = groups.map(g => {
+        const isActive = g.id === activeId;
+        const unknown = (state.materialGroupUnknownCounts || {})[g.id] || 0;
+        return `
+        <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-700/60 rounded text-sm">
+            <div class="flex-1 min-w-0">
+                <div class="truncate ${isActive ? 'text-emerald-300 font-semibold' : 'text-slate-200'}">${escapeHtml(g.name)}</div>
+                <div class="text-[10px] text-slate-500">${(g.materials || []).length} producten${unknown ? `, ${unknown} onbekend` : ''}</div>
+            </div>
+            ${isActive
+                ? `<button onclick="deactivateMaterialGroup()" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white whitespace-nowrap">Deactiveer</button>`
+                : `<button onclick="activateMaterialGroup('${escapeHtml(g.id)}')" class="px-2 py-0.5 rounded text-xs bg-slate-600 hover:bg-emerald-700 text-white whitespace-nowrap" title="Toon in het hele programma alleen de bijdrage van deze groep">Maak actief</button>`}
+            <button onclick="renameMaterialGroup('${escapeHtml(g.id)}')" class="px-1.5 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300" title="Hernoem">&#9998;</button>
+            <button onclick="deleteMaterialGroup('${escapeHtml(g.id)}')" class="px-1.5 py-0.5 rounded text-xs bg-red-900 hover:bg-red-700 text-red-200" title="Verwijder">&#10005;</button>
+        </div>`;
+    }).join('') || '<div class="px-2 py-2 text-xs text-slate-500">Nog geen groepen — bewaar er een vanuit de grafiek-analyse.</div>';
+}
+
+async function renameMaterialGroup(gid) {
+    const group = (state.materialGroups || []).find(g => g.id === gid);
+    if (!group) return;
+    const name = prompt('Nieuwe naam voor deze groep:', group.name);
+    if (!name || name.trim() === group.name) return;
+    const res = await fetch(`/api/material_groups/${encodeURIComponent(gid)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    _applyMaterialGroupsPayload(data.groups, data.active_group_id, data.unknown_counts);
+    _renderMatGroupMenu();
+}
+
+async function deleteMaterialGroup(gid) {
+    const group = (state.materialGroups || []).find(g => g.id === gid);
+    if (!group) return;
+    if (!confirm(`Groep "${group.name}" verwijderen?`)) return;
+    const wasActive = state.activeMaterialGroup && state.activeMaterialGroup.id === gid;
+    const res = await fetch(`/api/material_groups/${encodeURIComponent(gid)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    if (_materialGroupFilterId === gid) _setMaterialGroupFilter(null, { skipFilter: true });
+    _applyMaterialGroupsPayload(data.groups, data.active_group_id, data.unknown_counts);
+    _renderMatGroupMenu();
+    if (wasActive) await _refreshAfterGroupChange();
+    else filterTable();
+    notify(`Groep "${group.name}" verwijderd.`, 'info', 2200);
+}
+
+// ---- actieve groep (globale scope) ----
+async function activateMaterialGroup(gid) {
+    const res = await fetch(`/api/material_groups/${encodeURIComponent(gid)}/activate`,
+                            { method: 'POST' });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    _applyMaterialGroupsPayload(data.groups, data.active_group_id, data.unknown_counts);
+    document.getElementById('matGroupMenu')?.classList.add('hidden');
+    await _refreshAfterGroupChange();
+    notify(`Groep "${(data.group || {}).name || ''}" is actief: het hele programma toont nu alleen deze producten.`, 'info', 3500);
+}
+
+async function deactivateMaterialGroup() {
+    const res = await fetch('/api/material_groups/deactivate', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    _applyMaterialGroupsPayload(data.groups, data.active_group_id, data.unknown_counts);
+    await _refreshAfterGroupChange();
+    notify('Groepsfilter gedeactiveerd — alle producten weer zichtbaar.', 'info', 2500);
+}
+
+async function _refreshAfterGroupChange() {
+    _updateActiveGroupBanner();
+    // Machine-bewerkmodus verhoudt zich niet tot een groepsweergave: uit.
+    if (state.activeMaterialGroup && typeof _machineEditMode !== 'undefined' && _machineEditMode) {
+        toggleMachineEditMode();
+    }
+    const activeTab = document.querySelector('.tab-content:not(.hidden)');
+    const tabId = activeTab ? activeTab.id : '';
+    state.dashboardDirty = true;
+    if (tabId === 'dashboard-tab' && typeof renderDashboard === 'function') {
+        await renderDashboard();
+        state.dashboardDirty = false;
+    }
+    if (tabId === 'capacity-tab' && typeof loadCapacityData === 'function') {
+        loadCapacityData();
+    }
+    await loadValueResults();
+    filterTable();
+    filterVPTable();
+    _renderMatGroupSelect();
+}
+
+// ---- groep bewaren vanuit de grafiek-analyse ----
+async function _analysisSaveAsGroup() {
+    const model = window._analysisLastModel;
+    if (!model) return;
+    const mats = [...new Set(model.rows.filter(r => r.material).map(r => String(r.material)))];
+    if (!mats.length) { notify('Geen producten in deze analyse.', 'info', 2200); return; }
+    const autoName = `Top movers ${model.pA} → ${model.pB}`;
+    const name = prompt('Naam voor deze groep:', autoName);
+    if (!name || !name.trim()) return;
+    const res = await fetch('/api/material_groups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), materials: mats,
+                               source: `grafiek-analyse ${model.pA} → ${model.pB}` }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    _applyMaterialGroupsPayload(data.groups, data.active_group_id, data.unknown_counts);
+    notify(`Groep "${name.trim()}" bewaard (${mats.length} producten). Te vinden in de planningstoolbar.`, 'info', 4000);
+}
+
 // ===== Comments / annotations (Fase 2.1) =====
 let commentMode = false;
 let _commentPopoverAnchor = null; // { scope, target, period, cell }
@@ -5117,8 +5448,20 @@ function renderKPIOverviewTable(financials, periods) {
     // Kolommen = actieve horizons gesorteerd
     const cols = [..._kpiActiveMonths].sort((a, b) => a - b);
 
-    const BALANCE = new Set(['INVENTORY VALUE','FIXED ASSETS NET BOOK VALUE','WORKING CAPITAL REQUIREMENTS','CAPITAL INVESTMENT']);
-    const ROWS = [
+    const BALANCE = new Set(['INVENTORY VALUE','FIXED ASSETS NET BOOK VALUE','WORKING CAPITAL REQUIREMENTS','CAPITAL INVESTMENT','RECEIVABLES','PAYABLES']);
+    // Actieve materiaalgroep: alleen de eerlijk toerekenbare regels +
+    // bijdragemarge; afgeleide/vaste regels bestaan niet in de payload.
+    const _scopedDashboard = !!(window._dashboardData && window._dashboardData.scoped);
+    const ROWS = _scopedDashboard ? [
+        { key: 'TURNOVER',                      label: 'Groepsomzet',                  color: '#22c55e', bold: true },
+        { key: 'RAW MATERIAL COST',             label: 'Grondstofkost',                color: '#f87171' },
+        { key: 'MACHINE COST',                  label: 'Machinekost',                  color: '#fb923c' },
+        { key: 'BIJDRAGEMARGE',                 label: 'Bijdragemarge (excl. vaste kosten)', color: '#4ade80', bold: true },
+        { key: 'INVENTORY VALUE',               label: 'Voorraadwaarde',               color: '#a78bfa' },
+        { key: 'RECEIVABLES',                   label: 'Debiteuren',                   color: '#38bdf8' },
+        { key: 'PAYABLES',                      label: 'Crediteuren',                  color: '#38bdf8' },
+        { key: 'WORKING CAPITAL REQUIREMENTS',  label: 'Werkkapitaal',                 color: '#818cf8', bold: true },
+    ] : [
         { key: 'TURNOVER',                      label: 'Turnover',                     color: '#22c55e', bold: true },
         { key: 'RAW MATERIAL COST',             label: 'Raw Material Cost',            color: '#f87171' },
         { key: 'MACHINE COST',                  label: 'Machine Cost',                 color: '#fb923c' },
@@ -5305,7 +5648,14 @@ function renderFinancialChart(financials, periods) {
     if (financialChart) { financialChart.destroy(); financialChart = null; }
     if (!financials || !periods.length) return;
     const allPeriods = ['Starting stock', ...periods];
-    const METRICS = [
+    // Actieve materiaalgroep: eerlijke groepsreeksen i.p.v. afgeleide metrics.
+    const METRICS = (window._dashboardData && window._dashboardData.scoped) ? [
+        { key: 'TURNOVER',          color: '#22c55e',  label: 'Groepsomzet' },
+        { key: 'RAW MATERIAL COST', color: '#f97316',  label: 'Grondstofkost' },
+        { key: 'MACHINE COST',      color: '#fb923c',  label: 'Machinekost' },
+        { key: 'BIJDRAGEMARGE',     color: '#3b82f6',  label: 'Bijdragemarge (excl. vaste kosten)' },
+        { key: 'INVENTORY VALUE',   color: '#8b5cf6',  label: 'Voorraadwaarde' },
+    ] : [
         { key: 'TURNOVER',          color: '#22c55e',  label: 'Turnover' },
         { key: 'COST OF GOODS',     color: '#f97316',  label: 'Cost of Goods' },
         { key: 'GROSS MARGIN',      color: '#3b82f6',  label: 'Gross Margin' },
@@ -8857,6 +9207,7 @@ function _runPlanFilter() {
     const s = document.getElementById('matSearch').value.toLowerCase();
     const selectedLts = getSelectedLts('ltDropdown');
     const groupSet = _materialGroupFilterSet();
+    const activeGroupSet = _activeGroupMaterialSet();
     const rows = [...document.querySelectorAll('#planBody tr[data-material]')];
     const planEditRows = _getPlanningEditedRowKeys();
     const planEditLineMaterials = _getPlanningEditedLineMaterialKeys();
@@ -8875,7 +9226,8 @@ function _runPlanFilter() {
             || (_planEditFilterMode === 'value' && matchValueEdit)
             || (_planEditFilterMode === 'all' && (r.dataset.hasEdits === '1' || matchPlanEdit || matchValueEdit));
         const matchMaterialScope = !_editedMaterialScope || _editedMaterialScope.has(r.dataset.material || '');
-        const matchGroup = !groupSet || groupSet.has(r.dataset.material || '');
+        const matchGroup = (!groupSet || groupSet.has(r.dataset.material || ''))
+            && (!activeGroupSet || activeGroupSet.has(r.dataset.material || ''));
         const show = matchSearch && matchLt && matchEdited && matchMaterialScope && matchGroup;
         const nextDisplay = show ? '' : 'none';
         if (r.style.display !== nextDisplay) r.style.display = nextDisplay;
@@ -8970,6 +9322,12 @@ function _updateMachineButtons() {
 }
 
 function toggleMachineEditMode() {
+    // Machine edits herrekenen altijd de HELE machine; dat verhoudt zich niet
+    // tot een groepsweergave. Blokkeer inschakelen zolang een groep actief is.
+    if (!_machineEditMode && typeof _machinesData !== 'undefined' && _machinesData && _machinesData.scoped) {
+        notify('Bewerken is uitgeschakeld zolang een productgroep actief is — wijzigingen gelden altijd voor de hele machine. Deactiveer de groep eerst.', 'info', 4200);
+        return;
+    }
     _machineEditMode = !_machineEditMode;
     const btn = document.getElementById('machEditModeBtn');
     if (btn) {
@@ -9326,8 +9684,28 @@ function _renderMachineEditCell(m, field, display, editValue, title) {
     return `<td class="${cls}" data-mc="${escapeHtml(m.code)}" data-field="${escapeHtml(field)}" data-edit-value="${escapeHtml(editValue)}" data-current-display="${escapeHtml(display)}" title="${escapeHtml(fullTitle)}">${escapeHtml(display)}${indicator}</td>`;
 }
 
+function _updateMachinesScopedNote() {
+    const body = document.getElementById('oeeTableBody');
+    const table = body ? body.closest('table') : null;
+    if (!table) return;
+    let note = document.getElementById('machinesScopedNote');
+    const scoped = _machinesData && _machinesData.scoped;
+    if (scoped) {
+        if (!note) {
+            note = document.createElement('div');
+            note.id = 'machinesScopedNote';
+            note.className = 'text-[11px] text-emerald-300 mb-2';
+            table.parentElement.insertBefore(note, table);
+        }
+        note.textContent = `Actieve groep "${scoped.name}": benodigde uren, bezetting en output tonen het groepsaandeel; OEE, shift-uren en beschikbaarheid blijven de volledige machine. Bewerken is uitgeschakeld.`;
+    } else if (note) {
+        note.remove();
+    }
+}
+
 function renderOeeTable() {
     _updateOeeThresholdLegend();
+    _updateMachinesScopedNote();
     const head = document.getElementById('oeeTableHead');
     const body = document.getElementById('oeeTableBody');
     if (!head || !body) return;
@@ -10718,6 +11096,11 @@ async function loadSessions() {
                 state.activeSessionId = data.active_session_id;
                 _restoreMachineDeltaSummaryForSession(data.active_session_id);
             }
+            // Boot/refresh: groepen + actieve-groep-banner van deze sessie.
+            if (!state._materialGroupsLoaded) {
+                state._materialGroupsLoaded = true;
+                loadMaterialGroups();
+            }
         }
         else {
             state.activeSessionId = null;
@@ -10887,6 +11270,11 @@ async function switchSession(sessionId) {
         _rememberMachineDeltaSummaryForSession();
         state.activeSessionId = data.active_session_id;
         _restoreMachineDeltaSummaryForSession(data.active_session_id);
+        // Materiaalgroepen zijn per sessie: dropdown/banner van de nieuwe
+        // sessie tonen en het (per-sessie) toolbarfilter resetten.
+        _setMaterialGroupFilter(null, { skipFilter: true });
+        _applyMaterialGroupsPayload(data.material_groups || [],
+                                    data.active_material_group || null, {});
         // Sync valuation param inputs to the switched-to session's values.
         if (data.valuation_params) {
             for (let i = 1; i <= 8; i++) {
