@@ -1605,10 +1605,16 @@
         <div class="card rounded-xl" style="width:min(1200px,95vw);height:min(80vh,760px);display:flex;flex-direction:column;padding:16px 18px">
             <div class="flex items-center justify-between mb-3">
                 <h3 id="chartZoomTitle" class="font-semibold text-base">Grafiek</h3>
-                <button type="button" onclick="closeChartZoom()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="chartZoomAnalyseBtn" onclick="toggleChartAnalysis()" style="display:none" class="px-3 py-1 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded" title="Verklaar stijgingen en dalingen in deze grafiek">&#9878; Analyse</button>
+                    <button type="button" onclick="closeChartZoom()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
+                </div>
             </div>
-            <div id="chartZoomCanvasHost" style="flex:1;min-height:0;position:relative">
-                <canvas id="chartZoomCanvas"></canvas>
+            <div id="chartZoomBody" style="flex:1;display:flex;min-height:0;gap:14px">
+                <div id="chartZoomCanvasHost" style="flex:1;min-height:0;position:relative">
+                    <canvas id="chartZoomCanvas"></canvas>
+                </div>
+                <div id="chartAnalysisPanel" style="display:none;width:380px;flex:none;min-height:0;overflow-y:auto;border-left:1px solid #334155;padding-left:12px"></div>
             </div>
         </div>
     </div>
@@ -3143,6 +3149,7 @@ async function renderDashboard() {
     try {
         const res = await fetch('/api/dashboard');
         const data = await res.json();
+        window._dashboardData = data;  // reused by the chart-analysis panel
         if (data.error) { log('Dashboard: ' + data.error); return; }
         const fin = data.financials || {};
         const per = data.periods || [];
@@ -3435,14 +3442,22 @@ function openChartZoomForCanvas(canvas, title) {
     titleEl.textContent = title || 'Grafiek';
     host.innerHTML = '<canvas id="chartZoomCanvas"></canvas>';
     if (_zoomChart) { try { _zoomChart.destroy(); } catch (e) {} _zoomChart = null; }
-    _zoomChart = new Chart(host.querySelector('canvas').getContext('2d'), _cloneChartConfigFrom(src));
+    closeChartAnalysis();
+    const cfg = _cloneChartConfigFrom(src);
+    // Analysis two-point selection: harmless no-op while the panel is closed.
+    cfg.options.onClick = _analysisZoomClickHandler;
+    _zoomChart = new Chart(host.querySelector('canvas').getContext('2d'), cfg);
     modal.style.display = 'flex';
     modal.dataset.sourceCanvas = canvas.id || '';
+    modal.dataset.analysisKey = _analysisKeyForCanvas(canvas);
+    const analyseBtn = document.getElementById('chartZoomAnalyseBtn');
+    if (analyseBtn) analyseBtn.style.display = _chartAnalysisRegistry[modal.dataset.analysisKey] ? '' : 'none';
 }
 
 function closeChartZoom() {
     const modal = document.getElementById('chartZoomModal');
     if (modal) modal.style.display = 'none';
+    closeChartAnalysis();
     if (_zoomChart) { try { _zoomChart.destroy(); } catch (e) {} _zoomChart = null; }
 }
 
@@ -3483,6 +3498,569 @@ function _installChartZoomAffordances() {
 }
 
 document.addEventListener('DOMContentLoaded', _installChartZoomAffordances);
+
+// ===== Chart analysis (zijpaneel in de zoom-modal) =====
+// Explains big rises/drops in a zoomed chart by decomposing the segment delta
+// into per-product (or per-component) contributions. Fully client-side; reuses
+// existing GET endpoints via side-effect-free lazy caches.
+
+function _analysisKeyForCanvas(canvas) {
+    return (canvas && (canvas.dataset.analysisKey || canvas.id)) || '';
+}
+
+// key -> { getDescriptor: async (chart, datasetIndex) => Descriptor|null }
+// Descriptor: { seriesLabel, unit, decimals, additive, scale, note?,
+//               contributors: async () => [{key,label,values:{label:val},startingValue?,sign?,drill?}] }
+const _chartAnalysisRegistry = {};
+
+let _analysisOpen = false;
+let _analysisSel = null;        // { ds, a } while awaiting the second click
+let _analysisReqSeq = 0;        // drops stale async descriptor responses
+let _analysisCurrent = null;    // { ds, iA, iB } of the rendered analysis
+const _analysisMachineProductsCache = new Map();
+
+// ---- lazy data guards (never trigger tab re-renders) ----
+async function _analysisEnsureResults() {
+    if (state.results) return state.results;
+    if (!window._analysisResultsCache) {
+        const res = await fetch('/api/results');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        window._analysisResultsCache = data.results || {};
+    }
+    return window._analysisResultsCache;
+}
+async function _analysisEnsureValueRows() {
+    if (state.valueResults && Object.keys(state.valueResults).length) return state.valueResults;
+    await _analysisFetchValuePayload();
+    return window._analysisValueCache.value_results || {};
+}
+async function _analysisEnsureConsolidation() {
+    if (state.consolidation && state.consolidation.length) return state.consolidation;
+    await _analysisFetchValuePayload();
+    return window._analysisValueCache.consolidation || [];
+}
+async function _analysisFetchValuePayload() {
+    if (window._analysisValueCache) return;
+    const res = await fetch('/api/value_results');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    window._analysisValueCache = data;
+}
+async function _analysisEnsureDashboard() {
+    if (window._dashboardData) return window._dashboardData;
+    const res = await fetch('/api/dashboard');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    window._dashboardData = data;
+    return data;
+}
+async function _analysisEnsureMachines() {
+    if (typeof _machinesData !== 'undefined' && _machinesData && (_machinesData.machines || []).length) return _machinesData;
+    if (!window._analysisMachinesCache) {
+        const res = await fetch('/api/machines');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        window._analysisMachinesCache = data;
+    }
+    return window._analysisMachinesCache;
+}
+async function _analysisFetchMachineProducts(mc) {
+    if (!_analysisMachineProductsCache.has(mc)) {
+        const res = await fetch(`/api/machines/${encodeURIComponent(mc)}/products`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        _analysisMachineProductsCache.set(mc, data);
+    }
+    return _analysisMachineProductsCache.get(mc);
+}
+
+function _fmtNlNum(v, dec = 1) {
+    return Number(v).toLocaleString('nl-NL', { maximumFractionDigits: dec, minimumFractionDigits: 0 });
+}
+
+// ---- dataset eligibility & biggest-movement detection ----
+function _analysisDatasetEligible(chart, d) {
+    if (!chart.isDatasetVisible(d)) return false;
+    const vals = (chart.data.datasets[d].data || []).filter(v => Number.isFinite(v));
+    if (vals.length < 2) return false;
+    // Zero variance = reference lines (targets, averages): nothing to explain.
+    return Math.max(...vals) !== Math.min(...vals);
+}
+
+function _analysisDetectBiggestMove(chart) {
+    const candidates = [];
+    let maxAbsAll = 0;
+    chart.data.datasets.forEach((ds, d) => {
+        if (!_analysisDatasetEligible(chart, d)) return;
+        const data = ds.data || [];
+        const finite = data.filter(v => Number.isFinite(v)).map(Math.abs);
+        const maxAbsDs = finite.length ? Math.max(...finite) : 0;
+        for (let i = 0; i + 1 < data.length; i++) {
+            if (!Number.isFinite(data[i]) || !Number.isFinite(data[i + 1])) continue;
+            const absD = Math.abs(data[i + 1] - data[i]);
+            const relD = absD / Math.max(Math.abs(data[i]), 0.01 * (maxAbsDs || 1));
+            candidates.push({ d, i, absD, relD });
+            maxAbsAll = Math.max(maxAbsAll, absD);
+        }
+    });
+    if (!candidates.length || maxAbsAll === 0) return null;
+    let best = null;
+    for (const c of candidates) {
+        c.score = 0.6 * (c.absD / maxAbsAll) + 0.4 * (Math.min(c.relD, 2) / 2);
+        const wins = !best
+            || c.score > best.score + 1e-12
+            || (Math.abs(c.score - best.score) <= 1e-12
+                && (c.d < best.d || (c.d === best.d && c.i < best.i)));
+        if (wins) best = c;
+    }
+    return { datasetIndex: best.d, iA: best.i, iB: best.i + 1 };
+}
+
+// ---- segment decomposition ----
+function _analysisValAt(contributor, label) {
+    if (label === 'Starting stock') {
+        if (contributor.startingValue !== undefined && contributor.startingValue !== null) return contributor.startingValue;
+    }
+    const v = (contributor.values || {})[label];
+    return Number.isFinite(v) ? v : 0;
+}
+
+async function _analysisComputeSegment(chart, descriptor, datasetIndex, iA, iB) {
+    const labels = chart.data.labels || [];
+    const data = chart.data.datasets[datasetIndex].data || [];
+    const pA = labels[iA], pB = labels[iB];
+    const vA = Number.isFinite(data[iA]) ? data[iA] : 0;
+    const vB = Number.isFinite(data[iB]) ? data[iB] : 0;
+    const totalDelta = vB - vA;
+    const scale = descriptor.scale || 1;
+
+    let rows;
+    if (descriptor.preSplit) {
+        // Segment-aware exact splits (e.g. ratio metrics): deltas come ready.
+        rows = descriptor.preSplit(pA, pB).map(r => ({ label: r.label, drill: r.drill || null, delta: r.delta }));
+    } else {
+        const raw = await descriptor.contributors();
+        rows = raw.map(c => ({
+            label: c.label,
+            drill: c.drill || null,
+            delta: (_analysisValAt(c, pB) - _analysisValAt(c, pA)) * (c.sign || 1) * scale,
+        }));
+    }
+    rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    const contributorSum = rows.reduce((s, r) => s + r.delta, 0);
+
+    const TOP_N = 8;
+    // Large contributor sets (products): hide zero movers. Small sets
+    // (component breakdowns): a zero delta IS the answer — keep the row.
+    const top = rows.length > TOP_N
+        ? rows.slice(0, TOP_N).filter(r => Math.abs(r.delta) > 0)
+        : rows;
+    const restCount = rows.length - top.length;
+    const restDelta = contributorSum - top.reduce((s, r) => s + r.delta, 0);
+
+    const maxAbsPlotted = Math.max(...data.filter(Number.isFinite).map(Math.abs), 0);
+    const negligible = Math.abs(totalDelta) <= Math.max(1e-9, 1e-6 * maxAbsPlotted);
+    const dir = totalDelta >= 0 ? '▲' : '▼';
+    let headline;
+    if (negligible) {
+        headline = `Geen noemenswaardige beweging (Δ ≈ 0) van ${pA} naar ${pB}`;
+    } else if (Math.abs(vA) > 1e-9 && pA !== 'Starting stock') {
+        const pct = Math.abs(totalDelta / vA) * 100;
+        headline = `${dir} ${descriptor.seriesLabel} ${totalDelta >= 0 ? '+' : '−'}${_fmtNlNum(pct, 1)}% van ${pA} naar ${pB}`;
+    } else {
+        headline = `${dir} ${descriptor.seriesLabel} ${totalDelta >= 0 ? '+' : '−'}${_fmtNlNum(Math.abs(totalDelta), descriptor.decimals ?? 1)} ${descriptor.unit || ''} van ${pA} naar ${pB}`;
+    }
+
+    const notes = [];
+    if (descriptor.note) notes.push(descriptor.note);
+    if (negligible && rows.some(r => Math.abs(r.delta) > 0)) notes.push('Onderliggende bewegingen heffen elkaar op.');
+    if (descriptor.additive && Math.abs(contributorSum - totalDelta) > Math.max(1, 0.005 * Math.abs(totalDelta))) {
+        notes.push('Som van bijdragen wijkt licht af van de grafiekbeweging (afrondingsverschillen).');
+    }
+
+    const model = {
+        headline, notes, totalDelta, contributorSum,
+        pA, pB, unit: descriptor.unit || '', decimals: descriptor.decimals ?? 1,
+        additive: descriptor.additive !== false, negligible,
+        rows: top, restCount, restDelta,
+        extraSections: descriptor.extraSections || null,
+    };
+    window._lastChartAnalysis = {
+        key: document.getElementById('chartZoomModal').dataset.analysisKey,
+        datasetIndex, iA, iB, totalDelta, contributorSum,
+        rows: top.map(r => ({ label: r.label, delta: r.delta })), headline,
+    };
+    return model;
+}
+
+// ---- two-point selection + point marking on the zoom clone ----
+function _analysisZoomClickHandler(evt, elements, chart) {
+    if (!_analysisOpen || !chart) return;
+    let els = [];
+    try {
+        els = chart.getElementsAtEventForMode(evt.native || evt, 'nearest', { intersect: false }, true);
+    } catch (e) { return; }
+    if (!els.length) return;
+    const { datasetIndex, index } = els[0];
+    if (!_analysisDatasetEligible(chart, datasetIndex)) return;
+    if (!_analysisSel || _analysisSel.ds !== datasetIndex) {
+        _analysisSel = { ds: datasetIndex, a: index };
+        _markAnalysisPoints(chart, datasetIndex, [index]);
+        return;
+    }
+    if (index === _analysisSel.a) return;
+    const iA = Math.min(_analysisSel.a, index), iB = Math.max(_analysisSel.a, index);
+    _analysisSel = null;
+    _analysisApplySelection(datasetIndex, iA, iB);
+}
+
+function _markAnalysisPoints(chart, dsIdx, indices) {
+    _clearAnalysisPointMarks(chart);
+    const ds = chart.data.datasets[dsIdx];
+    if (!ds) return;
+    ds._analysisOrig = {
+        pointRadius: ds.pointRadius, pointBorderWidth: ds.pointBorderWidth,
+        pointBorderColor: ds.pointBorderColor, borderWidth: ds.borderWidth,
+        borderColor: ds.borderColor,
+    };
+    const hit = ctx => indices.includes(ctx.dataIndex);
+    const type = ds.type || chart.config.type;
+    if (type === 'line') {
+        const baseR = typeof ds._analysisOrig.pointRadius === 'number' ? ds._analysisOrig.pointRadius : 3;
+        ds.pointRadius = ctx => hit(ctx) ? 7 : baseR;
+        ds.pointBorderWidth = ctx => hit(ctx) ? 3 : 1;
+        ds.pointBorderColor = ctx => hit(ctx) ? '#f8fafc' : ds._analysisOrig.pointBorderColor;
+    } else {
+        ds.borderWidth = ctx => hit(ctx) ? 3 : (typeof ds._analysisOrig.borderWidth === 'number' ? ds._analysisOrig.borderWidth : 1);
+        ds.borderColor = ctx => hit(ctx) ? '#f8fafc' : ds._analysisOrig.borderColor;
+    }
+    ds._analysisMarked = true;
+    chart.update('none');
+}
+
+function _clearAnalysisPointMarks(chart) {
+    if (!chart) return;
+    let touched = false;
+    (chart.data.datasets || []).forEach(ds => {
+        if (!ds._analysisMarked) return;
+        Object.assign(ds, ds._analysisOrig || {});
+        delete ds._analysisOrig;
+        delete ds._analysisMarked;
+        touched = true;
+    });
+    if (touched) chart.update('none');
+}
+
+// ---- panel lifecycle ----
+function _analysisPanelEl() { return document.getElementById('chartAnalysisPanel'); }
+
+function toggleChartAnalysis() {
+    if (_analysisOpen) closeChartAnalysis(); else openChartAnalysis();
+}
+
+async function openChartAnalysis() {
+    const modal = document.getElementById('chartZoomModal');
+    const entry = _chartAnalysisRegistry[modal.dataset.analysisKey];
+    const panel = _analysisPanelEl();
+    if (!entry || !panel || !_zoomChart) return;
+    _analysisOpen = true;
+    panel.style.display = '';
+    panel.innerHTML = `
+        <div class="flex items-center justify-between mb-2">
+            <h4 class="font-semibold text-sm text-slate-200">Analyse</h4>
+            <button type="button" onclick="closeChartAnalysis()" class="text-slate-400 hover:text-white text-sm">&#10005;</button>
+        </div>
+        <div class="flex gap-2 mb-2">
+            <select id="chartAnalysisDatasetSel" onchange="_onAnalysisSelectorChange()" class="bg-slate-900 border border-slate-600 rounded px-1 py-0.5 text-xs" style="max-width:180px"></select>
+            <select id="chartAnalysisSegmentSel" onchange="_onAnalysisSelectorChange()" class="bg-slate-900 border border-slate-600 rounded px-1 py-0.5 text-xs"></select>
+        </div>
+        <div id="chartAnalysisHeadline" class="text-sm font-semibold text-slate-100 mb-1">Analyse laden...</div>
+        <div id="chartAnalysisNotes" class="text-xs text-slate-400 mb-2"></div>
+        <div id="chartAnalysisTableHost"></div>
+        <p class="text-[10px] text-slate-500 mt-2 italic">Klik twee punten in de grafiek om precies dat segment te analyseren.</p>`;
+    try { _zoomChart.resize(); } catch (e) {}
+    const detect = _analysisDetectBiggestMove(_zoomChart);
+    if (!detect) {
+        document.getElementById('chartAnalysisHeadline').textContent = 'Geen noemenswaardige beweging in deze grafiek.';
+        return;
+    }
+    _fillAnalysisSelectors(detect.datasetIndex, detect.iA, detect.iB);
+    await _analysisApplySelection(detect.datasetIndex, detect.iA, detect.iB);
+}
+
+function closeChartAnalysis() {
+    _analysisOpen = false;
+    _analysisSel = null;
+    _analysisCurrent = null;
+    _analysisMachineProductsCache.clear();
+    const panel = _analysisPanelEl();
+    if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+    if (_zoomChart) { _clearAnalysisPointMarks(_zoomChart); try { _zoomChart.resize(); } catch (e) {} }
+}
+
+function _fillAnalysisSelectors(dsIdx, iA, iB) {
+    const dsSel = document.getElementById('chartAnalysisDatasetSel');
+    const segSel = document.getElementById('chartAnalysisSegmentSel');
+    if (!dsSel || !segSel || !_zoomChart) return;
+    dsSel.innerHTML = _zoomChart.data.datasets
+        .map((ds, d) => _analysisDatasetEligible(_zoomChart, d)
+            ? `<option value="${d}" ${d === dsIdx ? 'selected' : ''}>${escapeHtml(ds.label || `Reeks ${d + 1}`)}</option>` : '')
+        .join('');
+    const labels = _zoomChart.data.labels || [];
+    const data = _zoomChart.data.datasets[dsIdx].data || [];
+    let opts = '';
+    for (let i = 0; i + 1 < labels.length; i++) {
+        if (!Number.isFinite(data[i]) || !Number.isFinite(data[i + 1])) continue;
+        const sel = (i === iA && i + 1 === iB) ? 'selected' : '';
+        opts += `<option value="${i}:${i + 1}" ${sel}>${escapeHtml(String(labels[i]))} → ${escapeHtml(String(labels[i + 1]))}</option>`;
+    }
+    if (iB - iA > 1) {
+        opts += `<option value="${iA}:${iB}" selected>Eigen selectie (${escapeHtml(String(labels[iA]))} → ${escapeHtml(String(labels[iB]))})</option>`;
+    }
+    segSel.innerHTML = opts;
+}
+
+function _onAnalysisSelectorChange() {
+    const dsSel = document.getElementById('chartAnalysisDatasetSel');
+    const segSel = document.getElementById('chartAnalysisSegmentSel');
+    if (!dsSel || !segSel) return;
+    const ds = parseInt(dsSel.value, 10);
+    let [iA, iB] = (segSel.value || '0:1').split(':').map(n => parseInt(n, 10));
+    if (_analysisCurrent && ds !== _analysisCurrent.ds) {
+        // Dataset changed: segments differ per dataset — re-detect within it.
+        const labels = _zoomChart.data.labels || [];
+        const data = _zoomChart.data.datasets[ds].data || [];
+        iA = 0; iB = 1;
+        for (let i = 0; i + 1 < labels.length; i++) {
+            if (Number.isFinite(data[i]) && Number.isFinite(data[i + 1])) { iA = i; iB = i + 1; break; }
+        }
+    }
+    _analysisSel = null;
+    _fillAnalysisSelectors(ds, iA, iB);
+    _analysisApplySelection(ds, iA, iB);
+}
+
+async function _analysisApplySelection(dsIdx, iA, iB) {
+    if (!_analysisOpen || !_zoomChart) return;
+    const modal = document.getElementById('chartZoomModal');
+    const entry = _chartAnalysisRegistry[modal.dataset.analysisKey];
+    if (!entry) return;
+    const seq = ++_analysisReqSeq;
+    _analysisCurrent = { ds: dsIdx, iA, iB };
+    _markAnalysisPoints(_zoomChart, dsIdx, [iA, iB]);
+    _fillAnalysisSelectors(dsIdx, iA, iB);
+    const headEl = document.getElementById('chartAnalysisHeadline');
+    if (headEl) headEl.textContent = 'Analyse laden...';
+    try {
+        const descriptor = await entry.getDescriptor(_zoomChart, dsIdx);
+        if (seq !== _analysisReqSeq) return;
+        if (!descriptor) {
+            _renderAnalysisError('Voor deze reeks is geen analyse beschikbaar.');
+            return;
+        }
+        const model = await _analysisComputeSegment(_zoomChart, descriptor, dsIdx, iA, iB);
+        if (seq !== _analysisReqSeq) return;
+        _renderChartAnalysisPanel(model);
+    } catch (e) {
+        if (seq !== _analysisReqSeq) return;
+        _renderAnalysisError('Analyse niet beschikbaar: ' + (e && e.message ? e.message : e));
+    }
+}
+
+function _renderAnalysisError(message) {
+    const headEl = document.getElementById('chartAnalysisHeadline');
+    const tableHost = document.getElementById('chartAnalysisTableHost');
+    const notesEl = document.getElementById('chartAnalysisNotes');
+    if (headEl) headEl.textContent = 'Analyse niet beschikbaar';
+    if (notesEl) notesEl.textContent = '';
+    if (tableHost) tableHost.innerHTML = `<div class="text-xs text-slate-400">${escapeHtml(String(message))}</div>`;
+}
+
+function _analysisDeltaCell(delta, unit, decimals) {
+    const cls = delta >= 0 ? 'text-emerald-400' : 'text-red-400';
+    const glyph = delta >= 0 ? '▲' : '▼';
+    const sign = delta >= 0 ? '+' : '−';
+    return `<span class="${cls}">${glyph} ${sign}${_fmtNlNum(Math.abs(delta), decimals)}${unit ? ' ' + escapeHtml(unit) : ''}</span>`;
+}
+
+function _renderChartAnalysisPanel(model) {
+    const headEl = document.getElementById('chartAnalysisHeadline');
+    const notesEl = document.getElementById('chartAnalysisNotes');
+    const tableHost = document.getElementById('chartAnalysisTableHost');
+    if (!headEl || !tableHost) return;
+    headEl.textContent = model.headline;
+    if (notesEl) notesEl.textContent = model.notes.join(' ');
+
+    const pct = d => (model.totalDelta !== 0 && !model.negligible)
+        ? _fmtNlNum(d / model.totalDelta * 100, 0) + '%'
+        : '−';
+    let rowsHtml = model.rows.map(r => `
+        <tr ${r.drill ? `class="cursor-pointer hover:bg-slate-800" onclick="_analysisDrillComponent('${escapeHtml(r.drill)}')" title="Klik voor detail"` : ''}>
+            <td class="p-1 text-slate-300">${r.drill ? '▸ ' : ''}${escapeHtml(r.label)}</td>
+            <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, model.unit, model.decimals)}</td>
+            <td class="p-1 text-right text-slate-400">${pct(r.delta)}</td>
+        </tr>`).join('');
+    if (model.restCount > 0) {
+        rowsHtml += `
+        <tr class="text-slate-500">
+            <td class="p-1">Overige (${model.restCount})</td>
+            <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.restDelta, model.unit, model.decimals)}</td>
+            <td class="p-1 text-right">${pct(model.restDelta)}</td>
+        </tr>`;
+    }
+    let html = `
+        <table class="w-full text-xs">
+            <thead><tr class="text-slate-400">
+                <th class="text-left p-1">Naam</th>
+                <th class="text-right p-1">&Delta;</th>
+                <th class="text-right p-1">% van beweging</th>
+            </tr></thead>
+            <tbody>${rowsHtml || '<tr><td colspan="3" class="p-2 text-slate-500 text-center">Geen bijdragen gevonden</td></tr>'}</tbody>
+            <tfoot class="text-slate-300 font-semibold" style="border-top:1px solid #475569">
+                <tr><td class="p-1">Som bijdragen</td>
+                    <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.contributorSum, model.unit, model.decimals)}</td><td></td></tr>
+                <tr><td class="p-1">Beweging in grafiek</td>
+                    <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.totalDelta, model.unit, model.decimals)}</td><td></td></tr>
+            </tfoot>
+        </table>`;
+    if (model.extraSections) html += model.extraSections;
+    tableHost.innerHTML = html;
+}
+
+// Placeholder until component drilldown lands (commit 4): rows carry drill
+// keys but clicking is a no-op unless this is replaced.
+function _analysisDrillComponent(componentKey) { /* wired in a later commit */ }
+
+// ---- financial metric descriptors (dashboard financialChart + values finChart) ----
+const _FIN_PRODUCT_SOURCE = {
+    'TURNOVER': '01. Demand forecast',
+    'RAW MATERIAL COST': '03. Total demand',
+    'MACHINE COST': '07. Capacity utilization',
+    'DIRECT FTE COST': '12. FTE requirements',
+    'INVENTORY VALUE': '04. Inventory',
+};
+const _FIN_COMPONENTS = {
+    'COST OF GOODS': [['RAW MATERIAL COST', 1], ['MACHINE COST', 1], ['DIRECT FTE COST', 1], ['INDIRECT FTE COST', 1], ['OVERHEAD COST', 1]],
+    'GROSS MARGIN': [['TURNOVER', 1], ['COST OF GOODS', -1]],
+    'EBITDA': [['GROSS MARGIN', 1], ['SG&A COST', -1]],
+    'EBIT': [['EBITDA', 1], ['D&A COST', -1]],
+    'WORKING CAPITAL REQUIREMENTS': [['RECEIVABLES', 1], ['INVENTORY VALUE', 1], ['PAYABLES', -1]],
+    'CAPITAL INVESTMENT': [['FIXED ASSETS NET BOOK VALUE', 1], ['WORKING CAPITAL REQUIREMENTS', 1]],
+};
+const _FIN_DUTCH = {
+    'TURNOVER': 'Omzet', 'COST OF GOODS': 'Kosten van goederen', 'GROSS MARGIN': 'Brutomarge',
+    'EBIT': 'EBIT', 'EBITDA': 'EBITDA', 'INVENTORY VALUE': 'Voorraadwaarde',
+    'RAW MATERIAL COST': 'Grondstofkost', 'MACHINE COST': 'Machinekost',
+    'DIRECT FTE COST': 'Directe FTE-kost', 'INDIRECT FTE COST': 'Indirecte FTE-kost',
+    'OVERHEAD COST': 'Overheadkost', 'SG&A COST': 'SG&A-kost', 'D&A COST': 'Afschrijvingen (D&A)',
+    'RECEIVABLES': 'Debiteuren', 'PAYABLES': 'Crediteuren',
+    'FIXED ASSETS NET BOOK VALUE': 'Vaste activa (boekwaarde)',
+    'WORKING CAPITAL REQUIREMENTS': 'Werkkapitaal', 'CAPITAL INVESTMENT': 'Geïnvesteerd kapitaal',
+    'OPERATIONAL CASHFLOW': 'Operationele kasstroom', 'ROCE': 'ROCE',
+};
+
+async function _finMetricValuesByName(source) {
+    // Returns name -> {label: raw €} for every consolidation metric.
+    if (source === 'consolidation') {
+        const consolidation = await _analysisEnsureConsolidation();
+        const map = {};
+        consolidation.forEach(row => {
+            map[String(row.material_number || '').replace('ZZZZZZ_', '')] = row.values || {};
+        });
+        return map;
+    }
+    const dash = await _analysisEnsureDashboard();
+    return dash.financials || {};
+}
+
+// Descriptor for one financial metric. Product metrics decompose into
+// per-material value rows; derived metrics into their component metrics.
+async function _finMetricDescriptor(metricKey, { scale, unit, source }) {
+    const dutch = _FIN_DUTCH[metricKey] || metricKey;
+    const sourceLt = _FIN_PRODUCT_SOURCE[metricKey];
+    if (sourceLt) {
+        const valueRows = await _analysisEnsureValueRows();
+        const rows = valueRows[sourceLt] || [];
+        return {
+            seriesLabel: dutch, unit, decimals: 1, additive: true, scale,
+            contributors: async () => rows.map(r => ({
+                key: r.material_number,
+                label: `${r.material_number} — ${r.material_name || ''}`.trim(),
+                values: r.values || {},
+                startingValue: metricKey === 'INVENTORY VALUE' ? (r.starting_stock || 0) : undefined,
+            })),
+        };
+    }
+    const components = _FIN_COMPONENTS[metricKey];
+    if (components) {
+        const byName = await _finMetricValuesByName(source);
+        return {
+            seriesLabel: dutch, unit, decimals: 1, additive: true, scale,
+            note: `${dutch} is een afgeleide metriek; de beweging is gesplitst in de onderliggende componenten.`,
+            contributors: async () => components.map(([name, sign]) => ({
+                key: name,
+                label: (sign < 0 ? '− ' : '+ ') + (_FIN_DUTCH[name] || name),
+                values: byName[name] || {},
+                sign,
+                drill: (_FIN_PRODUCT_SOURCE[name] || _FIN_COMPONENTS[name]) ? name : null,
+            })),
+        };
+    }
+    return null;
+}
+
+// Exact ratio split for ROCE = 12·EBIT/CI:
+// Δ = (EBIT_B−EBIT_A)/CI_B + EBIT_A·(1/CI_B − 1/CI_A)   (×12, ×100 for pp)
+async function _roceRatioDescriptor({ source, displayScale }) {
+    const byName = await _finMetricValuesByName(source);
+    const ebit = byName['EBIT'] || {};
+    const ci = byName['CAPITAL INVESTMENT'] || {};
+    const factor = 12 * displayScale;
+    return {
+        seriesLabel: 'ROCE', unit: 'pp', decimals: 1, additive: true, scale: 1,
+        note: 'ROCE is een verhouding (12 × EBIT / geïnvesteerd kapitaal); de beweging is gesplitst in het effect van de EBIT-verandering en het effect van de kapitaalverandering.',
+        // Segment-aware exact split (identity:
+        // x_B/y_B − x_A/y_A = (x_B−x_A)/y_B + x_A·(1/y_B − 1/y_A)).
+        preSplit: (pA, pB) => {
+            const eA = ebit[pA], eB = ebit[pB], cA = ci[pA], cB = ci[pB];
+            if (![eA, eB, cA, cB].every(Number.isFinite) || Math.abs(cA) < 1e-9 || Math.abs(cB) < 1e-9) {
+                throw new Error('kapitaal ≈ 0 in dit segment.');
+            }
+            return [
+                { label: 'Effect EBIT', delta: factor * (eB - eA) / cB, drill: 'EBIT' },
+                { label: 'Effect geïnvesteerd kapitaal', delta: factor * eA * (1 / cB - 1 / cA), drill: 'CAPITAL INVESTMENT' },
+            ];
+        },
+    };
+}
+
+// ---- registry entries: financial charts (commit 1) ----
+const _FINCHART_DATASET_METRIC = {
+    'Turnover': 'TURNOVER', 'Cost of Goods': 'COST OF GOODS', 'Gross Margin': 'GROSS MARGIN',
+    'EBIT': 'EBIT', 'EBITDA': 'EBITDA', 'Inventory Value': 'INVENTORY VALUE',
+};
+
+_chartAnalysisRegistry['financialChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        const metric = _FINCHART_DATASET_METRIC[label];
+        if (!metric) return null;
+        return _finMetricDescriptor(metric, { scale: 0.001, unit: 'K€', source: 'dashboard' });
+    },
+};
+
+_chartAnalysisRegistry['finChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        if (label === 'ROCE %') {
+            return _roceRatioDescriptor({ source: 'consolidation', displayScale: 100 });
+        }
+        const metric = _FINCHART_DATASET_METRIC[label];
+        if (!metric) return null;
+        return _finMetricDescriptor(metric, { scale: 1, unit: '€', source: 'consolidation' });
+    },
+};
 
 // ===== Comments / annotations (Fase 2.1) =====
 let commentMode = false;
