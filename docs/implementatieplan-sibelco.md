@@ -290,6 +290,38 @@ Eerlijkheidsregels: bijdragen die niet exact optellen (bezetting, FTE) worden
 als zodanig benoemd; referentielijnen (targets/gemiddelden) zijn uitgesloten;
 nieuwe/verdwenen producten verschijnen vanzelf als 100% van de beweging.
 
+### Materiaalgroepen (2026-07-11)
+
+Opgeslagen, benoemde productsets per sessie (bijv. "Top movers 2026-04 →
+2026-06", bewaard vanuit de grafiek-analyse) met twee gebruiksmodi:
+
+1. **Filtermodus**: dropdown in de planningstoolbar filtert de tabel op de
+   groep, vrij combineerbaar met linetype-filter en zoeken (dit verving en
+   repareerde de fragiele materiaal-scope die door badge-refreshes werd
+   gewist). Beheer (activeren, hernoemen, verwijderen) via het ⚙-menu.
+2. **Actieve groep ("maak actief")**: het HELE programma toont alleen de
+   groepsbijdrage — dashboard (trends, inventory quality, top-10, KPI's),
+   values-tab en machines-tab — met een permanente banner op elk tabblad en
+   één klik deactiveren. Scoping gebeurt server-side op de read-endpoints
+   (view-laag; de engine wordt nooit aangeraakt, zonder actieve groep zijn
+   de payloads byte-identiek).
+
+Eerlijkheidsregels bij een actieve groep:
+- Financieel toont uitsluitend toerekenbare cijfers + **bijdragemarge**
+  (groepsomzet − grondstofkost − machinekost, "excl. vaste kosten");
+  EBIT(DA), brutomarge, ROCE, kapitaal en kasstroom worden bewust verborgen.
+- Machinebezetting = het **groepsaandeel** (urenratio); capaciteit, OEE en
+  beschikbaarheid blijven de volledige machine; machine-bewerken is
+  geblokkeerd zolang een groep actief is.
+- FTE is niet toerekenbaar en blijft fabrieksbreed (expliciete notitie).
+- Verwijderde producten worden uit groepen gepruned; onbekende nummers na
+  een nieuw bronbestand worden genegeerd en in de banner geteld.
+
+Persistentie: groepen + actieve status per sessie (sessions_store), gekopieerd
+naar instantie-snapshots, meegeleverd in het switch-payload; géén global
+config, baseline, replay of recalc (pure view-metadata). Export en MoM zijn
+in v1 bewust niet gescoopt.
+
 ### Nog open uit het oorspronkelijke fase-3-verhaal
 
 **Integratiegradatie (vraag 5, a/b/c)** — master-sheet-vervanging/koppeling

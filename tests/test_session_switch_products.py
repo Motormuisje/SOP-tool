@@ -271,3 +271,51 @@ def test_true_process_restart_keeps_per_session_state(switch_server):
     cfg = requests.get(base_url + "/api/config", timeout=60).json()
     assert cfg["forecast_defaults"] == FD, \
         "sessie A verloor haar forecast-defaults na een echte herstart"
+
+
+def test_material_groups_survive_switch_and_restart(switch_server):
+    """Materiaalgroepen + actieve groep zijn per sessie: wisselen laat de
+    buursessie ongescoopt, en een echte herstart brengt groep én actieve
+    status terug (dashboard blijft gescoopt na cold rebuild)."""
+    base_url = switch_server["base_url"]
+    sid_a, sid_b = _STATE["sid_a"], _STATE["sid_b"]
+
+    _switch(base_url, sid_a)
+    results = requests.get(base_url + "/api/results", timeout=120).json()["results"]
+    mats = [str(r["material_number"])
+            for r in results.get("03. Total demand", [])
+            if sum(r["values"].values()) > 0][:2]
+    assert len(mats) == 2
+    resp = requests.post(base_url + "/api/material_groups", json={
+        "name": "Herstartgroep", "materials": mats}, timeout=60)
+    gid = resp.json()["group"]["id"]
+    requests.post(base_url + f"/api/material_groups/{gid}/activate", timeout=60)
+    assert "scoped" in requests.get(base_url + "/api/dashboard", timeout=120).json()
+
+    # Buursessie B: geen groepen, ongescoopt dashboard.
+    _switch(base_url, sid_b)
+    body = requests.get(base_url + "/api/material_groups", timeout=60).json()
+    assert body["groups"] == [] and body["active_group_id"] is None
+    assert "scoped" not in requests.get(base_url + "/api/dashboard", timeout=120).json()
+
+    # Terug naar A: groep en actieve status intact.
+    _switch(base_url, sid_a)
+    body = requests.get(base_url + "/api/material_groups", timeout=60).json()
+    assert [g["id"] for g in body["groups"]] == [gid]
+    assert body["active_group_id"] == gid
+
+    # Echte herstart: alles terug, dashboard nog steeds gescoopt.
+    switch_server["restart"]()
+    _switch(base_url, sid_a)
+    body = requests.get(base_url + "/api/material_groups", timeout=60).json()
+    assert [g["id"] for g in body["groups"]] == [gid], \
+        "materiaalgroep verdween na een echte herstart"
+    assert body["active_group_id"] == gid, \
+        "actieve groep verdween na een echte herstart"
+    dash = requests.get(base_url + "/api/dashboard", timeout=120).json()
+    assert dash.get("scoped", {}).get("name") == "Herstartgroep"
+
+    # Opruimen: deactiveren + verwijderen.
+    requests.post(base_url + "/api/material_groups/deactivate", timeout=60)
+    requests.delete(base_url + f"/api/material_groups/{gid}", timeout=60)
+    assert "scoped" not in requests.get(base_url + "/api/dashboard", timeout=120).json()
