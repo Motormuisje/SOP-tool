@@ -52,9 +52,11 @@ class PlanningEngine:
 
     def __init__(self, file_path: str = None, planning_month: str = None,
                  months_actuals: int = 0, months_forecast: int = 12,
-                 extract_files: dict = None, config_overrides: dict = None):
+                 extract_files: dict = None, config_overrides: dict = None,
+                 master_data: dict = None):
         self.file_path = file_path
         self.extract_files = extract_files
+        self.master_data = master_data
         self.planning_month = planning_month
         self.months_actuals = months_actuals
         self.months_forecast = months_forecast
@@ -85,7 +87,12 @@ class PlanningEngine:
 
         # ===== STEP 1: Load data =====
         print("\n[STEP 1] Loading raw input data...")
-        if self.extract_files:
+        if self.master_data is not None and self.file_path is None:
+            # App-managed master store + monthly extracts: no base workbook.
+            self.data = DataLoader(extract_files=self.extract_files,
+                                   config_overrides=self.config_overrides,
+                                   master_data=self.master_data)
+        elif self.extract_files:
             self.data = DataLoader(excel_file=self.file_path, extract_files=self.extract_files,
                                    config_overrides=self.config_overrides)
         else:

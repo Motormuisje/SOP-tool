@@ -18,11 +18,17 @@ from modules.models import (
 
 
 class DataLoader:
-    def __init__(self, excel_file=None, extract_files=None, config_overrides=None):
-        if excel_file is None and extract_files is None:
-            raise ValueError("Either excel_file or extract_files must be provided.")
+    def __init__(self, excel_file=None, extract_files=None, config_overrides=None,
+                 master_data=None):
+        if excel_file is None and extract_files is None and master_data is None:
+            raise ValueError(
+                "Either excel_file, extract_files or master_data must be provided.")
 
         self.config_overrides = config_overrides or {}
+        # App-managed master store (master-config vervanging): serialized
+        # POST-PARSE master structures that replace the base workbook. Only
+        # consulted when no workbook is given — the xlsm path is untouched.
+        self.master_data = master_data
 
         self.extract_files = extract_files
 
@@ -73,6 +79,21 @@ class DataLoader:
         else:
             print("Loading raw data from extract files")
         print("-" * 60)
+
+        # Master store path: hydrate every master structure from the app-
+        # managed store instead of the base workbook. The store holds the
+        # OUTPUT of the xlsm loaders (serialized once at import), so this is
+        # deserialization, not a second parser. Transactional data still
+        # comes from the monthly extracts below.
+        if self.master_data is not None and self.excel_file is None:
+            from modules.master_data import finalize_shift_systems, hydrate_loader
+            hydrate_loader(self, self.master_data)
+            self._apply_config_overrides()
+            finalize_shift_systems(self)
+            self._apply_valuation_overrides()
+            self._extend_machine_availability_to_periods()
+            print(f"  Master store: {len(self.materials)} materials, "
+                  f"{len(self.machines)} machines (schema v{self.master_data.get('schema_version')})")
 
         # Always load config/materials/machines from xlsm when available
         if self.excel_file is not None:
