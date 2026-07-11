@@ -3723,6 +3723,22 @@ function closeFinancialDeviation() {
     if (modal) modal.style.display = 'none';
 }
 
+// Shared throughput -> OEE inversion. Because required hours = raw_hours / OEE,
+// effective throughput is exactly proportional to OEE, so a target throughput
+// maps to new_oee = oee * (target / current_effective). The backend rejects
+// OEE > 1.5, so the reachable ceiling is known up front.
+function _throughputTargetToOee(m, target) {
+    const curEff = m.throughput_effective;
+    if (!curEff || curEff <= 0) {
+        return { error: 'Huidige doorzet is 0 — kan niet evenredig schalen. Pas OEE direct aan.' };
+    }
+    const newOee = m.oee * (target / curEff);
+    if (newOee > 1.5) {
+        return { tooHigh: true, maxTarget: curEff * (1.5 / m.oee) };
+    }
+    return { oee: Math.max(0.01, newOee) };
+}
+
 async function applyDirectThroughput(mcCode) {
     if (!_machinesData || !_machinesData.machines) return;
     const m = _machinesData.machines.find(x => String(x.code) === String(mcCode));
@@ -3730,19 +3746,13 @@ async function applyDirectThroughput(mcCode) {
     const target = parseLocaleNumber(document.getElementById('drillThroughputInput').value);
     if (isNaN(target) || target <= 0) { notify('Voer een geldige doeldoorzet in.', 'warning'); return; }
     const curEff = m.throughput_effective;
-    if (!curEff || curEff <= 0) { notify('Huidige doorzet is 0 — kan niet evenredig schalen. Pas OEE direct aan.', 'warning'); return; }
-    // effective ∝ OEE  ⇒  new_oee = oee × (target / current_effective).
-    // The backend rejects OEE > 1.5, so the reachable ceiling is known up
-    // front — tell the user the max achievable target instead of sending a
-    // request that 400s with an OEE-units error.
-    const OEE_MAX = 1.5;
-    let newOee = m.oee * (target / curEff);
-    if (newOee > OEE_MAX) {
-        const maxTarget = curEff * (OEE_MAX / m.oee);
-        notify(`Doel niet haalbaar: maximaal ${maxTarget.toFixed(2)} bij de OEE-limiet van 150%. Voer een doel t/m dat maximum in.`, 'warning', 5000);
+    const conv = _throughputTargetToOee(m, target);
+    if (conv.error) { notify(conv.error, 'warning'); return; }
+    if (conv.tooHigh) {
+        notify(`Doel niet haalbaar: maximaal ${conv.maxTarget.toFixed(2)} bij de OEE-limiet van 150%. Voer een doel t/m dat maximum in.`, 'warning', 5000);
         return;
     }
-    newOee = Math.max(0.01, newOee);
+    const newOee = conv.oee;
     setBusy(true, 'Doorzet toepassen (OEE aanpassen)...');
     // Delta bookkeeping: same mechanism as saveMachineEdit, so the change
     // shows up in the machine-delta summary panel with its downstream impact.
@@ -7876,9 +7886,9 @@ function renderOeeTable() {
                 <td class="text-center">${m.req_hours_avg.toFixed(0)}</td>
                 <td class="text-center font-semibold ${mUtilCls}">${m.util_avg.toFixed(1)}%</td>
                 <td class="text-center text-slate-300">${m.throughput_theoretical.toFixed(2)}</td>
-                <td class="text-center text-slate-300">${m.throughput_effective.toFixed(2)}</td>
+                ${_renderMachineEditCell(m, 'throughput_eff', m.throughput_effective.toFixed(2), m.throughput_effective.toFixed(2), 'Bewerk effectieve doorzet (past OEE evenredig aan)')}
                 <td class="text-center whitespace-nowrap">
-                    <button onclick="event.stopPropagation();toggleMachineProducts('${escapeHtml(m.code)}', this)" title="Toon producten (volumes) op deze machine" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-emerald-600 text-slate-400 hover:text-white transition-colors">&#9707; Producten</button>
+                    <button data-products-btn="${escapeHtml(m.code)}" onclick="event.stopPropagation();toggleMachineProducts('${escapeHtml(m.code)}', this)" title="Toon producten (volumes) op deze machine" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-emerald-600 text-slate-400 hover:text-white transition-colors">&#9707; Producten</button>
                     <button onclick="event.stopPropagation();openMachineDrilldown('${escapeHtml(m.code)}')" title="Bekijk detail per periode" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-indigo-600 text-slate-400 hover:text-white transition-colors">&#128269;</button>
                     ${editBtn(`focusMachineOee('${escapeHtml(m.code)}')`, 'Bewerk OEE van deze machine')}
                 </td>
@@ -8199,10 +8209,6 @@ async function saveMachineEdit(td) {
         return;
     }
 
-    // OEE is shown as percent in UI but stored as fraction (0..1.5)
-    let payloadValue = num;
-    if (field === 'oee') payloadValue = num / 100.0;
-
     // No-op if unchanged (compare against the numeric editValue)
     const origNum = parseFloat(String(td.dataset._orig || '').replace('%', '').replace(',', '.'));
     if (isFinite(origNum) && Math.abs(origNum - num) < 1e-6) {
@@ -8210,23 +8216,51 @@ async function saveMachineEdit(td) {
         return;
     }
 
+    // Effective throughput is not a stored field: invert it to an equivalent
+    // OEE and post that (same mechanism as the drilldown control).
+    let postField = field;
+    let payloadValue = num;
+    let directChange;
+    if (field === 'throughput_eff') {
+        const m = (_machinesData.machines || []).find(x => String(x.code) === String(mc));
+        if (!m) { td.textContent = td.dataset.currentDisplay || ''; return; }
+        const conv = _throughputTargetToOee(m, num);
+        if (conv.error) { notify(conv.error, 'warning'); td.textContent = td.dataset.currentDisplay || ''; return; }
+        if (conv.tooHigh) {
+            notify(`Doel niet haalbaar: maximaal ${conv.maxTarget.toFixed(2)} bij de OEE-limiet van 150%.`, 'warning', 5000);
+            td.textContent = td.dataset.currentDisplay || '';
+            return;
+        }
+        postField = 'oee';
+        payloadValue = conv.oee;
+        directChange = {
+            machine: mc, field: 'oee', field_label: 'Doorzet (via OEE)',
+            old_display: `${origNum.toFixed(2)} (OEE ${(m.oee * 100).toFixed(1)}%)`,
+            new_display: `${num.toFixed(2)} (OEE ${(conv.oee * 100).toFixed(1)}%)`,
+        };
+    } else if (field === 'oee') {
+        payloadValue = num / 100.0;  // OEE shown as percent, stored as fraction
+    }
+
     td.classList.add('opacity-50');
     _machineOpInFlight = true;
     const beforeImpact = _snapshotMachineImpactState();
-    const fieldUnit = field === 'shift_hours' ? 'h' : '%';
-    const fieldLabel = field === 'oee' ? 'OEE' : field === 'shift_hours' ? 'Shift-uren' : 'Availability';
-    const directChange = {
-        machine: mc,
-        field,
-        field_label: fieldLabel,
-        old_display: isFinite(origNum) ? origNum.toFixed(1) + fieldUnit : (td.dataset.currentDisplay || ''),
-        new_display: num.toFixed(1) + fieldUnit,
-    };
+    if (!directChange) {
+        const fieldUnit = field === 'shift_hours' ? 'h' : '%';
+        const fieldLabel = field === 'oee' ? 'OEE' : field === 'shift_hours' ? 'Shift-uren' : 'Availability';
+        directChange = {
+            machine: mc,
+            field,
+            field_label: fieldLabel,
+            old_display: isFinite(origNum) ? origNum.toFixed(1) + fieldUnit : (td.dataset.currentDisplay || ''),
+            new_display: num.toFixed(1) + fieldUnit,
+        };
+    }
     try {
         const res = await fetch('/api/machines/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ machine: mc, field: field, value: payloadValue })
+            body: JSON.stringify({ machine: mc, field: postField, value: payloadValue })
         });
         const out = await res.json();
         if (!res.ok) {
