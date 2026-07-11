@@ -13,6 +13,8 @@ from typing import Callable
 from flask import Blueprint, jsonify, request, send_file
 
 from modules.models import LineType
+from ui.pending_edits import trim_stack_group_aware
+from ui.volume_change import recalculate_capacity_and_values
 
 
 def _engine_state_response(current_engine, extra: dict | None = None) -> dict:
@@ -208,7 +210,8 @@ def create_edits_blueprint(
     def _apply_entries(sess, current_engine, entries, value_key):
         """Re-apply a batch of undo/redo entries and return one combined
         response. Single edits keep returning apply_volume_change's own
-        response (preserving edit_meta for the caller)."""
+        response (preserving edit_meta for the caller). Grouped entries
+        defer the whole-plan capacity+value recalc to one final pass."""
         if len(entries) == 1:
             e = entries[0]
             return apply_volume_change(
@@ -221,7 +224,9 @@ def create_edits_blueprint(
                 sess, current_engine,
                 e['line_type'], e['material_number'], e['period'],
                 e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
+                defer_recalc=True,
             )
+        recalculate_capacity_and_values(current_engine, sess)
         return jsonify(_engine_state_response(current_engine, {'group_size': len(entries)}))
 
     @bp.route('/api/undo', methods=['POST'])
@@ -236,8 +241,7 @@ def create_edits_blueprint(
 
         entries = _pop_group(undo_stack)
         redo_stack.extend(entries)
-        if len(redo_stack) > 200:
-            del redo_stack[:len(redo_stack) - 200]
+        trim_stack_group_aware(redo_stack)
         # Reverting applies old_values in stack (reverse) order so cells that
         # share a material unwind to the true pre-bulk state.
         return _apply_entries(sess, current_engine, entries, 'old_value')
@@ -254,8 +258,7 @@ def create_edits_blueprint(
 
         entries = _pop_group(redo_stack)
         undo_stack.extend(entries)
-        if len(undo_stack) > 200:
-            del undo_stack[:len(undo_stack) - 200]
+        trim_stack_group_aware(undo_stack)
         # Reapply in forward (application) order.
         return _apply_entries(sess, current_engine, list(reversed(entries)), 'new_value')
 
@@ -277,7 +280,6 @@ def create_edits_blueprint(
 
         group_id = uuid.uuid4().hex
         undo_stack = sess.setdefault('undo_stack', [])
-        sess.setdefault('redo_stack', []).clear()
         applied = 0
         failed = []
         for cell in cells:
@@ -293,11 +295,17 @@ def create_edits_blueprint(
             resp = apply_volume_change(
                 sess, current_engine, line_type, material_number, period,
                 new_value, aux_column=aux_column, push_undo=False,
+                defer_recalc=True,
             )
             payload = resp.get_json(silent=True) if hasattr(resp, 'get_json') else None
             if getattr(resp, 'status_code', 200) >= 400 or not (isinstance(payload, dict) and payload.get('success')):
                 failed.append({'cell': cell, 'error': (payload or {}).get('error', 'apply failed')})
                 continue
+            if applied == 0:
+                # First successful apply: only now is the batch a real edit
+                # action, so only now may it invalidate redo history. A batch
+                # that fails entirely must leave redo intact.
+                sess.setdefault('redo_stack', []).clear()
             em = payload.get('edit_meta', {})
             undo_stack.append({
                 'line_type': line_type,
@@ -309,12 +317,14 @@ def create_edits_blueprint(
                 'group_id': group_id,
             })
             applied += 1
-        if len(undo_stack) > 200:
-            del undo_stack[:len(undo_stack) - 200]
+        trim_stack_group_aware(undo_stack)
 
         if applied == 0:
             return jsonify({'error': 'No cells could be updated', 'failed': failed}), 400
 
+        # One whole-plan capacity+value recalc for the entire batch (the
+        # per-cell volume cascades already ran with defer_recalc=True).
+        recalculate_capacity_and_values(current_engine, sess)
         save_sessions_to_disk()
         return jsonify(_engine_state_response(current_engine, {
             'applied': applied,

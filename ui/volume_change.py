@@ -37,7 +37,7 @@ snapshot/persist/replay for these stores; this module only writes them):
 from flask import jsonify
 
 from modules.models import LineType
-from ui.pending_edits import pending_edit_key
+from ui.pending_edits import pending_edit_key, trim_stack_group_aware
 from ui.replay import recalculate_value_results
 from ui.state_snapshot import ensure_reset_baseline
 
@@ -391,10 +391,17 @@ def _set_or_pop_capacity_override(sess, line_type, material_number, period, new_
 
 def apply_volume_change(sess, current_engine, line_type, material_number, period, new_value,
                           aux_column='',
-                          push_undo=True):
+                          push_undo=True,
+                          defer_recalc=False):
     """Internal helper: apply a volume change + cascade and return jsonify result.
 
-    Used by /api/update_volume (via direct code), /api/undo, /api/redo.
+    Used by /api/update_volume (via direct code), /api/undo, /api/redo, and
+    the bulk endpoint. With ``defer_recalc=True`` the per-material volume
+    cascade still runs, but the (expensive, whole-plan) capacity + value
+    recalculation and the full results payload are skipped — the caller must
+    run ``recalculate_capacity_and_values`` once after its batch. The end
+    state is identical because that recalc is a pure function of the final
+    ``engine.results``.
     """
     if line_type not in EDITABLE_LINE_TYPES:
         resp = jsonify({'error': f'Line type "{line_type}" is not editable'})
@@ -455,8 +462,9 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         undo_stack.append({'line_type': line_type, 'material_number': material_number,
                            'aux_column': str(getattr(target_row, 'aux_column', '') or ''),
                            'period': period, 'old_value': old_value, 'new_value': new_value})
-        if len(undo_stack) > 50:
-            undo_stack.pop(0)
+        # Same cap as the bulk endpoint (200) and group-aware, so single edits
+        # can no longer erode a bulk group one oldest-entry at a time.
+        trim_stack_group_aware(undo_stack)
 
     # Update manual_edits tracking
     if period not in target_row.manual_edits:
@@ -500,7 +508,8 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             root_override_target_stock_values=target_stock_values,
             preserve_root_l05=True,
         )
-        recalculate_capacity_and_values(current_engine, sess)
+        if not defer_recalc:
+            recalculate_capacity_and_values(current_engine, sess)
 
     elif line_type == LineType.DEMAND_FORECAST.value:
         recalc_material_subtree(
@@ -510,7 +519,8 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             root_override_target_stock=None,
             preserve_root_l05=True,
         )
-        recalculate_capacity_and_values(current_engine, sess)
+        if not defer_recalc:
+            recalculate_capacity_and_values(current_engine, sess)
 
     elif line_type in (LineType.PRODUCTION_PLAN.value, LineType.PURCHASE_RECEIPT.value):
         from modules.bom_engine import BOMEngine
@@ -637,7 +647,8 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             )
             queue.extend(gc for gc in grandchildren if gc not in visited)
 
-        recalculate_capacity_and_values(current_engine, sess)
+        if not defer_recalc:
+            recalculate_capacity_and_values(current_engine, sess)
 
     elif line_type == LineType.INVENTORY.value:
         # L4: only the starting stock is editable. Period values are derived.
@@ -661,7 +672,8 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             override_initial_stock=float(new_value),
             preserve_root_l05=True,
         )
-        recalculate_capacity_and_values(current_engine, sess)
+        if not defer_recalc:
+            recalculate_capacity_and_values(current_engine, sess)
 
     elif line_type in (
         LineType.CAPACITY_UTILIZATION.value,
@@ -669,7 +681,8 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         LineType.SHIFT_AVAILABILITY.value,
     ):
         _set_or_pop_capacity_override(sess, line_type, material_number, period, new_value, is_revert)
-        recalculate_capacity_and_values(current_engine, sess)
+        if not defer_recalc:
+            recalculate_capacity_and_values(current_engine, sess)
 
     elif line_type == LineType.FTE_REQUIREMENTS.value:
         # L12 is a leaf for planning (only ValuePlanningEngine reads it).
@@ -677,14 +690,28 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         # recalc, so re-running capacity here is safe and ensures all paths funnel
         # through the same recalc — slightly more work, but consistent.
         _set_or_pop_capacity_override(sess, line_type, material_number, period, new_value, is_revert)
-        recalculate_capacity_and_values(current_engine, sess)
+        if not defer_recalc:
+            recalculate_capacity_and_values(current_engine, sess)
 
     else:
-        recalculate_value_results(current_engine, sess)
+        if not defer_recalc:
+            recalculate_value_results(current_engine, sess)
 
     restore_manual_edits_from_pending(current_engine, sess)
 
     delta_pct = round((new_value - original_val) / abs(original_val) * 100, 2) if original_val != 0 else 0.0
+    if defer_recalc:
+        # Batch path: skip the expensive full-results payload per cell; the
+        # caller responds once with the final engine state after its recalc.
+        return jsonify({
+            'success': True,
+            'edit_meta': {
+                'old_value': old_value,
+                'new_value': new_value,
+                'original_value': original_val,
+                'delta_pct': delta_pct,
+            },
+        })
     results_dict = {lt: [r.to_dict() for r in rs] for lt, rs in current_engine.results.items()}
     value_results_dict = {lt: [r.to_dict() for r in rs] for lt, rs in current_engine.value_results.items()}
     consolidation = [r.to_dict() for r in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])]

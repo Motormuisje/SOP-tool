@@ -158,3 +158,63 @@ def test_bulk_edit_rejects_empty_and_reports_failures(golden_fixture_path):
     body = resp.get_json()
     assert body["applied"] == 1
     assert len(body["failed"]) == 1
+
+
+def test_bulk_all_failed_preserves_redo_stack(golden_fixture_path):
+    """F6: a fully-failed batch must not destroy redo history."""
+    engine = _build_engine(golden_fixture_path)
+    app, sess = _make_app(engine)
+    client = app.test_client()
+
+    period = engine.data.periods[2]
+    mat = _first_demand_materials(engine, 1)[0]
+    baseline = _l01_value(engine, mat, period)
+
+    # One valid bulk edit, then undo -> redo stack holds the group.
+    client.post("/api/update_volume_bulk", json={"cells": [
+        {"line_type": LineType.DEMAND_FORECAST.value, "material_number": mat,
+         "aux_column": "", "period": period, "new_value": (baseline or 0.0) + 10}]})
+    client.post("/api/undo")
+    assert len(sess["redo_stack"]) == 1
+
+    # A batch where every cell fails (non-editable line type) -> 400, redo intact.
+    resp = client.post("/api/update_volume_bulk", json={"cells": [
+        {"line_type": LineType.DEPENDENT_DEMAND.value, "material_number": mat,
+         "aux_column": "", "period": period, "new_value": 5.0}]})
+    assert resp.status_code == 400
+    assert len(sess["redo_stack"]) == 1  # still redoable
+
+
+def test_bulk_runs_capacity_recalc_once(golden_fixture_path, monkeypatch):
+    """E1: bulk defers the whole-plan capacity+value recalc to ONE final pass."""
+    import ui.routes.edits as edits_mod
+    import ui.volume_change as vc_mod
+
+    engine = _build_engine(golden_fixture_path)
+    app, _ = _make_app(engine)
+    client = app.test_client()
+
+    calls = {"inner": 0, "final": 0}
+    real = vc_mod.recalculate_capacity_and_values
+
+    def counting_inner(eng, sess):
+        calls["inner"] += 1
+        real(eng, sess)
+
+    def counting_final(eng, sess):
+        calls["final"] += 1
+        real(eng, sess)
+
+    monkeypatch.setattr(vc_mod, "recalculate_capacity_and_values", counting_inner)
+    monkeypatch.setattr(edits_mod, "recalculate_capacity_and_values", counting_final)
+
+    period = engine.data.periods[5]
+    mats = _first_demand_materials(engine, 3)
+    resp = client.post("/api/update_volume_bulk", json={"cells": [
+        {"line_type": LineType.DEMAND_FORECAST.value, "material_number": m,
+         "aux_column": "", "period": period, "new_value": 111.0}
+        for m in mats]})
+    assert resp.status_code == 200
+
+    assert calls["final"] == 1          # one batch-level recalc
+    assert calls["inner"] == 0          # no per-cell whole-plan recalcs
