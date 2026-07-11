@@ -49,11 +49,27 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
     pap = getattr(engine_data, 'purchased_and_produced', None)
     if pap is not None:
         ov['purchased_and_produced'] = format_purchased_and_produced(pap)
-    elif sess.get('purchased_and_produced'):
+    elif sess.get('purchased_and_produced') is not None:
         # Cold rebuild (restart/warmup): use the session's persisted PAP
         # instead of falling through to the last-active session's value in
-        # the shared global config.
+        # the shared global config. '' means DELIBERATELY CLEARED and must
+        # override the global value too (parses to an empty dict), so only
+        # None (field never persisted) falls through.
         ov['purchased_and_produced'] = sess['purchased_and_produced']
+
+    # Forecast defaults are per-session state: the session dict is
+    # authoritative, a live engine's own config_overrides is the fallback.
+    # A session WITHOUT defaults must never inherit them from the shared
+    # global config (cross-session contamination on rebuild) — global only
+    # feeds fresh /api/calculate runs of the active session.
+    fd = sess.get('forecast_defaults')
+    if fd is None:
+        engine = sess.get('engine')
+        fd = (getattr(engine, 'config_overrides', None) or {}).get('forecast_defaults')
+    if fd:
+        ov['forecast_defaults'] = fd
+    else:
+        ov.pop('forecast_defaults', None)
     return ov
 
 

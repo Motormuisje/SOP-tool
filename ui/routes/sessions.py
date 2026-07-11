@@ -115,6 +115,10 @@ def create_sessions_blueprint(
             return jsonify({'error': 'No active session'}), 400
 
         new_id = str(uuid.uuid4())
+        # '' from a live engine means PAP was deliberately cleared — must not
+        # fall through to the session's stale pre-clear value; only None (no
+        # live engine) falls back.
+        live_pap = _pap_string_from_engine(sess.get('engine'))
         new_sess = {
             'id': new_id,
             'file_path': sess.get('file_path', ''),
@@ -141,8 +145,7 @@ def create_sessions_blueprint(
                 )
             ),
             'purchased_and_produced': (
-                _pap_string_from_engine(sess.get('engine'))
-                or sess.get('purchased_and_produced')
+                live_pap if live_pap is not None else sess.get('purchased_and_produced')
             ),
             'machine_overrides': (
                 machine_overrides_from_engine(sess, sess.get('engine'))
@@ -150,6 +153,10 @@ def create_sessions_blueprint(
                 else copy.deepcopy(sess.get('machine_overrides', {}))
             ),
             'reset_baseline': copy.deepcopy(sess.get('reset_baseline')),
+            'forecast_defaults': copy.deepcopy(
+                (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('forecast_defaults')
+                or sess.get('forecast_defaults') or {}
+            ),
             'comments': copy.deepcopy(sess.get('comments', {})),
             'undo_stack': [],
             'redo_stack': [],

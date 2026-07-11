@@ -87,3 +87,74 @@ def test_add_mode_cascades_through_full_engine(golden_fixture_path):
     assert base_l01, "no demand rows in golden fixture"
     for mat, base_val in base_l01.items():
         assert abs(bumped_l01[mat] - (base_val + 1000.0)) < 1e-6, mat
+
+
+def test_forecast_defaults_do_not_leak_to_other_sessions_on_rebuild():
+    """F3: a session without defaults must never inherit them from the shared
+    global config during a rebuild (cross-session contamination)."""
+    from ui.engine_rebuild import get_session_config_overrides
+
+    global_config = {"forecast_defaults": {"mode": "add", "default": 7000.0}}
+    # Old/cold session: field defaulted to {} on load, no engine.
+    sess = {"id": "a", "engine": None, "forecast_defaults": {}}
+    ov = get_session_config_overrides(sess, global_config)
+    assert "forecast_defaults" not in ov
+
+    # Session that DOES have defaults gets its own, not global's.
+    sess_b = {"id": "b", "engine": None,
+              "forecast_defaults": {"mode": "fill_empty", "default": 5.0}}
+    ov_b = get_session_config_overrides(sess_b, global_config)
+    assert ov_b["forecast_defaults"] == {"mode": "fill_empty", "default": 5.0}
+
+
+def test_forecast_defaults_round_trip_session_store(tmp_path):
+    from types import SimpleNamespace
+
+    from ui.session_store import load_sessions_from_disk, save_sessions_to_disk
+
+    engine = SimpleNamespace(
+        data=SimpleNamespace(purchased_and_produced=None, valuation_params=None),
+        config_overrides={"forecast_defaults": {"mode": "add", "default": 100.0}},
+    )
+    sessions = {"s1": {"id": "s1", "engine": engine, "parameters": {"planning_month": "2025-12"}}}
+    store = tmp_path / "sessions_store.json"
+    save_sessions_to_disk(sessions, "s1", store, lambda s, e: {})
+    loaded, _ = load_sessions_from_disk(store)
+    assert loaded["s1"]["forecast_defaults"] == {"mode": "add", "default": 100.0}
+
+
+def test_sanitize_forecast_defaults_empty_is_empty():
+    """F7: mode-only payloads normalise to {} so an empty save never flags a
+    structural change (which would rebuild and drop VP/PAP from the request)."""
+    from ui.routes.config import _sanitize_forecast_defaults
+
+    assert _sanitize_forecast_defaults({}) == {}
+    assert _sanitize_forecast_defaults({"mode": "fill_empty", "default": None,
+                                        "per_material": {}}) == {}
+    assert _sanitize_forecast_defaults(None) == {}
+    assert _sanitize_forecast_defaults({"mode": "add", "default": 7}) == {"mode": "add", "default": 7.0}
+
+
+def test_cleared_pap_does_not_resurrect(tmp_path):
+    """F9: purchased_and_produced cleared to {} persists as '' and must
+    override the global fallback on cold rebuild, not fall through to it."""
+    from types import SimpleNamespace
+
+    from ui.engine_rebuild import get_session_config_overrides
+    from ui.session_store import load_sessions_from_disk, save_sessions_to_disk
+
+    engine = SimpleNamespace(
+        data=SimpleNamespace(purchased_and_produced={}, valuation_params=None),
+        config_overrides={},
+    )
+    sessions = {"s1": {"id": "s1", "engine": engine, "parameters": {"planning_month": "2025-12"}}}
+    store = tmp_path / "sessions_store.json"
+    save_sessions_to_disk(sessions, "s1", store, lambda s, e: {})
+    loaded, _ = load_sessions_from_disk(store)
+    sess = loaded["s1"]
+    assert sess["purchased_and_produced"] == ""  # cleared, not None
+
+    global_config = {"purchased_and_produced": "OTHER-MAT:1"}
+    ov = get_session_config_overrides(sess, global_config)
+    # '' overrides the global value (parses to no PAP entries downstream).
+    assert ov["purchased_and_produced"] == ""

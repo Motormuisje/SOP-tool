@@ -44,10 +44,12 @@ def save_sessions_to_disk(
         # the string format config_overrides accepts ("MAT:0.5, ...").
         pap_obj = getattr(getattr(engine, 'data', None), 'purchased_and_produced', None)
         if pap_obj is not None:
+            # A live engine is authoritative; {} formats to '' which means
+            # DELIBERATELY CLEARED (distinct from None = never persisted).
             sess_pap = format_purchased_and_produced(pap_obj)
         else:
             sess_pap = sess.get('purchased_and_produced')
-            if not sess_pap:
+            if sess_pap is None:
                 baseline_pap = (sess.get('reset_baseline') or {}).get('purchased_and_produced')
                 sess_pap = format_purchased_and_produced(baseline_pap) if baseline_pap else None
         serializable[sid] = {
@@ -73,6 +75,13 @@ def save_sessions_to_disk(
             'capacity_overrides': sess.get('capacity_overrides', {}),
             'valuation_params': sess_vp,
             'purchased_and_produced': sess_pap,
+            # Forecast defaults are per-session config: a cold rebuild must
+            # never inherit them from the shared global config.
+            'forecast_defaults': (
+                ((getattr(engine, 'config_overrides', None) or {}).get('forecast_defaults') or {})
+                if engine is not None
+                else (sess.get('forecast_defaults') or {})
+            ),
             # Annotations (Fase 2.1): pure metadata, JSON-safe.
             'comments': sess.get('comments', {}),
         }
@@ -158,6 +167,7 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 'valuation_params': data.get('valuation_params'),
                 # None for store files written before this field existed.
                 'purchased_and_produced': data.get('purchased_and_produced'),
+                'forecast_defaults': data.get('forecast_defaults') or {},
                 'comments': data.get('comments') or {},
                 'undo_stack': [],
                 'redo_stack': [],

@@ -40,6 +40,12 @@ def _sanitize_forecast_defaults(raw) -> dict:
             continue
     if per_material:
         out['per_material'] = per_material
+    # A mode without any value is a no-op config; normalise to {} so an
+    # "empty" save compares equal to the stored default and does not flag a
+    # spurious structural change (which would force a full engine rebuild
+    # and drop VP/PAP submitted in the same request).
+    if 'default' not in out and not per_material:
+        return {}
     return out
 
 
@@ -215,6 +221,10 @@ def create_config_blueprint(
             global_config['unlimited_machines'] = data['unlimited_machines'].strip()
         if 'forecast_defaults' in data:
             global_config['forecast_defaults'] = _sanitize_forecast_defaults(data['forecast_defaults'])
+            # Per-session state: the session dict is what rebuilds and
+            # persistence read; global is only the UI/calculate mirror.
+            if sess is not None:
+                sess['forecast_defaults'] = dict(global_config['forecast_defaults'])
 
         structural_config_changed = (
             str(global_config.get('site', '') or '') != old_config['site']

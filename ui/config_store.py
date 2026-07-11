@@ -65,6 +65,11 @@ def sync_global_config_from_engine(engine, global_config, format_pap) -> None:
     pap = getattr(engine.data, 'purchased_and_produced', None)
     if pap is not None:
         global_config['purchased_and_produced'] = format_pap(pap)
+    # Forecast defaults are per-session; mirror the ACTIVE session's value into
+    # global config so the config UI and fresh /api/calculate runs see it, and
+    # so a stale value from the previous session cannot linger.
+    fd = (getattr(engine, 'config_overrides', None) or {}).get('forecast_defaults')
+    global_config['forecast_defaults'] = fd or {}
 
 
 def resolve_folder_paths(global_config: dict, default_folders: dict) -> tuple[Path, Path, Path]:
