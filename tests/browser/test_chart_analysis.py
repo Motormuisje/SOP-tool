@@ -293,6 +293,148 @@ def test_inventory_quality_bucket_decomposition(browser_page):
     assert page.js_errors == []
 
 
+def test_panel_fits_inside_modal_card(browser_page):
+    """Regressie: het paneel werd buiten de modal-kaart gedrukt (flexkind
+    zonder min-width:0) waardoor de %-kolom afgeknipt was."""
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    _zoom_and_open_analysis(page, "financialChart")
+    fit = page.evaluate(
+        """() => {
+            const card = document.querySelector('#chartZoomModal .card').getBoundingClientRect();
+            const panel = document.getElementById('chartAnalysisPanel').getBoundingClientRect();
+            return { fits: panel.right <= card.right + 1 && panel.width > 300 };
+        }"""
+    )
+    assert fit["fits"], fit
+    assert page.js_errors == []
+
+
+def test_selection_arrow_and_status_text(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    _zoom_and_open_analysis(page, "financialChart")
+    page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+    check = page.evaluate(
+        """() => ({
+            connector: _zoomChart._analysisConnector
+                ? _zoomChart._analysisConnector.indices.length : 0,
+            status: document.getElementById('chartAnalysisSelStatus').textContent,
+        })"""
+    )
+    assert check["connector"] == 2, "pijl-connector moet beide punten kennen"
+    assert "Vergelijkt" in check["status"], check["status"]
+    assert page.js_errors == []
+
+
+def test_fte_machine_row_drills_to_products(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    page.wait_for_function(
+        "() => !!Chart.getChart(document.getElementById('fteChart'))",
+        timeout=30000,
+    )
+    _zoom_and_open_analysis(page, "fteChart")
+    page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+    # Drill de eerste machine-rij (drill-key 'machine:<code>').
+    code = page.evaluate(
+        """() => {
+            const m = (window._analysisLastModel.rows || []).find(r => true);
+            const drills = Array.from(document.querySelectorAll(
+                '#chartAnalysisTableHost tr[onclick]'));
+            const first = drills.map(tr => tr.getAttribute('onclick'))
+                .find(oc => oc.includes('machine:'));
+            return first ? first.match(/machine:([^']+)/)[1] : null;
+        }"""
+    )
+    if code is None:
+        # Groep zonder machinedetail: nette melding volstaat.
+        notes = page.evaluate(
+            "() => document.getElementById('chartAnalysisNotes').textContent")
+        assert "Geen machinedetail" in notes or "uren" in notes
+    else:
+        page.evaluate("(c) => _analysisDrillComponent('machine:' + c)", code)
+        page.wait_for_function(
+            "() => document.getElementById('chartAnalysisHeadline')"
+            ".textContent.includes('Producten op')",
+            timeout=30000,
+        )
+        table = page.evaluate(
+            "() => document.getElementById('chartAnalysisTableHost').textContent")
+        assert "Terug naar grafiekanalyse" in table
+        page.evaluate("() => _analysisDrillBack()")
+        page.wait_for_function(
+            "() => !document.getElementById('chartAnalysisHeadline')"
+            ".textContent.includes('Producten op')",
+            timeout=30000,
+        )
+    assert page.js_errors == []
+
+
+def test_show_movers_filters_planning_table(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    _zoom_and_open_analysis(page, "financialChart")
+    page.evaluate(
+        """() => {
+            const ds = _zoomChart.data.datasets.findIndex(d => d.label === 'Turnover');
+            return _analysisApplySelection(ds, 1, 2);
+        }"""
+    )
+    page.wait_for_function(
+        "() => window._lastChartAnalysis && window._lastChartAnalysis.rows"
+        ".some(r => r.material)",
+        timeout=30000,
+    )
+    try:
+        page.evaluate("() => _analysisShowMoversInPlanning()")
+        # Modal dicht, planningstab actief, scope-filter actief.
+        page.wait_for_selector("#planning-tab:not(.hidden)", timeout=15000)
+        check = page.evaluate(
+            """() => {
+                const visible = [...document.querySelectorAll('#planBody tr[data-material]')]
+                    .filter(r => r.style.display !== 'none');
+                const mats = new Set(visible.map(r => r.dataset.material));
+                return {
+                    modalOpen: document.getElementById('chartZoomModal').style.display !== 'none',
+                    scoped: !!_editedMaterialScope,
+                    visibleMats: mats.size,
+                    allInScope: [...mats].every(m => _editedMaterialScope.has(m)),
+                };
+            }"""
+        )
+        assert not check["modalOpen"]
+        assert check["scoped"] and check["visibleMats"] >= 1
+        assert check["allInScope"], check
+    finally:
+        page.evaluate(
+            """() => {
+                _editedMaterialScope = null;
+                const s = document.getElementById('matSearch');
+                if (s) s.value = '';
+                filterTable();
+            }"""
+        )
+    assert page.js_errors == []
+
+
+def test_export_analysis_downloads_workbook(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    _zoom_and_open_analysis(page, "financialChart")
+    page.wait_for_function("() => !!window._analysisLastModel", timeout=30000)
+    with page.expect_response(
+            lambda r: "/api/analysis/export" in r.url and r.ok, timeout=30000) as resp:
+        page.evaluate("() => _analysisExportExcel()")
+    assert "spreadsheetml" in resp.value.headers.get("content-type", "")
+    assert page.js_errors == []
+
+
 def test_analysis_resets_on_close_and_rezoom(browser_page):
     page = browser_page
     page.reload(wait_until="networkidle")

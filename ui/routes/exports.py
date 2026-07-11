@@ -1,5 +1,6 @@
 """Planning export and month-over-month routes."""
 
+import io
 from datetime import datetime
 from typing import Callable
 
@@ -7,6 +8,69 @@ from flask import Blueprint, jsonify, request, send_file
 
 from modules.database_exporter import DatabaseExporter
 from modules.mom_comparison_engine import MoMComparisonEngine
+
+
+def build_analysis_workbook(payload: dict) -> bytes:
+    """Build the chart-analysis export workbook (Fase: grafiek-analyse).
+
+    Pure function over the posted analysis model — no engine/session state —
+    so the endpoint works regardless of calculation state and stays trivially
+    unit-testable.
+    """
+    import openpyxl
+    from openpyxl.styles import Font
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Analyse'
+    bold = Font(bold=True)
+
+    ws.append([str(payload.get('title') or 'Grafiek')])
+    ws['A1'].font = Font(bold=True, size=13)
+    ws.append([str(payload.get('headline') or '')])
+    ws.append([f"Segment: {payload.get('segment') or ''}"])
+    for note in (payload.get('notes') or []):
+        ws.append([str(note)])
+    ws.append([])
+
+    unit = str(payload.get('unit') or '')
+    header_row = ws.max_row + 1
+    ws.append(['Naam', f'Delta ({unit})' if unit else 'Delta',
+               '% van beweging' if payload.get('additive', True) else '% aandeel'])
+    for cell in ws[header_row]:
+        cell.font = bold
+
+    rows = payload.get('rows') or []
+    total = float(payload.get('total_delta') or 0.0)
+    contributor_sum = float(payload.get('contributor_sum') or 0.0)
+    pct_base = total if payload.get('additive', True) else contributor_sum
+    for row in rows:
+        delta = float(row.get('delta') or 0.0)
+        pct = (delta / pct_base * 100.0) if abs(pct_base) > 1e-12 else None
+        ws.append([str(row.get('label') or ''), round(delta, 4),
+                   round(pct, 1) if pct is not None else None])
+    rest_count = int(payload.get('rest_count') or 0)
+    if rest_count > 0:
+        rest_delta = float(payload.get('rest_delta') or 0.0)
+        pct = (rest_delta / pct_base * 100.0) if abs(pct_base) > 1e-12 else None
+        ws.append([f'Overige ({rest_count})', round(rest_delta, 4),
+                   round(pct, 1) if pct is not None else None])
+
+    footer_row = ws.max_row + 1
+    if payload.get('additive', True):
+        ws.append(['Som bijdragen', round(contributor_sum, 4), None])
+    ws.append(['Beweging in grafiek', round(total, 4), None])
+    for r in range(footer_row, ws.max_row + 1):
+        for cell in ws[r]:
+            cell.font = bold
+
+    ws.column_dimensions['A'].width = 48
+    ws.column_dimensions['B'].width = 16
+    ws.column_dimensions['C'].width = 16
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _apply_edit_highlights(path: str, engine):
@@ -209,6 +273,24 @@ def create_exports_blueprint(
             print(f'[export] Opmerkingen sheet skipped: {exc}')
 
         return send_file(str(export_path), as_attachment=True)
+
+    @bp.route('/api/analysis/export', methods=['POST'])
+    def export_analysis():
+        """Export a chart-analysis panel (headline + contributors) to Excel."""
+        payload = request.get_json(force=True, silent=True) or {}
+        if not payload.get('headline') and not payload.get('rows'):
+            return jsonify({'error': 'Geen analyse om te exporteren.'}), 400
+        try:
+            content = build_analysis_workbook(payload)
+        except Exception as exc:
+            return jsonify({'error': f'Export mislukt: {exc}'}), 500
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return send_file(
+            io.BytesIO(content),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'grafiek_analyse_{stamp}.xlsx',
+        )
 
     @bp.route('/api/export_db', methods=['POST'])
     def export_db():

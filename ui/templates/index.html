@@ -1610,11 +1610,11 @@
                     <button type="button" onclick="closeChartZoom()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
                 </div>
             </div>
-            <div id="chartZoomBody" style="flex:1;display:flex;min-height:0;gap:14px">
-                <div id="chartZoomCanvasHost" style="flex:1;min-height:0;position:relative">
+            <div id="chartZoomBody" style="flex:1;display:flex;min-height:0;min-width:0;gap:14px">
+                <div id="chartZoomCanvasHost" style="flex:1;min-height:0;min-width:0;position:relative;overflow:hidden">
                     <canvas id="chartZoomCanvas"></canvas>
                 </div>
-                <div id="chartAnalysisPanel" style="display:none;width:380px;flex:none;min-height:0;overflow-y:auto;border-left:1px solid #334155;padding-left:12px"></div>
+                <div id="chartAnalysisPanel" style="display:none;width:400px;flex:none;min-height:0;overflow-y:auto;overflow-x:hidden;border-left:1px solid #334155;padding-left:12px"></div>
             </div>
         </div>
     </div>
@@ -3446,6 +3446,7 @@ function openChartZoomForCanvas(canvas, title) {
     const cfg = _cloneChartConfigFrom(src);
     // Analysis two-point selection: harmless no-op while the panel is closed.
     cfg.options.onClick = _analysisZoomClickHandler;
+    cfg.plugins = [_analysisConnectorPlugin];
     _zoomChart = new Chart(host.querySelector('canvas').getContext('2d'), cfg);
     modal.style.display = 'flex';
     modal.dataset.sourceCanvas = canvas.id || '';
@@ -3638,12 +3639,15 @@ async function _analysisComputeSegment(chart, descriptor, datasetIndex, iA, iB) 
     let rows;
     if (descriptor.preSplit) {
         // Segment-aware exact splits (e.g. ratio metrics): deltas come ready.
-        rows = descriptor.preSplit(pA, pB).map(r => ({ label: r.label, drill: r.drill || null, delta: r.delta }));
+        rows = descriptor.preSplit(pA, pB).map(r => ({
+            label: r.label, drill: r.drill || null, material: r.material || null, delta: r.delta,
+        }));
     } else {
         const raw = await descriptor.contributors();
         rows = raw.map(c => ({
             label: c.label,
             drill: c.drill || null,
+            material: c.material || null,
             delta: (_analysisValAt(c, pB) - _analysisValAt(c, pA)) * (c.sign || 1) * scale,
         }));
     }
@@ -3692,12 +3696,52 @@ async function _analysisComputeSegment(chart, descriptor, datasetIndex, iA, iB) 
     window._lastChartAnalysis = {
         key: document.getElementById('chartZoomModal').dataset.analysisKey,
         datasetIndex, iA, iB, totalDelta, contributorSum,
-        rows: top.map(r => ({ label: r.label, delta: r.delta })), headline,
+        rows: top.map(r => ({ label: r.label, delta: r.delta, material: r.material })),
+        headline,
     };
+    window._analysisLastModel = model;
     return model;
 }
 
 // ---- two-point selection + point marking on the zoom clone ----
+// Draws the comparison visually: a ring around the first selected point, and
+// a dashed arrow from point A to point B once the segment is complete.
+const _analysisConnectorPlugin = {
+    id: 'analysisConnector',
+    afterDatasetsDraw(chart) {
+        const sel = chart._analysisConnector;
+        if (!sel) return;
+        const meta = chart.getDatasetMeta(sel.ds);
+        if (!meta || !meta.data) return;
+        const pts = sel.indices.map(i => meta.data[i]).filter(Boolean);
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(248,250,252,0.9)';
+        ctx.fillStyle = 'rgba(248,250,252,0.9)';
+        ctx.lineWidth = 2;
+        if (pts.length === 2) {
+            const [a, b] = pts;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+            const ang = Math.atan2(b.y - a.y, b.x - a.x);
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.moveTo(b.x, b.y);
+            ctx.lineTo(b.x - 12 * Math.cos(ang - 0.4), b.y - 12 * Math.sin(ang - 0.4));
+            ctx.lineTo(b.x - 12 * Math.cos(ang + 0.4), b.y - 12 * Math.sin(ang + 0.4));
+            ctx.closePath(); ctx.fill();
+        } else if (pts.length === 1) {
+            ctx.beginPath(); ctx.arc(pts[0].x, pts[0].y, 10, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+    },
+};
+
+function _analysisSetSelStatus(text) {
+    const el = document.getElementById('chartAnalysisSelStatus');
+    if (el) el.textContent = text || '';
+}
+
 function _analysisZoomClickHandler(evt, elements, chart) {
     if (!_analysisOpen || !chart) return;
     let els = [];
@@ -3710,6 +3754,9 @@ function _analysisZoomClickHandler(evt, elements, chart) {
     if (!_analysisSel || _analysisSel.ds !== datasetIndex) {
         _analysisSel = { ds: datasetIndex, a: index };
         _markAnalysisPoints(chart, datasetIndex, [index]);
+        const label = (chart.data.labels || [])[index];
+        const dsLabel = chart.data.datasets[datasetIndex].label || '';
+        _analysisSetSelStatus(`Eerste punt gekozen: ${dsLabel} · ${label}. Klik het tweede punt.`);
         return;
     }
     if (index === _analysisSel.a) return;
@@ -3727,6 +3774,7 @@ function _markAnalysisPoints(chart, dsIdx, indices) {
         pointBorderColor: ds.pointBorderColor, borderWidth: ds.borderWidth,
         borderColor: ds.borderColor,
     };
+    chart._analysisConnector = { ds: dsIdx, indices: [...indices] };
     const hit = ctx => indices.includes(ctx.dataIndex);
     const type = ds.type || chart.config.type;
     if (type === 'line') {
@@ -3744,6 +3792,7 @@ function _markAnalysisPoints(chart, dsIdx, indices) {
 
 function _clearAnalysisPointMarks(chart) {
     if (!chart) return;
+    delete chart._analysisConnector;
     let touched = false;
     (chart.data.datasets || []).forEach(ds => {
         if (!ds._analysisMarked) return;
@@ -3774,13 +3823,18 @@ async function openChartAnalysis() {
             <h4 class="font-semibold text-sm text-slate-200">Analyse</h4>
             <button type="button" onclick="closeChartAnalysis()" class="text-slate-400 hover:text-white text-sm">&#10005;</button>
         </div>
-        <div class="flex gap-2 mb-2">
+        <div class="flex gap-2 mb-1">
             <select id="chartAnalysisDatasetSel" onchange="_onAnalysisSelectorChange()" class="bg-slate-900 border border-slate-600 rounded px-1 py-0.5 text-xs" style="max-width:180px"></select>
-            <select id="chartAnalysisSegmentSel" onchange="_onAnalysisSelectorChange()" class="bg-slate-900 border border-slate-600 rounded px-1 py-0.5 text-xs"></select>
+            <select id="chartAnalysisSegmentSel" onchange="_onAnalysisSelectorChange()" class="bg-slate-900 border border-slate-600 rounded px-1 py-0.5 text-xs" style="max-width:200px"></select>
         </div>
+        <div id="chartAnalysisSelStatus" class="text-[10px] text-indigo-300 mb-2"></div>
         <div id="chartAnalysisHeadline" class="text-sm font-semibold text-slate-100 mb-1">Analyse laden...</div>
         <div id="chartAnalysisNotes" class="text-xs text-slate-400 mb-2"></div>
         <div id="chartAnalysisTableHost"></div>
+        <div id="chartAnalysisActions" class="flex gap-2 mt-3" style="display:none">
+            <button type="button" onclick="_analysisShowMoversInPlanning()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Filter de planningstabel op de grootste bijdragers zodat je invoerfouten direct kunt corrigeren">&#9998; Toon in planningstabel</button>
+            <button type="button" onclick="_analysisExportExcel()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Exporteer deze analyse naar Excel">&#11015; Exporteer (Excel)</button>
+        </div>
         <p class="text-[10px] text-slate-500 mt-2 italic">Klik twee punten in de grafiek om precies dat segment te analyseren.</p>`;
     try { _zoomChart.resize(); } catch (e) {}
     const detect = _analysisDetectBiggestMove(_zoomChart);
@@ -3853,6 +3907,8 @@ async function _analysisApplySelection(dsIdx, iA, iB) {
     _analysisCurrent = { ds: dsIdx, iA, iB };
     _markAnalysisPoints(_zoomChart, dsIdx, [iA, iB]);
     _fillAnalysisSelectors(dsIdx, iA, iB);
+    const selLabels = _zoomChart.data.labels || [];
+    _analysisSetSelStatus(`Vergelijkt ${selLabels[iA]} → ${selLabels[iB]} (pijl in de grafiek).`);
     const headEl = document.getElementById('chartAnalysisHeadline');
     if (headEl) headEl.textContent = 'Analyse laden...';
     try {
@@ -3901,12 +3957,17 @@ function _renderChartAnalysisPanel(model) {
     const pct = d => (pctBase !== 0 && !(model.additive && model.negligible))
         ? _fmtNlNum(d / pctBase * 100, 0) + '%'
         : '−';
-    let rowsHtml = model.rows.map(r => `
+    let rowsHtml = model.rows.map(r => {
+        const planBtn = r.material
+            ? ` <button type="button" onclick="event.stopPropagation();_analysisShowOneInPlanning('${escapeHtml(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button>`
+            : '';
+        return `
         <tr ${r.drill ? `class="cursor-pointer hover:bg-slate-800" onclick="_analysisDrillComponent('${escapeHtml(r.drill)}')" title="Klik voor detail"` : ''}>
-            <td class="p-1 text-slate-300">${r.drill ? '▸ ' : ''}${escapeHtml(r.label)}</td>
+            <td class="p-1 text-slate-300" style="word-break:break-word">${r.drill ? '▸ ' : ''}${escapeHtml(r.label)}${planBtn}</td>
             <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, model.rowUnit, model.decimals)}</td>
             <td class="p-1 text-right text-slate-400">${pct(r.delta)}</td>
-        </tr>`).join('');
+        </tr>`;
+    }).join('');
     if (model.restCount > 0) {
         rowsHtml += `
         <tr class="text-slate-500">
@@ -3933,6 +3994,79 @@ function _renderChartAnalysisPanel(model) {
         </table>`;
     if (model.extraSections) html += model.extraSections;
     tableHost.innerHTML = html;
+    const actions = document.getElementById('chartAnalysisActions');
+    if (actions) {
+        actions.style.display = '';
+        const planBtn = actions.querySelector('button');
+        if (planBtn) planBtn.style.display = model.rows.some(r => r.material) ? '' : 'none';
+    }
+}
+
+// ---- panel actions: show movers in the planning table + Excel export ----
+function _analysisShowOneInPlanning(materialNumber) {
+    closeChartZoom();
+    if (window.showTab) window.showTab('planning');
+    const search = document.getElementById('matSearch');
+    if (search) search.value = String(materialNumber);
+    _editedMaterialScope = null;
+    filterTable();
+    notify(`Planningstabel gefilterd op ${materialNumber}.`, 'info', 2500);
+}
+
+function _analysisShowMoversInPlanning() {
+    const model = window._analysisLastModel;
+    if (!model) return;
+    const mats = new Set(model.rows.filter(r => r.material).map(r => String(r.material)));
+    if (!mats.size) { notify('Geen producten in deze analyse.', 'info', 2200); return; }
+    closeChartZoom();
+    if (window.showTab) window.showTab('planning');
+    const search = document.getElementById('matSearch');
+    if (search) search.value = '';
+    _editedMaterialScope = mats;
+    _editedRowsOnly = false;
+    filterTable();
+    notify(`Planningstabel gefilterd op de ${mats.size} grootste bijdragers — pas invoerfouten direct aan. Gebruik "Herstel filter" om alles te tonen.`, 'info', 4500);
+}
+
+async function _analysisExportExcel() {
+    const model = window._analysisLastModel;
+    if (!model) return;
+    try {
+        const res = await fetch('/api/analysis/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: document.getElementById('chartZoomTitle').textContent || 'Grafiek',
+                headline: model.headline,
+                notes: model.notes,
+                segment: `${model.pA} → ${model.pB}`,
+                unit: model.rowUnit,
+                additive: model.additive,
+                rows: model.rows.map(r => ({ label: r.label, delta: r.delta })),
+                rest_count: model.restCount,
+                rest_delta: model.restDelta,
+                contributor_sum: model.contributorSum,
+                total_delta: model.totalDelta,
+            }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || 'Export mislukt');
+            return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `analyse_${(model.pA || '').replace(/\W+/g, '')}_${(model.pB || '').replace(/\W+/g, '')}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        log('Analyse geëxporteerd naar Excel.');
+    } catch (e) {
+        alert('Export mislukt: ' + e);
+    }
 }
 
 // ---- financial metric descriptors (dashboard financialChart + values finChart) ----
@@ -3989,6 +4123,7 @@ async function _finMetricDescriptor(metricKey, { scale, unit, source }) {
             seriesLabel: dutch, unit, decimals: 1, additive: true, scale,
             contributors: async () => rows.map(r => ({
                 key: r.material_number,
+                material: r.material_number,
                 label: `${r.material_number} — ${r.material_name || ''}`.trim(),
                 values: r.values || {},
                 startingValue: metricKey === 'INVENTORY VALUE' ? (r.starting_stock || 0) : undefined,
@@ -4076,6 +4211,7 @@ async function _volumeRowsDescriptor(lineType, seriesLabel) {
         seriesLabel, unit: 'ton', decimals: 1, additive: true, scale: 1,
         contributors: async () => rows.map(r => ({
             key: `${r.material_number}||${r.aux_column || ''}`,
+            material: r.material_number,
             label: `${r.material_number} — ${r.material_name || ''}`.trim(),
             values: r.values || {},
         })),
@@ -4186,10 +4322,11 @@ _chartAnalysisRegistry['fteChart'] = {
         return {
             seriesLabel: `FTE ${group.group}`, unit: 'FTE', rowUnit: 'uur', decimals: 1,
             additive: false, scale: 1,
-            note: 'FTE volgt uit de benodigde machine-uren binnen de groep; de bijdragen hieronder zijn in uren.',
+            note: 'FTE volgt uit de benodigde machine-uren binnen de groep; de bijdragen hieronder zijn in uren. Klik een machine voor de producten erachter.',
             contributors: async () => machines.map(m => ({
                 key: m.code, label: `${m.code} — ${m.name || ''}`.trim(),
                 values: m.req_hours_by_period || {},
+                drill: 'machine:' + m.code,
             })),
         };
     },
@@ -4258,10 +4395,11 @@ _chartAnalysisRegistry['fte_groep'] = {
         return {
             seriesLabel: `FTE ${group.group}`, unit: 'FTE', rowUnit: 'uur', decimals: 1,
             additive: false, scale: 1,
-            note: 'FTE volgt uit de benodigde machine-uren binnen de groep; de bijdragen hieronder zijn in uren.',
+            note: 'FTE volgt uit de benodigde machine-uren binnen de groep; de bijdragen hieronder zijn in uren. Klik een machine voor de producten erachter.',
             contributors: async () => machines.map(m => ({
                 key: m.code, label: `${m.code} — ${m.name || ''}`.trim(),
                 values: m.req_hours_by_period || {},
+                drill: 'machine:' + m.code,
             })),
         };
     },
@@ -4298,6 +4436,7 @@ _chartAnalysisRegistry['invQualityChart'] = {
                 });
                 return {
                     key: mat.material_number,
+                    material: mat.material_number,
                     label: `${mat.material_number} — ${mat.material_name || ''}`.trim(),
                     values,
                 };
@@ -4382,6 +4521,9 @@ async function _analysisDrillComponent(componentKey) {
     const labels = _zoomChart.data.labels || [];
     const pA = labels[iA], pB = labels[iB];
     _analysisDrillReturn = { ds, iA, iB };
+    if (String(componentKey).startsWith('machine:')) {
+        return _analysisDrillMachineProducts(String(componentKey).slice(8), pA, pB);
+    }
     const seq = ++_analysisReqSeq;
     try {
         const descriptor = componentKey === 'ROCE'
@@ -4416,6 +4558,40 @@ function _analysisDrillBack() {
     const { ds, iA, iB } = _analysisDrillReturn;
     _analysisDrillReturn = null;
     _analysisApplySelection(ds, iA, iB);
+}
+
+// Machine row drill (FTE/bezetting): which products drive this machine's
+// hours — shown as production-volume movers over the current segment.
+async function _analysisDrillMachineProducts(mcCode, pA, pB) {
+    const headEl = document.getElementById('chartAnalysisHeadline');
+    const notesEl = document.getElementById('chartAnalysisNotes');
+    const tableHost = document.getElementById('chartAnalysisTableHost');
+    if (!tableHost) return;
+    if (headEl) headEl.textContent = `Producten op ${mcCode} van ${pA} naar ${pB}`;
+    if (notesEl) notesEl.textContent = 'Grootste bewegingen in gepland productievolume op deze machine; volumes verklaren de urenverandering indicatief, niet exact.';
+    tableHost.innerHTML = '<div class="text-xs text-slate-500">Laden...</div>';
+    try {
+        const data = await _analysisFetchMachineProducts(mcCode);
+        const movers = (data.products || [])
+            .map(p => ({
+                material: p.material_number,
+                label: `${p.material_number} — ${p.material_name || ''}`.trim(),
+                delta: ((p.values || {})[pB] || 0) - ((p.values || {})[pA] || 0),
+            }))
+            .filter(r => Math.abs(r.delta) > 1e-9)
+            .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+            .slice(0, 10);
+        const rows = movers.map(r => `
+            <tr><td class="p-1 text-slate-300" style="word-break:break-word">${escapeHtml(r.label)} <button type="button" onclick="_analysisShowOneInPlanning('${escapeHtml(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button></td>
+                <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, 'ton', 1)}</td></tr>`).join('');
+        tableHost.innerHTML = `
+            <button type="button" onclick="_analysisDrillBack()" class="text-xs text-indigo-400 hover:text-indigo-300 mb-2">&#8592; Terug naar grafiekanalyse</button>
+            <table class="w-full text-xs"><tbody>${rows || '<tr><td class="p-2 text-slate-500 text-center">Geen productbewegingen in dit segment</td></tr>'}</tbody></table>`;
+    } catch (e) {
+        tableHost.innerHTML = `
+            <button type="button" onclick="_analysisDrillBack()" class="text-xs text-indigo-400 hover:text-indigo-300 mb-2">&#8592; Terug naar grafiekanalyse</button>
+            <div class="text-xs text-slate-400">Productdetail niet beschikbaar: ${escapeHtml(String(e && e.message ? e.message : e))}</div>`;
+    }
 }
 
 // ===== Comments / annotations (Fase 2.1) =====

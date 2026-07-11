@@ -627,3 +627,78 @@ def test_apply_edit_highlights_summary_includes_capacity_manual_edit(tmp_path):
     assert rows[1][1] == "LINE-1"
     assert rows[1][3] == "MILL-01"
     assert rows[1][4] == "2025-12"
+
+
+# ------------------------------------------------ grafiek-analyse export
+
+def _analysis_app():
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    app.register_blueprint(create_exports_blueprint(
+        lambda: (None, None),        # get_active: endpoint needs no engine
+        lambda: None,                # export_dir
+        lambda: None,                # cycle_manager
+    ))
+    return app
+
+
+_ANALYSIS_PAYLOAD = {
+    "title": "Projected Financial Metrics",
+    "headline": "▼ Omzet −12,3% van 2026-12 naar 2027-01",
+    "notes": ["Som van bijdragen wijkt licht af (afronding)."],
+    "segment": "2026-12 → 2027-01",
+    "unit": "K€",
+    "additive": True,
+    "rows": [
+        {"label": "600000001 — Product A", "delta": -300.5},
+        {"label": "600000002 — Product B", "delta": -120.0},
+    ],
+    "rest_count": 3,
+    "rest_delta": -25.5,
+    "contributor_sum": -446.0,
+    "total_delta": -446.0,
+}
+
+
+def test_analysis_export_returns_valid_workbook():
+    import io as _io
+
+    import openpyxl
+
+    resp = _analysis_app().test_client().post(
+        "/api/analysis/export", json=_ANALYSIS_PAYLOAD)
+    assert resp.status_code == 200
+    assert "spreadsheetml" in resp.mimetype
+    wb = openpyxl.load_workbook(_io.BytesIO(resp.data))
+    ws = wb["Analyse"]
+    cells = [[c.value for c in row] for row in ws.iter_rows()]
+    flat = [str(v) for row in cells for v in row if v is not None]
+    assert any("Omzet" in v for v in flat)
+    assert any("Product A" in v for v in flat)
+    assert any(v.startswith("Overige (3)") for v in flat)
+    assert any("Som bijdragen" in v for v in flat)
+    assert any("Beweging in grafiek" in v for v in flat)
+    # Delta values landed as numbers.
+    deltas = [c for row in ws.iter_rows() for c in row
+              if isinstance(c.value, (int, float))]
+    assert any(abs(c.value + 300.5) < 1e-6 for c in deltas)
+
+
+def test_analysis_export_rejects_empty_payload():
+    resp = _analysis_app().test_client().post("/api/analysis/export", json={})
+    assert resp.status_code == 400
+    assert "Geen analyse" in resp.get_json()["error"]
+
+
+def test_analysis_export_non_additive_omits_sum_row():
+    payload = dict(_ANALYSIS_PAYLOAD, additive=False)
+    import io as _io
+
+    import openpyxl
+
+    resp = _analysis_app().test_client().post("/api/analysis/export", json=payload)
+    assert resp.status_code == 200
+    ws = openpyxl.load_workbook(_io.BytesIO(resp.data))["Analyse"]
+    flat = [str(c.value) for row in ws.iter_rows() for c in row if c.value is not None]
+    assert not any("Som bijdragen" in v for v in flat)
+    assert any("% aandeel" in v for v in flat)
