@@ -29,6 +29,41 @@ def _open_planning(page):
     expect(page.locator("#planning-tab")).to_be_visible()
 
 
+def test_bulk_selection_excludes_percent_scale_lines(browser_page):
+    """F1 regression: L09/L10 cells carry percent-scaled data-raw while the
+    server stores fractions; bulk must never include them."""
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_planning(page)
+    expect(page.locator('#planBody td[data-period]').first).to_be_visible(timeout=60000)
+
+    info = page.evaluate(
+        """() => {
+            const rows = Array.from(document.querySelectorAll('#planBody tr'));
+            const l9 = rows.findIndex(r => r.dataset.linetype === '09. Available capacity');
+            if (l9 < 0) return { skipped: true };
+            // Select the whole L9 row plus one row above and below it.
+            const sel = {
+                sheet: 'planning',
+                rowMin: Math.max(0, l9 - 1), rowMax: Math.min(rows.length - 1, l9 + 1),
+                colMin: 0, colMax: rows[l9].cells.length - 1,
+            };
+            _storedSelections = [sel];
+            const found = _getSelectedEditableCells();
+            return {
+                skipped: false,
+                total: found.length,
+                l9count: found.filter(f => f.line_type === '09. Available capacity'
+                                        || f.line_type === '10. Utilization rate').length,
+            };
+        }"""
+    )
+    if info.get("skipped"):
+        import pytest
+        pytest.skip("no L09 row rendered in this fixture")
+    assert info["l9count"] == 0, info
+
+
 def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
     page = browser_page
     _drain(page.server["base_url"])

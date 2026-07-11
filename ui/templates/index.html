@@ -1718,8 +1718,14 @@ function _renderStoredSelections(tempSelection = null) {
 
 // ===== Bulk edit (Fase 1.2) =====
 // Collect editable planning value cells inside the stored selections. Only the
-// planning sheet (not Values Planning) is bulk-editable; percent/derived cells
-// are excluded because a uniform +N on a fraction is meaningless.
+// planning sheet (not Values Planning) is bulk-editable; percent-scale cells
+// are excluded because their data-raw is display-scaled (val*100) while the
+// server stores fractions — a uniform +N would corrupt them 100x — and a
+// uniform delta on a fraction is meaningless anyway.
+const BULK_EXCLUDED_LINE_TYPES = new Set([
+    '09. Available capacity',
+    '10. Utilization rate',
+]);
 function _getSelectedEditableCells() {
     const tbody = document.getElementById('planBody');
     if (!tbody) return [];
@@ -1737,6 +1743,7 @@ function _getSelectedEditableCells() {
                 const period = cell.dataset.period;
                 const lt = cell.dataset.lt;
                 if (!period || !lt) continue;
+                if (BULK_EXCLUDED_LINE_TYPES.has(lt)) continue;
                 const key = (cell.dataset.key) || `${lt}||${cell.dataset.matnum}||${cell.dataset.aux || ''}||${period}`;
                 if (seen.has(key)) continue;
                 const raw = parseLocaleNumber(cell.dataset.raw || '0');
