@@ -1,8 +1,19 @@
 # Ontwerpnota Fase 3 — Dynamische producten & integratie
 
-Versie 0.9 (concept) — 2026-07-11
-Status: **ontwerp-eerst**. Geen bouw vóór (a) antwoord op klantvragen 5 & 6 en
-(b) GO op de proof-of-concept (PoC-acceptatiecriteria onderaan).
+Versie 1.0 — 2026-07-11
+Status: **gebouwd** (branch `fase-3`). De opdrachtgever besloot op 2026-07-11
+het dynamische-productendeel als volwaardige feature te bouwen; de
+PoC-acceptatiecriteria (§7) fungeerden als acceptatietests en zijn alle zes
+PASS — zie [implementatieplan-sibelco.md](implementatieplan-sibelco.md) §6
+voor de bewijstabel. §5 (master-sheet-vervanging / integratiegradatie,
+klantvraag 5) is NIET meegebouwd en wacht op de werksessie met Sibelco.
+De implementatie volgt §4 (additieve overlay: `modules/product_overlay.py`,
+STEP 1c in `PlanningEngine.run()`, per-sessie store `added_products` naast
+`forecast_defaults`). Risico's R1–R4: R1 afgedekt (cyclusdetectie: harde fout
+voor overlay-cycli, luide waarschuwing voor werkboek-cycli), R2 afgedekt
+(normalisatie van materiaalnummers bij invoer), R3 afgedekt (prune van
+per-materiaal edit-state bij verwijderen), R4 deels (export ✓; MoM tussen
+cycli blijft beperkt door BUGS.md H3).
 
 Deze nota hoort bij [implementatieplan-sibelco.md](implementatieplan-sibelco.md)
 Fase 3 en bij het bugregister [../BUGS.md](../BUGS.md).

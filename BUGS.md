@@ -39,12 +39,12 @@ multi-user isolation); export files accumulate; `redirect_stdout` is process-glo
 
 | ID | Where | Defect | Status |
 |---|---|---|---|
-| M1 | `modules/data_loader.py:261,518+` | Numeric SKU column with one blank cell → float64 → all keys become `"...0"`; forecast sheet (header=None) yields int-keys → joins silently miss on every material. | open |
+| M1 | `modules/data_loader.py:261,518+` | Numeric SKU column with one blank cell → float64 → all keys become `"...0"`; forecast sheet (header=None) yields int-keys → joins silently miss on every material. | deels (fase-3): `normalize_material_number` (`modules/product_overlay.py`) normaliseert gebruikersinvoer via UI/routes; de loader-leespunten zelf zijn nog open |
 | M2 | `modules/data_loader.py:179-182` | Config-sheet failure fallback never sets `forecast_actuals_months` → later AttributeError; the graceful-degradation path can't work for the xlsm route. | open |
 | M3 | `modules/data_loader.py:348` | Blank OEE cell → NaN (no `pd.notna` guard, unlike neighbors) → NaN spreads through L09/10/12 and export with no error. | open |
 | M4 | `modules/bom_engine.py:44-50,105-109` | Duplicate (parent,component) BOM rows: values last-row-wins, aux display first-row-wins, never summed across production versions. | open |
 | M5 | `modules/planning_engine.py:330-334` + `capacity_engine.py:640` | `all_line_data` keeps one row per material; truck SUMIFS over multi-row line types (L02/L08) only sees the last row → truck hours understated. | open |
-| M6 | `modules/data_loader.py:789-806` | BOM cycles neither detected nor reported — cascade silently drops demand; dense diamond BOMs cause exponential re-traversal. | open |
+| M6 | `modules/data_loader.py:789-806` | BOM cycles neither detected nor reported — cascade silently drops demand; dense diamond BOMs cause exponential re-traversal. | deels (fase-3): detectie + luide warning (`DataLoader.bom_cycle_warnings`); overlay-cycli zijn harde fouten (`modules/product_overlay.py`). Cascade-getallen bij bestaande werkboek-cycli bewust ongewijzigd; exponentiële re-traversal nog open |
 | M7 | `modules/data_loader.py:650-671,458-479` | Forecast rows keyed by material with plain overwrite, no plant/site filter — multi-row extracts keep an arbitrary last row. | open |
 | M8 | `modules/data_loader.py:268-270` | NaN material name / product family becomes literal `'nan'` string → grouping/MoM-join identifier pollution. | open |
 | M9 | `modules/capacity_engine.py:205-241` | Group-level L7 override redistribution assumes SUM semantics: wrong for mill groups (MAX) and double-counts compound production-line rows (confirmed empirically: 3x group edit leaves machine rows unchanged). | open |

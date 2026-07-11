@@ -207,30 +207,47 @@ blocker — dit is precies de bugklasse uit het register.
 
 ---
 
-## 6. Fase 3 — Architectuur (Sprint 3, ontwerp-eerst)
+## 6. Fase 3 — Dynamische producten (GEBOUWD, 2026-07-11)
 
-Geen bouw zonder GO op een proof-of-concept. Verloop:
+Status: **gebouwd op branch `fase-3`** als volwaardige feature (besluit
+opdrachtgever 2026-07-11: geen aparte PoC-omgeving; de PoC-criteria TP3-01..06
+zijn de acceptatietests van de feature zelf). Ontwerp: additieve per-sessie
+**product-overlay** (zie [ontwerpnota-fase3.md](ontwerpnota-fase3.md)) —
+workbook blijft bron van waarheid, zonder overlay is de berekening
+byte-voor-byte identiek.
 
-1. **Werksessie** met Sibelco: antwoorden vragen 5 en 6 vastleggen; gradatie
-   integratie kiezen (a/b/c).
-2. **Ontwerpnota** (1–2 dagen): datamodel voor dynamische producten (materiaal,
-   BOM-koppeling, routing, safety stock), volgorde-impact op de BOM-topologie,
-   migratie master-sheet → config.
-3. **PoC** (~1 week): product toevoegen via UI/config op een kopie-omgeving.
+Geleverd: `modules/product_overlay.py` (contract, validatie NL,
+cyclusdetectie), STEP 1c-hook in `planning_engine.py`, alle zes
+state-sync-punten, `/api/products/added` (GET/POST/DELETE met structurele
+rebuild + rollback), beheer-kaart in de Config-tab met product-modal
+(BOM-koppelingen, routing, inkoop- en financiële velden, per-periode volumes).
 
-### PoC-acceptatiecriteria (go/no-go fase 3-bouw)
+### Acceptatiecriteria — status
 
-| ID | Criterium | Kritiek |
-|---|---|---|
-| TP3-01 | Nieuw product met forecast + BOM-koppeling verschijnt correct in L01–L12, waarde-overlay en export | ja |
-| TP3-02 | Bestaande materialen: golden parity — export vóór/na toevoegen nieuw product verschilt uitsluitend in regels van het nieuwe product | ja |
-| TP3-03 | Nieuw product als child én als parent getest (dependent demand beide richtingen) | ja |
-| TP3-04 | Herstart: dynamisch product overleeft rebuild/replay | ja |
-| TP3-05 | Verwijderen/deactiveren product laat geen wees-regels of kapotte cascade achter | ja |
-| TP3-06 | Performance: laadtijd en edit-cascade binnen 20% van huidige niveau | ja |
+| ID | Criterium | Status | Bewijs |
+|---|---|---|---|
+| TP3-01 | Nieuw product correct in L01–L12, waarde-overlay en export | **PASS** | `tests/test_product_overlay_golden.py` (standalone + integrated) |
+| TP3-02 | Golden parity: export verschilt uitsluitend in regels van het nieuwe product | **PASS** | `test_parity_existing_rows_unchanged` (assert_frame_equal) |
+| TP3-03 | Product als child én als parent (dependent demand beide richtingen) | **PASS** | `test_dependent_demand_parent_direction` / `_child_direction` |
+| TP3-04 | Herstart: product overleeft rebuild/replay | **PASS** | `test_restart_rebuild_and_replay_restore_product_and_edit` |
+| TP3-05 | Verwijderen laat geen wees-regels of kapotte cascade achter | **PASS** | route-prune (`prune_material_state`) + `test_delete_removes_and_prunes_material_state` |
+| TP3-06 | Performance binnen 20% van huidig niveau | **PASS** | meting 2026-07-11: baseline min 5,43 s vs 5 producten min 4,23 s (binnen meetruis, geen degradatie) |
 
-**GO:** alle zes PASS → bouwfase inplannen met eigen protocol.
-**NO-GO:** ontwerp herzien; geen gedeeltelijke integratie van PoC-code in productie.
+### Bekende beperkingen (v1)
+
+- **MoM-vergelijking tussen cycli** toont nieuwe producten niet (inner-join,
+  hangt aan BUGS.md H3). De sequentiële MoM in de export werkt wel.
+- **Alleen bestaande machines** als routing-doel; nieuwe machines zijn een
+  latere iteratie.
+- Werkboek-materiaalnummers worden hard geweigerd; advies eigen reeks
+  (9xxxxxxxx). Producten toevoegen kan pas ná de eerste berekening.
+- Reset behoudt toegevoegde producten (het is configuratie, geen bewerking).
+
+### Nog open uit het oorspronkelijke fase-3-verhaal
+
+**Integratiegradatie (vraag 5, a/b/c)** — master-sheet-vervanging/koppeling
+met het bronsysteem is NIET meegebouwd; daarvoor blijft de werksessie met
+Sibelco nodig (advies: gradatie (a), zie ontwerpnota §5).
 
 ---
 
