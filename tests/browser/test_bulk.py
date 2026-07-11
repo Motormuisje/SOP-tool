@@ -55,7 +55,7 @@ def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
             return {
                 count: found.length,
                 raws: found.map(f => f.raw),
-                keys: found.map(f => `${f.line_type}||${f.material_number}||${f.aux_column}||${f.period}`),
+                keys: found.map(f => `${f.line_type}||${f.material_number}||${f.period}`),
             };
         }"""
     )
@@ -77,7 +77,7 @@ def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
             for (const lt of Object.keys(state.results)) {
                 for (const row of state.results[lt]) {
                     for (const p of Object.keys(row.values || {})) {
-                        const k = `${lt}||${row.material_number}||${row.aux_column || ''}||${p}`;
+                        const k = `${lt}||${row.material_number}||${p}`;
                         out[k] = row.values[p];
                     }
                 }
@@ -99,7 +99,7 @@ def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
             for (const lt of Object.keys(state.results)) {
                 for (const row of state.results[lt]) {
                     for (const p of Object.keys(row.values || {})) {
-                        const k = `${lt}||${row.material_number}||${row.aux_column || ''}||${p}`;
+                        const k = `${lt}||${row.material_number}||${p}`;
                         out[k] = row.values[p];
                     }
                 }
