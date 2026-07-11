@@ -1485,6 +1485,33 @@
               <span id="cfgSaveStatus" class="text-xs text-slate-400"></span>
             </div>
 
+            <!-- Dynamische producten (Fase 3) -->
+            <div class="card rounded-xl p-6">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="flex items-center font-semibold text-slate-200">
+                  Dynamische producten
+                  <span class="cfg-info">i<span class="cfg-tooltip">Producten die (nog) niet in het bronbestand staan. Ze worden per sessie bewaard en volledig doorgerekend: forecast, voorraad, productie/inkoop, capaciteit, waarde en export. Toevoegen, wijzigen of verwijderen herberekent de volledige planning.</span></span>
+                </h3>
+                <button id="btnAddProduct" onclick="openProductModal()" class="btn-primary px-3 py-1 rounded text-xs font-semibold text-white">+ Product toevoegen</button>
+              </div>
+              <p class="text-slate-500 text-xs mb-4">Gebruik een eigen nummerreeks (bijv. 9xxxxxxxx); nummers uit het bronbestand worden geweigerd. Nieuwe producten verschijnen niet in de maand-over-maand-vergelijking van eerdere cycli.</p>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm" id="addedProductsTable">
+                  <thead><tr class="text-slate-400 text-xs">
+                    <th class="text-left p-2">Materiaalnummer</th>
+                    <th class="text-left p-2">Naam</th>
+                    <th class="text-left p-2">Type</th>
+                    <th class="text-left p-2">Familie</th>
+                    <th class="text-right p-2">Volume/maand</th>
+                    <th class="p-2"></th>
+                  </tr></thead>
+                  <tbody id="addedProductsTbody">
+                    <tr><td colspan="6" class="text-center text-slate-500 p-4">Laden...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <!-- Folder Settings -->
             <div class="card rounded-xl p-6">
               <h3 class="font-semibold text-slate-200 mb-1">Mappen</h3>
@@ -7117,6 +7144,301 @@ async function addPapRow() {
     } catch (e) { alert('Error: ' + e); }
 }
 
+/* ===== DYNAMISCHE PRODUCTEN (Fase 3) ===== */
+let _addedProductsData = { added_products: [], machines: [], materials: [], periods: [] };
+
+async function loadAddedProducts() {
+    const tbody = document.getElementById('addedProductsTbody');
+    if (!tbody) return;
+    try {
+        const res = await fetch('/api/products/added');
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            _addedProductsData = { added_products: [], machines: [], materials: [], periods: [] };
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center text-slate-500 p-4">${escapeHtml(data.error || 'Kon producten niet laden')}</td></tr>`;
+            return;
+        }
+        _addedProductsData = data;
+        renderAddedProductsTable();
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 p-4">Kon producten niet laden</td></tr>';
+    }
+}
+
+function _productTypeLabel(t) {
+    return ({ bulk: 'Bulk', packaged: 'Verpakt', raw: 'Grondstof',
+              packaging: 'Verpakkingsmateriaal', other: 'Overig' })[t] || t;
+}
+
+function renderAddedProductsTable() {
+    const tbody = document.getElementById('addedProductsTbody');
+    if (!tbody) return;
+    const products = _addedProductsData.added_products || [];
+    if (!products.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-500 p-4">Nog geen producten toegevoegd</td></tr>';
+        return;
+    }
+    tbody.innerHTML = products.map(p => {
+        const mn = escapeHtml(p.material_number);
+        const flat = (p.flat_volume === null || p.flat_volume === undefined)
+            ? '&mdash;' : Number(p.flat_volume).toLocaleString('nl-NL');
+        return `<tr data-added-product="${mn}">
+            <td class="p-2 font-mono text-xs">${mn}</td>
+            <td class="p-2">${escapeHtml(p.name)}</td>
+            <td class="p-2 text-xs">${escapeHtml(_productTypeLabel(p.product_type))}</td>
+            <td class="p-2 text-xs">${escapeHtml(p.product_family || '')}</td>
+            <td class="p-2 text-right">${flat}</td>
+            <td class="p-2 text-right whitespace-nowrap">
+                <button onclick="openProductModal('${mn}')" class="px-2 py-1 rounded text-xs bg-blue-700 hover:bg-blue-600 text-white">Bewerken</button>
+                <button onclick="deleteAddedProduct('${mn}')" class="px-2 py-1 rounded text-xs bg-red-800 hover:bg-red-700 text-white ml-1">Verwijderen</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+const _PROD_INPUT_CLS = 'bg-slate-700 rounded px-2 py-1 text-sm';
+
+function _prodLinkRowHtml(kind, ref = '', qty = '') {
+    return `<tr data-prod-link="${kind}">
+        <td class="p-1"><input type="text" list="prodMatDatalist" value="${escapeHtml(String(ref))}" placeholder="Materiaalnummer" class="${_PROD_INPUT_CLS} w-44 prod-link-ref"></td>
+        <td class="p-1"><input type="text" value="${escapeHtml(String(qty))}" placeholder="Aantal per eenheid" class="${_PROD_INPUT_CLS} w-32 text-right prod-link-qty"></td>
+        <td class="p-1"><button onclick="this.closest('tr').remove()" class="px-2 py-1 rounded text-xs bg-slate-600 hover:bg-slate-500">&#10005;</button></td>
+    </tr>`;
+}
+
+function _prodRoutingRowHtml(wc = '', bq = '', st = '') {
+    return `<tr data-prod-routing>
+        <td class="p-1"><input type="text" list="prodMachineDatalist" value="${escapeHtml(String(wc))}" placeholder="Machinecode" class="${_PROD_INPUT_CLS} w-32 prod-rout-wc"></td>
+        <td class="p-1"><input type="text" value="${escapeHtml(String(bq))}" placeholder="Basisaantal" class="${_PROD_INPUT_CLS} w-28 text-right prod-rout-bq"></td>
+        <td class="p-1"><input type="text" value="${escapeHtml(String(st))}" placeholder="Uren per basisaantal" class="${_PROD_INPUT_CLS} w-32 text-right prod-rout-st"></td>
+        <td class="p-1"><button onclick="this.closest('tr').remove()" class="px-2 py-1 rounded text-xs bg-slate-600 hover:bg-slate-500">&#10005;</button></td>
+    </tr>`;
+}
+
+function addProductLinkRow(tbodyId, kind) {
+    document.getElementById(tbodyId).insertAdjacentHTML('beforeend', _prodLinkRowHtml(kind));
+}
+
+function addProductRoutingRow() {
+    document.getElementById('prodRoutingTbody').insertAdjacentHTML('beforeend', _prodRoutingRowHtml());
+}
+
+async function openProductModal(materialNumber) {
+    if (!current_engine_loaded()) return;
+    if (!(_addedProductsData.periods || []).length) await loadAddedProducts();
+    const existingProduct = (materialNumber !== undefined)
+        ? (_addedProductsData.added_products || []).find(p => String(p.material_number) === String(materialNumber))
+        : null;
+    const p = existingProduct || {};
+
+    const existing = document.getElementById('productModal');
+    if (existing) existing.remove();
+
+    const matOptions = (_addedProductsData.materials || [])
+        .map(m => `<option value="${escapeHtml(m.number)}">${escapeHtml(m.name)}</option>`).join('');
+    const machineOptions = (_addedProductsData.machines || [])
+        .map(mc => `<option value="${escapeHtml(mc)}"></option>`).join('');
+    const typeOptions = ['bulk', 'packaged', 'raw', 'packaging', 'other']
+        .map(t => `<option value="${t}" ${p.product_type === t ? 'selected' : ''}>${escapeHtml(_productTypeLabel(t))}</option>`).join('');
+    const volumes = p.volumes || {};
+    const periodInputs = (_addedProductsData.periods || []).map(period => `
+        <label class="flex items-center gap-2 text-xs text-slate-400">
+            <span class="w-16 font-mono">${escapeHtml(period)}</span>
+            <input type="text" data-prod-period="${escapeHtml(period)}" value="${volumes[period] !== undefined ? escapeHtml(String(volumes[period])) : ''}" placeholder="vast volume" class="${_PROD_INPUT_CLS} w-28 text-right">
+        </label>`).join('');
+    const bomParentRows = (p.bom_as_parent || []).map(r => _prodLinkRowHtml('parent', r.component, r.qty_per)).join('');
+    const bomChildRows = (p.bom_as_child || []).map(r => _prodLinkRowHtml('child', r.parent, r.qty_per)).join('');
+    const routingRows = (p.routing || []).map(r => _prodRoutingRowHtml(r.work_center, r.base_quantity, r.standard_time)).join('');
+    const val = v => (v === null || v === undefined) ? '' : escapeHtml(String(v));
+
+    const modal = document.createElement('div');
+    modal.id = 'productModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.7);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px';
+    modal.innerHTML = `
+      <div style="background:#1e293b;border-radius:12px;padding:24px;width:100%;max-width:760px;color:#e2e8f0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <h2 style="font-size:1.1rem;font-weight:600">${existingProduct ? 'Product bewerken' : 'Product toevoegen'}</h2>
+          <button onclick="document.getElementById('productModal').remove()" style="background:#334155;border:none;color:#e2e8f0;padding:4px 10px;border-radius:6px;cursor:pointer">&#10005; Sluiten</button>
+        </div>
+        <p class="text-xs text-slate-500 mb-4">Opslaan herberekent de volledige planning met dit product.</p>
+        <datalist id="prodMatDatalist">${matOptions}</datalist>
+        <datalist id="prodMachineDatalist">${machineOptions}</datalist>
+
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Materiaalnummer *</label>
+            <input id="prodNumber" type="text" value="${val(p.material_number)}" ${existingProduct ? 'readonly' : ''} placeholder="bijv. 900000001" class="${_PROD_INPUT_CLS} w-full ${existingProduct ? 'opacity-60' : ''}"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Naam *</label>
+            <input id="prodName" type="text" value="${val(p.name)}" class="${_PROD_INPUT_CLS} w-full"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Producttype</label>
+            <select id="prodType" class="${_PROD_INPUT_CLS} w-full">${typeOptions}</select></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Productfamilie</label>
+            <input id="prodFamily" type="text" value="${val(p.product_family)}" class="${_PROD_INPUT_CLS} w-full"></div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mb-2">
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Vast volume per maand</label>
+            <input id="prodFlatVolume" type="text" value="${val(p.flat_volume)}" placeholder="bijv. 1200" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Startvoorraad</label>
+            <input id="prodStartingStock" type="text" value="${val(p.starting_stock)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Veiligheidsvoorraad</label>
+            <input id="prodSafetyStock" type="text" value="${val(p.safety_stock)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+        </div>
+        <details class="mb-4"><summary class="text-xs text-slate-400 cursor-pointer">Volumes per periode (optioneel, overschrijft het vaste volume)</summary>
+          <div id="prodPeriodVolumes" class="grid grid-cols-3 gap-2 mt-2">${periodInputs}</div>
+        </details>
+
+        <div class="mb-4"><div class="flex items-center justify-between">
+            <label class="text-xs text-slate-400 font-semibold">Stuklijst &mdash; dit product gebruikt componenten</label>
+            <button onclick="addProductLinkRow('prodBomParentTbody','parent')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
+          <table class="text-sm"><tbody id="prodBomParentTbody">${bomParentRows}</tbody></table>
+        </div>
+        <div class="mb-4"><div class="flex items-center justify-between">
+            <label class="text-xs text-slate-400 font-semibold">Stuklijst &mdash; dit product is onderdeel van</label>
+            <button onclick="addProductLinkRow('prodBomChildTbody','child')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
+          <table class="text-sm"><tbody id="prodBomChildTbody">${bomChildRows}</tbody></table>
+        </div>
+        <div class="mb-4"><div class="flex items-center justify-between">
+            <label class="text-xs text-slate-400 font-semibold">Routing &mdash; capaciteit op bestaande machines</label>
+            <button onclick="addProductRoutingRow()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
+          <table class="text-sm"><tbody id="prodRoutingTbody">${routingRows}</tbody></table>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mb-2">
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Lead time inkoop (maanden)</label>
+            <input id="prodLeadTime" type="text" value="${val(p.lead_time)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">MOQ</label>
+            <input id="prodMoq" type="text" value="${val(p.moq)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Productiefractie (0-1, optioneel)</label>
+            <input id="prodPapFraction" type="text" value="${val(p.pap_fraction)}" placeholder="leeg = automatisch" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+        </div>
+        <div class="grid grid-cols-3 gap-3 mb-5">
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Verkoopprijs / eenheid</label>
+            <input id="prodSalesPrice" type="text" value="${val(p.sales_price)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Inkoopkost / eenheid</label>
+            <input id="prodRawCost" type="text" value="${val(p.raw_material_cost)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Voorraadwaarde / eenheid</label>
+            <input id="prodInvValue" type="text" value="${val(p.default_inventory_value)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button id="btnSaveProduct" onclick="saveAddedProduct()" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan &amp; doorrekenen</button>
+          <span id="prodSaveStatus" class="text-xs text-slate-400"></span>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function _prodNum(id) {
+    const raw = (document.getElementById(id).value || '').trim();
+    if (raw === '') return null;
+    const n = parseLocaleNumber(raw);
+    return isNaN(n) ? NaN : n;
+}
+
+function collectProductForm() {
+    const product = {
+        material_number: document.getElementById('prodNumber').value.trim(),
+        name: document.getElementById('prodName').value.trim(),
+        product_type: document.getElementById('prodType').value,
+        product_family: document.getElementById('prodFamily').value.trim(),
+    };
+    if (!product.material_number) return { error: 'Materiaalnummer is verplicht.' };
+    if (!product.name) return { error: 'Productnaam is verplicht.' };
+
+    const numFields = [
+        ['flat_volume', 'prodFlatVolume'], ['starting_stock', 'prodStartingStock'],
+        ['safety_stock', 'prodSafetyStock'], ['lead_time', 'prodLeadTime'],
+        ['moq', 'prodMoq'], ['pap_fraction', 'prodPapFraction'],
+        ['sales_price', 'prodSalesPrice'], ['raw_material_cost', 'prodRawCost'],
+        ['default_inventory_value', 'prodInvValue'],
+    ];
+    for (const [key, id] of numFields) {
+        const v = _prodNum(id);
+        if (v !== null && isNaN(v)) return { error: 'Ongeldig getal in het formulier.' };
+        if (v !== null) product[key] = v;
+    }
+
+    const volumes = {};
+    document.querySelectorAll('#prodPeriodVolumes input[data-prod-period]').forEach(inp => {
+        const raw = (inp.value || '').trim();
+        if (raw === '') return;
+        volumes[inp.dataset.prodPeriod] = parseLocaleNumber(raw);
+    });
+    if (Object.keys(volumes).length) product.volumes = volumes;
+
+    const links = { parent: [], child: [] };
+    document.querySelectorAll('tr[data-prod-link]').forEach(tr => {
+        const ref = tr.querySelector('.prod-link-ref').value.trim();
+        const qty = parseLocaleNumber(tr.querySelector('.prod-link-qty').value);
+        if (!ref) return;
+        const kind = tr.dataset.prodLink;
+        links[kind].push(kind === 'parent'
+            ? { component: ref, qty_per: qty } : { parent: ref, qty_per: qty });
+    });
+    if (links.parent.length) product.bom_as_parent = links.parent;
+    if (links.child.length) product.bom_as_child = links.child;
+
+    const routing = [];
+    document.querySelectorAll('tr[data-prod-routing]').forEach(tr => {
+        const wc = tr.querySelector('.prod-rout-wc').value.trim();
+        if (!wc) return;
+        routing.push({
+            work_center: wc,
+            base_quantity: parseLocaleNumber(tr.querySelector('.prod-rout-bq').value),
+            standard_time: parseLocaleNumber(tr.querySelector('.prod-rout-st').value),
+        });
+    });
+    if (routing.length) product.routing = routing;
+
+    return { product };
+}
+
+async function saveAddedProduct() {
+    const { product, error } = collectProductForm();
+    if (error) { alert(error); return; }
+    const btn = document.getElementById('btnSaveProduct');
+    const status = document.getElementById('prodSaveStatus');
+    btn.disabled = true;
+    if (status) status.textContent = 'Doorrekenen...';
+    try {
+        const res = await fetch('/api/products/added', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(product),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            alert(data.error || 'Opslaan mislukt');
+            if (status) status.textContent = '';
+            return;
+        }
+        _addedProductsData.added_products = data.added_products || [];
+        await _applyPapResult(data);
+        renderAddedProductsTable();
+        const modal = document.getElementById('productModal');
+        if (modal) modal.remove();
+        log(`Dynamisch product opgeslagen: ${product.material_number}`);
+    } catch (e) {
+        alert('Fout bij opslaan: ' + e);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function deleteAddedProduct(materialNumber) {
+    if (!confirm(`Product ${materialNumber} verwijderen? Bijbehorende bewerkingen gaan verloren en de planning wordt herberekend.`)) return;
+    try {
+        const res = await fetch(`/api/products/added/${encodeURIComponent(materialNumber)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok || data.error) { alert(data.error || 'Verwijderen mislukt'); return; }
+        _addedProductsData.added_products = data.added_products || [];
+        await _applyPapResult(data);
+        renderAddedProductsTable();
+        log(`Dynamisch product verwijderd: ${materialNumber}`);
+    } catch (e) { alert('Fout bij verwijderen: ' + e); }
+}
+
 /* ===== MULTI-SELECT LINE TYPE FILTER ===== */
 function toggleLtDropdown(dropId, wrapId) {
     const dd = document.getElementById(dropId);
@@ -9621,6 +9943,8 @@ async function loadConfigTab() {
         }
         // Load folder paths
         loadFolderConfig();
+        // Dynamische producten (Fase 3)
+        loadAddedProducts();
     } catch(e) { console.error('loadConfigTab error', e); }
 }
 
