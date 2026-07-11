@@ -38,6 +38,12 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def switch_server(golden_fixture_path):
+    """Restartable app server on a persistent temp SOP_APP_DATA_DIR.
+
+    ``restart()`` kills the process and boots a fresh one against the SAME
+    app-data dir — a true restart: sessions_store.json reload, cold sessions,
+    warmup on switch.
+    """
     app_data_dir = Path(tempfile.mkdtemp(prefix="sop-switch-app-data-"))
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -48,35 +54,53 @@ def switch_server(golden_fixture_path):
         "SOP_PORT": str(port), "SOP_DISABLE_AUTORUN": "1",
         "SOP_NO_BROWSER": "1", "PYTHONUNBUFFERED": "1",
     })
-    with log_path.open("w", encoding="utf-8") as log_file:
-        process = subprocess.Popen(
+    state = {"process": None, "log_file": None}
+
+    def _start():
+        state["log_file"] = log_path.open("a", encoding="utf-8")
+        state["process"] = subprocess.Popen(
             [sys.executable, "main.py"],
             cwd=Path(__file__).resolve().parents[1],
-            env=env, stdout=log_file, stderr=subprocess.STDOUT, text=True,
+            env=env, stdout=state["log_file"], stderr=subprocess.STDOUT, text=True,
         )
-        try:
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    pytest.fail("Server exited early:\n"
-                                + log_path.read_text(encoding="utf-8", errors="replace"))
-                try:
-                    if requests.get(base_url + "/", timeout=1).status_code == 200:
-                        break
-                except requests.RequestException:
-                    pass
-                time.sleep(0.25)
-            else:
-                pytest.fail("Server did not start within 60s")
-            yield {"base_url": base_url, "fixture": golden_fixture_path}
-        finally:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if state["process"].poll() is not None:
+                pytest.fail("Server exited early:\n"
+                            + log_path.read_text(encoding="utf-8", errors="replace"))
+            try:
+                if requests.get(base_url + "/", timeout=1).status_code == 200:
+                    return
+            except requests.RequestException:
+                pass
+            time.sleep(0.25)
+        pytest.fail("Server did not start within 60s")
+
+    def _stop():
+        process = state["process"]
+        if process is not None:
             process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=10)
-    shutil.rmtree(app_data_dir, ignore_errors=True)
+        if state["log_file"] is not None:
+            state["log_file"].close()
+        state["process"] = None
+        state["log_file"] = None
+
+    def restart():
+        _stop()
+        _start()
+
+    _start()
+    try:
+        yield {"base_url": base_url, "fixture": golden_fixture_path,
+               "restart": restart}
+    finally:
+        _stop()
+        shutil.rmtree(app_data_dir, ignore_errors=True)
 
 
 def _upload_and_calculate(base_url: str, fixture: Path, name: str) -> str:
@@ -118,6 +142,11 @@ def _wait_until_ready(base_url: str, session_id: str, timeout_s: float = 180) ->
                     return
         time.sleep(0.5)
     pytest.fail(f"session {session_id} not ready within {timeout_s}s")
+
+
+# Session ids shared across the sequential integration tests in this module
+# (they intentionally build on each other against one server lifetime).
+_STATE: dict = {}
 
 
 def test_products_survive_session_switching_and_do_not_leak(switch_server):
@@ -164,3 +193,81 @@ def test_products_survive_session_switching_and_do_not_leak(switch_server):
     _switch(base_url, sid_b)
     assert _product_numbers(base_url) == [MN], \
         "verwijderen in de bronsessie raakte de snapshot-kopie"
+
+    _STATE.update({"sid_a": sid_a, "sid_b": sid_b})
+
+
+FD = {"mode": "add", "default": 1000.0}
+MN2 = "900000088"
+
+
+def test_forecast_defaults_and_reset_survive_switching(switch_server):
+    """Zelfde spiegel-klasse voor forecast-defaults + het Reset-contract:
+    Reset wist bewerkingen maar behoudt dynamische producten (config)."""
+    base_url = switch_server["base_url"]
+    sid_a, sid_b = _STATE["sid_a"], _STATE["sid_b"]
+
+    _switch(base_url, sid_a)
+    resp = requests.post(base_url + "/api/config/settings",
+                         json={"forecast_defaults": FD}, timeout=300)
+    assert resp.ok, resp.text
+
+    product = dict(PRODUCT, material_number=MN2)
+    resp = requests.post(base_url + "/api/products/added", json=product, timeout=300)
+    assert resp.ok, resp.text
+    assert _product_numbers(base_url) == [MN2]
+
+    # Reset: bewerkingen weg, product blijft (het is sessieconfig, geen edit).
+    resp = requests.post(base_url + "/api/reset_edits", timeout=300)
+    assert resp.ok, resp.text
+    assert _product_numbers(base_url) == [MN2], "Reset verwijderde het product"
+
+    # Wissel weg en terug: fd en product intact.
+    _switch(base_url, sid_b)
+    _switch(base_url, sid_a)
+    assert _product_numbers(base_url) == [MN2]
+    cfg = requests.get(base_url + "/api/config", timeout=60).json()
+    assert cfg["forecast_defaults"] == FD, cfg["forecast_defaults"]
+
+    # Herberekenen: beide overleven (sessie-first, geen stale spiegel).
+    resp = requests.post(base_url + "/api/calculate", json=CALC, timeout=300)
+    assert resp.ok and resp.json().get("success"), resp.text
+    assert _product_numbers(base_url) == [MN2]
+    cfg = requests.get(base_url + "/api/config", timeout=60).json()
+    assert cfg["forecast_defaults"] == FD
+
+    # B mag niets geërfd hebben.
+    _switch(base_url, sid_b)
+    cfg = requests.get(base_url + "/api/config", timeout=60).json()
+    assert cfg["forecast_defaults"] in ({}, None), cfg["forecast_defaults"]
+
+
+def test_true_process_restart_keeps_per_session_state(switch_server):
+    """Echte herstart: proces killen en opnieuw starten op dezelfde app-data.
+    Elke sessie houdt haar EIGEN producten en forecast-defaults; niets lekt."""
+    base_url = switch_server["base_url"]
+    sid_a, sid_b = _STATE["sid_a"], _STATE["sid_b"]
+    _switch(base_url, sid_a)  # A actief bij afsluiten
+
+    switch_server["restart"]()
+
+    # Alle sessies zijn terug uit sessions_store.json.
+    groups = requests.get(base_url + "/api/sessions", timeout=60).json()["groups"]
+    ids = {entry["id"] for entries in groups.values() for entry in entries}
+    assert {sid_a, sid_b} <= ids
+
+    # B: cold rebuild via het switch-herstelpad → eigen product terug.
+    _switch(base_url, sid_b)
+    assert _product_numbers(base_url) == [MN], \
+        "sessie B verloor haar product na een echte herstart"
+    cfg = requests.get(base_url + "/api/config", timeout=60).json()
+    assert cfg["forecast_defaults"] in ({}, None), \
+        "sessie B erfde forecast-defaults na herstart"
+
+    # A: eigen product + forecast-defaults terug, geen kruisbesmetting.
+    _switch(base_url, sid_a)
+    assert _product_numbers(base_url) == [MN2], \
+        "sessie A verloor haar product na een echte herstart"
+    cfg = requests.get(base_url + "/api/config", timeout=60).json()
+    assert cfg["forecast_defaults"] == FD, \
+        "sessie A verloor haar forecast-defaults na een echte herstart"
