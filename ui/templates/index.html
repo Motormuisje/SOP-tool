@@ -3682,9 +3682,12 @@ async function _analysisComputeSegment(chart, descriptor, datasetIndex, iA, iB) 
     const model = {
         headline, notes, totalDelta, contributorSum,
         pA, pB, unit: descriptor.unit || '', decimals: descriptor.decimals ?? 1,
+        rowUnit: descriptor.rowUnit || descriptor.unit || '',
         additive: descriptor.additive !== false, negligible,
         rows: top, restCount, restDelta,
-        extraSections: descriptor.extraSections || null,
+        extraSections: descriptor.extraSectionsBuilder
+            ? await descriptor.extraSectionsBuilder(pA, pB)
+            : (descriptor.extraSections || null),
     };
     window._lastChartAnalysis = {
         key: document.getElementById('chartZoomModal').dataset.analysisKey,
@@ -3892,34 +3895,38 @@ function _renderChartAnalysisPanel(model) {
     headEl.textContent = model.headline;
     if (notesEl) notesEl.textContent = model.notes.join(' ');
 
-    const pct = d => (model.totalDelta !== 0 && !model.negligible)
-        ? _fmtNlNum(d / model.totalDelta * 100, 0) + '%'
+    // Additive: % relative to the plotted movement. Non-additive (e.g. FTE in
+    // uren): % is each contributor's share within the explanation itself.
+    const pctBase = model.additive ? model.totalDelta : model.contributorSum;
+    const pct = d => (pctBase !== 0 && !(model.additive && model.negligible))
+        ? _fmtNlNum(d / pctBase * 100, 0) + '%'
         : '−';
     let rowsHtml = model.rows.map(r => `
         <tr ${r.drill ? `class="cursor-pointer hover:bg-slate-800" onclick="_analysisDrillComponent('${escapeHtml(r.drill)}')" title="Klik voor detail"` : ''}>
             <td class="p-1 text-slate-300">${r.drill ? '▸ ' : ''}${escapeHtml(r.label)}</td>
-            <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, model.unit, model.decimals)}</td>
+            <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, model.rowUnit, model.decimals)}</td>
             <td class="p-1 text-right text-slate-400">${pct(r.delta)}</td>
         </tr>`).join('');
     if (model.restCount > 0) {
         rowsHtml += `
         <tr class="text-slate-500">
             <td class="p-1">Overige (${model.restCount})</td>
-            <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.restDelta, model.unit, model.decimals)}</td>
+            <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.restDelta, model.rowUnit, model.decimals)}</td>
             <td class="p-1 text-right">${pct(model.restDelta)}</td>
         </tr>`;
     }
+    const sumRow = model.additive ? `
+                <tr><td class="p-1">Som bijdragen</td>
+                    <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.contributorSum, model.rowUnit, model.decimals)}</td><td></td></tr>` : '';
     let html = `
         <table class="w-full text-xs">
             <thead><tr class="text-slate-400">
                 <th class="text-left p-1">Naam</th>
                 <th class="text-right p-1">&Delta;</th>
-                <th class="text-right p-1">% van beweging</th>
+                <th class="text-right p-1">${model.additive ? '% van beweging' : '% aandeel'}</th>
             </tr></thead>
             <tbody>${rowsHtml || '<tr><td colspan="3" class="p-2 text-slate-500 text-center">Geen bijdragen gevonden</td></tr>'}</tbody>
-            <tfoot class="text-slate-300 font-semibold" style="border-top:1px solid #475569">
-                <tr><td class="p-1">Som bijdragen</td>
-                    <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.contributorSum, model.unit, model.decimals)}</td><td></td></tr>
+            <tfoot class="text-slate-300 font-semibold" style="border-top:1px solid #475569">${sumRow}
                 <tr><td class="p-1">Beweging in grafiek</td>
                     <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(model.totalDelta, model.unit, model.decimals)}</td><td></td></tr>
             </tfoot>
@@ -3927,10 +3934,6 @@ function _renderChartAnalysisPanel(model) {
     if (model.extraSections) html += model.extraSections;
     tableHost.innerHTML = html;
 }
-
-// Placeholder until component drilldown lands (commit 4): rows carry drill
-// keys but clicking is a no-op unless this is replaced.
-function _analysisDrillComponent(componentKey) { /* wired in a later commit */ }
 
 // ---- financial metric descriptors (dashboard financialChart + values finChart) ----
 const _FIN_PRODUCT_SOURCE = {
@@ -4061,6 +4064,359 @@ _chartAnalysisRegistry['finChart'] = {
         return _finMetricDescriptor(metric, { scale: 1, unit: '€', source: 'consolidation' });
     },
 };
+
+// ---- registry entries: volume charts (dashboard) ----
+// Contributors are the SAME line types /api/dashboard sums for these trends
+// (ui/routes/read.py), so contributions reconcile with the plotted series
+// up to the server's 0.1 rounding per accumulation step.
+async function _volumeRowsDescriptor(lineType, seriesLabel) {
+    const results = await _analysisEnsureResults();
+    const rows = results[lineType] || [];
+    return {
+        seriesLabel, unit: 'ton', decimals: 1, additive: true, scale: 1,
+        contributors: async () => rows.map(r => ({
+            key: `${r.material_number}||${r.aux_column || ''}`,
+            label: `${r.material_number} — ${r.material_name || ''}`.trim(),
+            values: r.values || {},
+        })),
+    };
+}
+
+_chartAnalysisRegistry['demandTrendChart'] = {
+    getDescriptor: async () => _volumeRowsDescriptor('03. Total demand', 'Totale vraag'),
+};
+
+_chartAnalysisRegistry['invTargetChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        if (label === 'Inventory') return _volumeRowsDescriptor('04. Inventory', 'Voorraad');
+        if (label === 'Target stock') return _volumeRowsDescriptor('05. Minimum target stock', 'Doelvoorraad');
+        return null;
+    },
+};
+
+// ---- registry entries: machines / FTE / capacity slots ----
+// Exact utilization split via the ratio identity (util = 100·req/cap):
+// Δutil = 100·(r_B−r_A)/c_B + 100·r_A·(1/c_B − 1/c_A)
+function _utilSplitDescriptor(seriesLabel, reqByPeriod, capByPeriod, extraSectionsBuilder) {
+    return {
+        seriesLabel, unit: 'pp', decimals: 1, additive: true, scale: 1,
+        note: 'De bezettingsverandering is exact gesplitst in het effect van de benodigde uren en het effect van de beschikbare capaciteit.',
+        preSplit: (pA, pB) => {
+            const rA = reqByPeriod[pA], rB = reqByPeriod[pB];
+            const cA = capByPeriod[pA], cB = capByPeriod[pB];
+            if (![rA, rB, cA, cB].every(Number.isFinite) || Math.abs(cA) < 1e-9 || Math.abs(cB) < 1e-9) {
+                throw new Error('capaciteit ≈ 0 in dit segment.');
+            }
+            return [
+                { label: 'Effect benodigde uren', delta: 100 * (rB - rA) / cB },
+                { label: 'Effect beschikbare capaciteit', delta: 100 * rA * (1 / cB - 1 / cA) },
+            ];
+        },
+        extraSectionsBuilder,
+    };
+}
+
+// "Grootste productbewegingen" section for one machine (volumes, not hours —
+// say so explicitly: the split does not add up to the utilization change).
+function _machineProductsSectionBuilder(mcCode) {
+    return async (pA, pB) => {
+        let data;
+        try {
+            data = await _analysisFetchMachineProducts(mcCode);
+        } catch (e) {
+            return `<div class="text-xs text-slate-500 mt-3">Productdetail niet beschikbaar: ${escapeHtml(String(e.message || e))}</div>`;
+        }
+        const movers = (data.products || [])
+            .map(p => ({
+                label: `${p.material_number} — ${p.material_name || ''}`.trim(),
+                delta: ((p.values || {})[pB] || 0) - ((p.values || {})[pA] || 0),
+            }))
+            .filter(r => Math.abs(r.delta) > 1e-9)
+            .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+            .slice(0, 8);
+        if (!movers.length) {
+            return '<div class="text-xs text-slate-500 mt-3">Geen productbewegingen op deze machine in dit segment.</div>';
+        }
+        const rows = movers.map(r => `
+            <tr><td class="p-1 text-slate-300">${escapeHtml(r.label)}</td>
+                <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, 'ton', 1)}</td></tr>`).join('');
+        return `
+            <div class="mt-3">
+                <div class="text-xs font-semibold text-slate-300 mb-1">Grootste productbewegingen op deze machine (volume)</div>
+                <table class="w-full text-xs"><tbody>${rows}</tbody></table>
+                <p class="text-[10px] text-slate-500 mt-1 italic">Op basis van geplande productievolumes, niet uren — de verdeling telt daarom niet exact op tot de bezettingsverandering.</p>
+            </div>`;
+    };
+}
+
+_chartAnalysisRegistry['utilChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const dash = await _analysisEnsureDashboard();
+        const entry = (dash.utilization_by_machine || [])[dsIdx];
+        if (!entry) return null;
+        const machinesData = await _analysisEnsureMachines();
+        const m = (machinesData.machines || []).find(x => String(x.code) === String(entry.machine));
+        if (!m) return null;
+        return _utilSplitDescriptor(
+            `Bezetting ${m.code}`,
+            m.req_hours_by_period || {},
+            m.capacity_hours_by_period || {},
+            _machineProductsSectionBuilder(m.code),
+        );
+    },
+};
+
+_chartAnalysisRegistry['fteChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const dash = await _analysisEnsureDashboard();
+        const g = (dash.fte_by_group || [])[dsIdx];
+        if (!g) return null;
+        const machinesData = await _analysisEnsureMachines();
+        const group = (machinesData.groups || []).find(x => String(x.group) === String(g.group));
+        if (!group) {
+            return {
+                seriesLabel: `FTE ${g.group}`, unit: 'FTE', decimals: 2, additive: false, scale: 1,
+                note: 'Geen machinedetail beschikbaar voor deze groep (bijv. truck- of controlekamerpersoneel).',
+                contributors: async () => [],
+            };
+        }
+        const machines = (machinesData.machines || [])
+            .filter(m => (group.machines || []).includes(m.code));
+        return {
+            seriesLabel: `FTE ${group.group}`, unit: 'FTE', rowUnit: 'uur', decimals: 1,
+            additive: false, scale: 1,
+            note: 'FTE volgt uit de benodigde machine-uren binnen de groep; de bijdragen hieronder zijn in uren.',
+            contributors: async () => machines.map(m => ({
+                key: m.code, label: `${m.code} — ${m.name || ''}`.trim(),
+                values: m.req_hours_by_period || {},
+            })),
+        };
+    },
+};
+
+_chartAnalysisRegistry['util_groep'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        const machinesData = await _analysisEnsureMachines();
+        const group = (machinesData.groups || []).find(x => String(x.group) === String(label));
+        if (!group) return null;  // threshold lines are zero-variance anyway
+        // Group capacity derived from the plotted ratio itself (util = 100·r/c),
+        // so the split reconciles with the group weighting exactly.
+        const req = group.req_hours_by_period || {};
+        const util = group.util_by_period || {};
+        const cap = {};
+        Object.keys(util).forEach(p => {
+            if (Math.abs(util[p]) > 1e-9) cap[p] = 100 * (req[p] || 0) / util[p];
+        });
+        const machines = (machinesData.machines || [])
+            .filter(m => (group.machines || []).includes(m.code));
+        return _utilSplitDescriptor(
+            `Bezetting groep ${group.group}`, req, cap,
+            async (pA, pB) => {
+                const movers = machines
+                    .map(m => ({
+                        label: `${m.code} — ${m.name || ''}`.trim(),
+                        delta: ((m.util_by_period || {})[pB] || 0) - ((m.util_by_period || {})[pA] || 0),
+                    }))
+                    .filter(r => Math.abs(r.delta) > 1e-9)
+                    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+                    .slice(0, 8);
+                if (!movers.length) return '';
+                const rows = movers.map(r => `
+                    <tr><td class="p-1 text-slate-300">${escapeHtml(r.label)}</td>
+                        <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, 'pp', 1)}</td></tr>`).join('');
+                return `
+                    <div class="mt-3">
+                        <div class="text-xs font-semibold text-slate-300 mb-1">Bezettingsverandering per machine in de groep</div>
+                        <table class="w-full text-xs"><tbody>${rows}</tbody></table>
+                        <p class="text-[10px] text-slate-500 mt-1 italic">Groepsbezetting is een gewogen gemiddelde; machinewaarden tellen niet één-op-één op.</p>
+                    </div>`;
+            },
+        );
+    },
+};
+
+_chartAnalysisRegistry['fte_groep'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        const machinesData = await _analysisEnsureMachines();
+        if (label === 'Totaal FTE') {
+            const groups = (machinesData.groups || []).filter(g => (g.fte_avg || 0) > 0);
+            return {
+                seriesLabel: 'Totaal FTE', unit: 'FTE', decimals: 2, additive: true, scale: 1,
+                contributors: async () => groups.map(g => ({
+                    key: g.group, label: g.group, values: g.fte_by_period || {},
+                })),
+            };
+        }
+        // Per-group stacked bar → same group resolver as fteChart, by name.
+        const group = (machinesData.groups || []).find(x => String(x.group) === String(label));
+        if (!group) return null;
+        const machines = (machinesData.machines || [])
+            .filter(m => (group.machines || []).includes(m.code));
+        return {
+            seriesLabel: `FTE ${group.group}`, unit: 'FTE', rowUnit: 'uur', decimals: 1,
+            additive: false, scale: 1,
+            note: 'FTE volgt uit de benodigde machine-uren binnen de groep; de bijdragen hieronder zijn in uren.',
+            contributors: async () => machines.map(m => ({
+                key: m.code, label: `${m.code} — ${m.name || ''}`.trim(),
+                values: m.req_hours_by_period || {},
+            })),
+        };
+    },
+};
+
+// ---- registry entries: inventory quality + ROCE components ----
+const _IQ_BUCKET_FIELDS = {
+    'Understock': 'under', 'Safety stock': 'safety', 'Strategic': 'strategic',
+    'Normal': 'normal', 'Overstock': 'overstock', 'Actual stock': 'inventory',
+};
+const _IQ_BUCKET_DUTCH = {
+    'Understock': 'Ondervoorraad', 'Safety stock': 'Veiligheidsvoorraad',
+    'Strategic': 'Strategische voorraad', 'Normal': 'Normale voorraad',
+    'Overstock': 'Overvoorraad', 'Actual stock': 'Werkelijke voorraad',
+};
+
+_chartAnalysisRegistry['invQualityChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        if (label === 'Cost of Goods') {
+            return _finMetricDescriptor('COST OF GOODS', { scale: 0.001, unit: 'K€', source: 'dashboard' });
+        }
+        const bucket = _IQ_BUCKET_FIELDS[label];
+        if (!bucket) return null;
+        const dash = await _analysisEnsureDashboard();
+        const materials = dash.inventory_quality || [];
+        return {
+            seriesLabel: _IQ_BUCKET_DUTCH[label] || label, unit: 'K€', decimals: 1,
+            additive: true, scale: 0.001,
+            contributors: async () => materials.map(mat => {
+                const values = {};
+                Object.entries(mat.periods || {}).forEach(([p, d]) => {
+                    values[p] = (d || {})[bucket] || 0;
+                });
+                return {
+                    key: mat.material_number,
+                    label: `${mat.material_number} — ${mat.material_name || ''}`.trim(),
+                    values,
+                };
+            }),
+        };
+    },
+};
+
+_chartAnalysisRegistry['roceChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        // Datasets 1-2 (average/target reference lines) are excluded by the
+        // zero-variance rule; only the ROCE bars are analyzable.
+        return _roceRatioDescriptor({ source: 'dashboard', displayScale: 100 });
+    },
+};
+
+_chartAnalysisRegistry['roceComponentsChart'] = {
+    getDescriptor: async (chart, dsIdx) => {
+        const label = chart.data.datasets[dsIdx].label || '';
+        const byName = await _finMetricValuesByName('dashboard');
+        if (label === 'EBIT') {
+            // Flattened chain: EBIT = TURNOVER − COGS − SG&A − D&A (exact).
+            return {
+                seriesLabel: 'EBIT', unit: 'K€', decimals: 1, additive: true, scale: 0.001,
+                note: 'EBIT is gesplitst in de onderliggende componenten.',
+                contributors: async () => [
+                    ['TURNOVER', 1], ['COST OF GOODS', -1], ['SG&A COST', -1], ['D&A COST', -1],
+                ].map(([name, sign]) => ({
+                    key: name, label: (sign < 0 ? '− ' : '+ ') + (_FIN_DUTCH[name] || name),
+                    values: byName[name] || {}, sign,
+                    drill: (_FIN_PRODUCT_SOURCE[name] || _FIN_COMPONENTS[name]) ? name : null,
+                })),
+            };
+        }
+        if (label === 'Capital Investment') {
+            return {
+                seriesLabel: 'Geïnvesteerd kapitaal', unit: 'K€', decimals: 1, additive: true, scale: 0.001,
+                note: 'Geïnvesteerd kapitaal = vaste activa + werkkapitaal (debiteuren + voorraadwaarde − crediteuren).',
+                contributors: async () => [
+                    ['FIXED ASSETS NET BOOK VALUE', 1], ['RECEIVABLES', 1],
+                    ['INVENTORY VALUE', 1], ['PAYABLES', -1],
+                ].map(([name, sign]) => ({
+                    key: name, label: (sign < 0 ? '− ' : '+ ') + (_FIN_DUTCH[name] || name),
+                    values: byName[name] || {}, sign,
+                    drill: _FIN_PRODUCT_SOURCE[name] ? name : null,
+                })),
+            };
+        }
+        if (label === 'Operational Cashflow') {
+            // OCF(p) = EBITDA(p) − voorraad(p) + voorraad(p−1): the segment
+            // delta splits exactly into ΔEBITDA and the stock-mutation effect.
+            const dash = await _analysisEnsureDashboard();
+            const periods = dash.periods || [];
+            const ebitda = byName['EBITDA'] || {};
+            const inv = byName['INVENTORY VALUE'] || {};
+            const invPrev = p => {
+                const i = periods.indexOf(p);
+                return i <= 0 ? (inv['Starting stock'] || 0) : (inv[periods[i - 1]] || 0);
+            };
+            const invEffect = p => invPrev(p) - (inv[p] || 0);
+            return {
+                seriesLabel: 'Operationele kasstroom', unit: 'K€', decimals: 1, additive: true, scale: 1,
+                note: 'Kasstroom = EBITDA minus de voorraadopbouw in de maand.',
+                preSplit: (pA, pB) => [
+                    { label: 'Effect EBITDA',
+                      delta: ((ebitda[pB] || 0) - (ebitda[pA] || 0)) / 1000, drill: 'EBITDA' },
+                    { label: 'Voorraadmutatie-effect',
+                      delta: (invEffect(pB) - invEffect(pA)) / 1000 },
+                ],
+            };
+        }
+        return null;
+    },
+};
+
+// ---- component drilldown (klikbare componentrijen) ----
+let _analysisDrillReturn = null;  // selection to restore on "terug"
+
+async function _analysisDrillComponent(componentKey) {
+    if (!_analysisOpen || !_analysisCurrent || !_zoomChart) return;
+    const { ds, iA, iB } = _analysisCurrent;
+    const labels = _zoomChart.data.labels || [];
+    const pA = labels[iA], pB = labels[iB];
+    _analysisDrillReturn = { ds, iA, iB };
+    const seq = ++_analysisReqSeq;
+    try {
+        const descriptor = componentKey === 'ROCE'
+            ? await _roceRatioDescriptor({ source: 'dashboard', displayScale: 100 })
+            : await _finMetricDescriptor(componentKey, { scale: 0.001, unit: 'K€', source: 'dashboard' });
+        if (!descriptor || seq !== _analysisReqSeq) return;
+        // Synthetic single-series "chart": _analysisComputeSegment only reads
+        // labels + the dataset's data array, so plain objects suffice.
+        const byName = await _finMetricValuesByName('dashboard');
+        const series = byName[componentKey] || {};
+        const scale = componentKey === 'ROCE' ? 100 : 0.001;
+        const fakeChart = { data: { labels, datasets: [{
+            data: labels.map(l => Number.isFinite(series[l]) ? series[l] * scale : null),
+        }] } };
+        const model = await _analysisComputeSegment(fakeChart, descriptor, 0, iA, iB);
+        if (seq !== _analysisReqSeq) return;
+        _renderChartAnalysisPanel(model);
+        const tableHost = document.getElementById('chartAnalysisTableHost');
+        if (tableHost) {
+            tableHost.insertAdjacentHTML('afterbegin',
+                `<button type="button" onclick="_analysisDrillBack()" class="text-xs text-indigo-400 hover:text-indigo-300 mb-2">&#8592; Terug naar grafiekanalyse</button>`);
+        }
+    } catch (e) {
+        if (seq === _analysisReqSeq) {
+            _renderAnalysisError('Detail niet beschikbaar: ' + (e && e.message ? e.message : e));
+        }
+    }
+}
+
+function _analysisDrillBack() {
+    if (!_analysisDrillReturn) return;
+    const { ds, iA, iB } = _analysisDrillReturn;
+    _analysisDrillReturn = null;
+    _analysisApplySelection(ds, iA, iB);
+}
 
 // ===== Comments / annotations (Fase 2.1) =====
 let commentMode = false;
@@ -8587,6 +8943,12 @@ function renderMachSlot(slotNum) {
         }
         container.innerHTML = '<canvas></canvas>';
         const canvas = container.querySelector('canvas');
+        // Chart-analysis: clones answer as their dashboard source chart.
+        canvas.dataset.analysisKey = ({
+            dash_util: 'utilChart', dash_fte: 'fteChart',
+            dash_demand: 'demandTrendChart', dash_financial: 'financialChart',
+            dash_roce: 'roceChart',
+        })[key] || '';
         let clonedData;
         let clonedOptions;
         try {
@@ -8622,6 +8984,7 @@ function renderMachSlot(slotNum) {
     }
     container.innerHTML = '<canvas></canvas>';
     const canvas = container.querySelector('canvas');
+    canvas.dataset.analysisKey = key;  // chart-analysis registry key
     const chart = _buildMachSpecificChart(key, canvas);
     _machSlotCharts[slotNum - 1] = chart;
     // Attach drag-to-edit only on the utilization per group chart

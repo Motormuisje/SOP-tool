@@ -269,6 +269,27 @@ teststrategie uitgebreid van geïsoleerde sync-punt-tests naar **overgangen**:
   productnummer, dan faalt de switch-restore netjes (`failed` + NL-melding).
 - **UI**: de productenkaart ververst bij sessiewissel (browser-test).
 
+### Grafiek-analyse (dashboard, 2026-07-11)
+
+In de vergrote grafiek (zoom-modal) verklaart de knop **"Analyse"** stijgingen
+en dalingen: automatische detectie van de grootste beweging (of klik twee
+punten voor een eigen segment) met een zijpaneel met de top-bijdragen,
+"Overige"-rest en de som-tegenover-grafiekbeweging-controle. Volledig
+client-side; hergebruikt bestaande endpoints.
+
+| Grafiek | Verklaring |
+|---|---|
+| Financiële metrics (dashboard + values-tab) | per product (omzet, grondstofkost, machinekost, FTE-kost, voorraadwaarde); afgeleide metrics (COGS, brutomarge, EBITDA, EBIT) via exacte componentsplitsing, doorklikbaar naar producten |
+| Demand trend / Inventory vs Target | top-productbewegingen (zelfde linetypes als de grafiek sommeert) |
+| Machine-utilization (dashboard + capaciteits-slots) | exacte splitsing benodigde-uren-effect vs capaciteitseffect + grootste productbewegingen op de machine (volumes, expliciet gelabeld) |
+| FTE per groep | per-machine urenbijdragen (eerlijkheidsnotitie: FTE volgt uit uren) |
+| Inventory quality | per materiaal per bucket (onder-/veiligheids-/overvoorraad) |
+| ROCE(-componenten) | exacte ratio-splitsing EBIT-effect vs kapitaaleffect; kasstroom = EBITDA-effect + voorraadmutatie |
+
+Eerlijkheidsregels: bijdragen die niet exact optellen (bezetting, FTE) worden
+als zodanig benoemd; referentielijnen (targets/gemiddelden) zijn uitgesloten;
+nieuwe/verdwenen producten verschijnen vanzelf als 100% van de beweging.
+
 ### Nog open uit het oorspronkelijke fase-3-verhaal
 
 **Integratiegradatie (vraag 5, a/b/c)** — master-sheet-vervanging/koppeling

@@ -151,6 +151,148 @@ def test_two_point_custom_segment_updates_headline(browser_page):
     assert page.js_errors == []
 
 
+def test_demand_trend_contributors_reconcile_with_rounding(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    page.wait_for_function(
+        "() => !!Chart.getChart(document.getElementById('demandTrendChart'))",
+        timeout=30000,
+    )
+    _zoom_and_open_analysis(page, "demandTrendChart")
+    page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+    check = page.evaluate(
+        """() => {
+            const a = window._lastChartAnalysis;
+            return {
+                head: document.getElementById('chartAnalysisHeadline').textContent,
+                reconciles: Math.abs(a.contributorSum - a.totalDelta)
+                    <= Math.max(1, 0.005 * Math.abs(a.totalDelta)),
+            };
+        }"""
+    )
+    assert "Totale vraag" in check["head"] or "Geen noemenswaardige" in check["head"]
+    assert check["reconciles"], check
+    assert page.js_errors == []
+
+
+def test_util_chart_shows_factor_split_and_product_section(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    page.wait_for_function(
+        "() => !!Chart.getChart(document.getElementById('utilChart'))",
+        timeout=30000,
+    )
+    _zoom_and_open_analysis(page, "utilChart")
+    page.wait_for_function(
+        "() => document.getElementById('chartAnalysisTableHost')"
+        ".textContent.includes('Effect benodigde uren')",
+        timeout=30000,
+    )
+    table = page.evaluate(
+        "() => document.getElementById('chartAnalysisTableHost').textContent")
+    assert "Effect beschikbare capaciteit" in table
+    # Productsectie of expliciete geen-detail-melding, met eerlijkheidsnotitie.
+    assert ("productbewegingen op deze machine" in table
+            or "Geen productbewegingen" in table
+            or "Productdetail niet beschikbaar" in table), table
+    if "productbewegingen op deze machine" in table:
+        assert "niet uren" in table
+    assert page.js_errors == []
+
+
+def test_roce_ratio_split_sums_exactly(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    page.wait_for_function(
+        "() => !!Chart.getChart(document.getElementById('roceChart'))",
+        timeout=30000,
+    )
+    _zoom_and_open_analysis(page, "roceChart")
+    page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+    check = page.evaluate(
+        """() => {
+            const a = window._lastChartAnalysis;
+            const table = document.getElementById('chartAnalysisTableHost').textContent;
+            // Dashboard rounds EBIT/kapitaal to whole euros but ROCE to 6
+            // decimals; the identity split is exact on the rounded inputs, so
+            // allow display-precision tolerance (0.01 pp) vs the plotted line.
+            return {
+                table,
+                exact: Math.abs(a.contributorSum - a.totalDelta) < 0.01,
+            };
+        }"""
+    )
+    assert "Effect EBIT" in check["table"], check["table"]
+    assert "Effect geïnvesteerd kapitaal" in check["table"]
+    assert check["exact"], "ratio-splitsing moet optellen binnen weergaveprecisie"
+    assert page.js_errors == []
+
+
+def test_component_drill_and_back(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    _zoom_and_open_analysis(page, "financialChart")
+    page.evaluate(
+        """() => {
+            const ds = _zoomChart.data.datasets.findIndex(d => d.label === 'Gross Margin');
+            return _analysisApplySelection(ds, 1, 2);
+        }"""
+    )
+    page.wait_for_function(
+        "() => document.getElementById('chartAnalysisTableHost')"
+        ".textContent.includes('Omzet')",
+        timeout=30000,
+    )
+    # Drill into the Turnover component -> product contributors verschijnen.
+    page.evaluate("() => _analysisDrillComponent('TURNOVER')")
+    page.wait_for_function(
+        "() => document.getElementById('chartAnalysisTableHost')"
+        ".textContent.includes('Terug naar grafiekanalyse')",
+        timeout=30000,
+    )
+    head = page.evaluate(
+        "() => document.getElementById('chartAnalysisHeadline').textContent")
+    assert "Omzet" in head
+    # Terug herstelt de componentweergave.
+    page.evaluate("() => _analysisDrillBack()")
+    page.wait_for_function(
+        "() => !document.getElementById('chartAnalysisTableHost')"
+        ".textContent.includes('Terug naar grafiekanalyse')",
+        timeout=30000,
+    )
+    assert page.js_errors == []
+
+
+def test_inventory_quality_bucket_decomposition(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_dashboard(page)
+    page.wait_for_function(
+        "() => !!Chart.getChart(document.getElementById('invQualityChart'))",
+        timeout=30000,
+    )
+    _zoom_and_open_analysis(page, "invQualityChart")
+    page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+    check = page.evaluate(
+        """() => {
+            const a = window._lastChartAnalysis;
+            return {
+                head: document.getElementById('chartAnalysisHeadline').textContent,
+                rows: a.rows.length,
+                reconciles: Math.abs(a.contributorSum - a.totalDelta)
+                    <= Math.max(1, 0.005 * Math.abs(a.totalDelta)),
+            };
+        }"""
+    )
+    assert check["rows"] >= 1 or "Geen noemenswaardige" in check["head"]
+    assert check["reconciles"], check
+    assert page.js_errors == []
+
+
 def test_analysis_resets_on_close_and_rezoom(browser_page):
     page = browser_page
     page.reload(wait_until="networkidle")
