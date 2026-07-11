@@ -39,17 +39,27 @@ def products_app():
     holder = {'sess': sess, 'engine': engine}
     global_config = {}
     calls = {'build': 0, 'install': 0, 'replay': 0,
-             'save_global': 0, 'save_sessions': 0}
-    behaviour = {'build_raises': None}
+             'save_global': 0, 'save_sessions': 0,
+             'active_builds': 0, 'max_active_builds': 0}
+    behaviour = {'build_raises': None, 'build_delay': 0.0}
 
     def fake_build(s, params=None):
+        import time
         calls['build'] += 1
-        if behaviour['build_raises'] is not None:
-            raise behaviour['build_raises']
-        return SimpleNamespace(
-            data=_data(), results={},
-            config_overrides={'added_products': list(s.get('added_products') or [])},
-        )
+        calls['active_builds'] += 1
+        calls['max_active_builds'] = max(calls['max_active_builds'],
+                                         calls['active_builds'])
+        try:
+            if behaviour['build_delay']:
+                time.sleep(behaviour['build_delay'])
+            if behaviour['build_raises'] is not None:
+                raise behaviour['build_raises']
+            return SimpleNamespace(
+                data=_data(), results={},
+                config_overrides={'added_products': list(s.get('added_products') or [])},
+            )
+        finally:
+            calls['active_builds'] -= 1
 
     def fake_install(s, engine, clear_machine_overrides=True):
         calls['install'] += 1
@@ -182,6 +192,36 @@ def test_delete_removes_and_prunes_material_state(products_app):
     assert MN not in sess['inventory_overrides']
     assert MN not in sess['capacity_overrides']['07. Purchase plan']
     assert sess['undo_stack'] == [] and sess['redo_stack'] == []
+
+
+def test_concurrent_posts_serialize_and_keep_both_products(products_app):
+    """Rebuilds swap sess['engine'] and take seconds; two concurrent product
+    POSTs must serialize on the shared engine_rebuild_lock — without it the
+    builds overlap and one product's list update is lost."""
+    import threading
+
+    products_app.behaviour['build_delay'] = 0.1
+    statuses = []
+
+    def post(number):
+        client = products_app.app.test_client()
+        resp = client.post('/api/products/added',
+                           json=dict(PRODUCT, material_number=number,
+                                     name=f'P{number}'))
+        statuses.append(resp.status_code)
+
+    threads = [threading.Thread(target=post, args=(n,))
+               for n in ('900000001', '900000002')]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert statuses == [200, 200]
+    assert products_app.calls['max_active_builds'] == 1, \
+        'rebuilds overlapped: engine_rebuild_lock not honored'
+    numbers = {p['material_number'] for p in products_app.sess['added_products']}
+    assert numbers == {'900000001', '900000002'}
 
 
 def test_prune_material_state_helper_tolerates_missing_keys():

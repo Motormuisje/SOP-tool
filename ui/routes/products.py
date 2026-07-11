@@ -10,6 +10,10 @@ from typing import Callable
 from flask import Blueprint, current_app, jsonify, request
 
 from modules.product_overlay import normalize_material_number, validate_added_product
+from ui.locks import engine_rebuild_lock
+
+_ERR_NO_SESSION = 'Geen actieve sessie'
+_ERR_NO_ENGINE = 'Geen actieve berekening — voer eerst een berekening uit.'
 
 
 def _current_products(sess, engine) -> list:
@@ -105,9 +109,9 @@ def create_products_blueprint(
     def list_added_products():
         sess, engine = get_active()
         if sess is None:
-            return jsonify({'error': 'Geen actieve sessie'}), 400
+            return jsonify({'error': _ERR_NO_SESSION}), 400
         if engine is None or getattr(engine, 'data', None) is None:
-            return jsonify({'error': 'Geen actieve berekening — voer eerst een berekening uit.'}), 400
+            return jsonify({'error': _ERR_NO_ENGINE}), 400
         added = _current_products(sess, engine)
         added_numbers = {str(p.get('material_number')) for p in added}
         return jsonify({
@@ -125,64 +129,70 @@ def create_products_blueprint(
     def upsert_added_product():
         sess, engine = get_active()
         if sess is None:
-            return jsonify({'error': 'Geen actieve sessie'}), 400
+            return jsonify({'error': _ERR_NO_SESSION}), 400
         if engine is None or getattr(engine, 'data', None) is None:
-            return jsonify({'error': 'Geen actieve berekening — voer eerst een berekening uit.'}), 400
+            return jsonify({'error': _ERR_NO_ENGINE}), 400
 
         product = request.get_json(force=True, silent=True) or {}
-        old_products = _current_products(sess, engine)
-        old_numbers = {str(p.get('material_number')) for p in old_products}
-        mn = normalize_material_number(product.get('material_number'))
-        try:
-            sanitized = validate_added_product(
-                product,
-                engine.data,
-                other_added=[p for p in old_products
-                             if str(p.get('material_number')) != mn],
-                # The live engine's data already contains the current overlay;
-                # an edit of an existing added product is not a collision.
-                allow_numbers=old_numbers,
-            )
-        except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+        # Serialize against every other full-rebuild path: a concurrent
+        # calculate/product mutation would race on sess['engine'] and the
+        # baseline/override stores.
+        with engine_rebuild_lock:
+            old_products = _current_products(sess, engine)
+            old_numbers = {str(p.get('material_number')) for p in old_products}
+            mn = normalize_material_number(product.get('material_number'))
+            try:
+                sanitized = validate_added_product(
+                    product,
+                    engine.data,
+                    other_added=[p for p in old_products
+                                 if str(p.get('material_number')) != mn],
+                    # The live engine's data already contains the current
+                    # overlay; an edit of an existing added product is not a
+                    # collision.
+                    allow_numbers=old_numbers,
+                )
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
 
-        new_products = [p for p in old_products
-                        if str(p.get('material_number')) != mn]
-        new_products.append(sanitized)
-        _set_products(sess, new_products)
+            new_products = [p for p in old_products
+                            if str(p.get('material_number')) != mn]
+            new_products.append(sanitized)
+            _set_products(sess, new_products)
 
-        rebuilt, payload = _rebuild_and_payload(sess)
-        if rebuilt is None:
-            _set_products(sess, old_products)  # rollback: rebuild refused
-            return payload
-        save_global_config()
-        save_sessions_to_disk()
+            rebuilt, payload = _rebuild_and_payload(sess)
+            if rebuilt is None:
+                _set_products(sess, old_products)  # rollback: rebuild refused
+                return payload
+            save_global_config()
+            save_sessions_to_disk()
         return jsonify(payload)
 
     @bp.route('/api/products/added/<material_number>', methods=['DELETE'])
     def delete_added_product(material_number):
         sess, engine = get_active()
         if sess is None:
-            return jsonify({'error': 'Geen actieve sessie'}), 400
+            return jsonify({'error': _ERR_NO_SESSION}), 400
         if engine is None or getattr(engine, 'data', None) is None:
-            return jsonify({'error': 'Geen actieve berekening — voer eerst een berekening uit.'}), 400
+            return jsonify({'error': _ERR_NO_ENGINE}), 400
 
         mn = normalize_material_number(material_number)
-        old_products = _current_products(sess, engine)
-        new_products = [p for p in old_products
-                        if str(p.get('material_number')) != mn]
-        if len(new_products) == len(old_products):
-            return jsonify({'error': f'Product {mn} is niet gevonden.'}), 404
+        with engine_rebuild_lock:
+            old_products = _current_products(sess, engine)
+            new_products = [p for p in old_products
+                            if str(p.get('material_number')) != mn]
+            if len(new_products) == len(old_products):
+                return jsonify({'error': f'Product {mn} is niet gevonden.'}), 404
 
-        prune_material_state(sess, mn)
-        _set_products(sess, new_products)
+            prune_material_state(sess, mn)
+            _set_products(sess, new_products)
 
-        rebuilt, payload = _rebuild_and_payload(sess)
-        if rebuilt is None:
-            _set_products(sess, old_products)  # rollback: rebuild refused
-            return payload
-        save_global_config()
-        save_sessions_to_disk()
+            rebuilt, payload = _rebuild_and_payload(sess)
+            if rebuilt is None:
+                _set_products(sess, old_products)  # rollback: rebuild refused
+                return payload
+            save_global_config()
+            save_sessions_to_disk()
         return jsonify(payload)
 
     return bp

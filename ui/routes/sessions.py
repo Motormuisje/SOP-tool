@@ -252,10 +252,11 @@ def create_sessions_blueprint(
                 return jsonify(_switch_payload(sid, sess))
         if sess.get('engine') is None and sess.get('parameters') is not None:
             try:
+                from ui.locks import engine_rebuild_lock
                 sess['restore_status'] = 'warming'
                 sess['restore_error'] = None
                 params = sess['parameters']
-                with contextlib.redirect_stdout(io.StringIO()):
+                with engine_rebuild_lock, contextlib.redirect_stdout(io.StringIO()):
                     engine = build_clean_engine_for_session(sess, params)
                     install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
                     with app_context():

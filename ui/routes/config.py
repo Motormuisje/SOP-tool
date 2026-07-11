@@ -264,13 +264,15 @@ def create_config_blueprint(
                 value_recalculated = True
 
         if current_engine is not None and structural_config_changed:
-            rebuilt = build_clean_engine_for_session(sess)
-            if rebuilt is None:
-                return jsonify({'error': 'Could not rebuild active session for the changed config. Recalculate this session first.'}), 400
-            install_clean_engine_baseline(sess, rebuilt, clear_machine_overrides=False)
-            with current_app.app_context():
-                replay_pending_edits(sess, rebuilt)
-            sess['engine'] = rebuilt
+            from ui.locks import engine_rebuild_lock
+            with engine_rebuild_lock:
+                rebuilt = build_clean_engine_for_session(sess)
+                if rebuilt is None:
+                    return jsonify({'error': 'Could not rebuild active session for the changed config. Recalculate this session first.'}), 400
+                install_clean_engine_baseline(sess, rebuilt, clear_machine_overrides=False)
+                with current_app.app_context():
+                    replay_pending_edits(sess, rebuilt)
+                sess['engine'] = rebuilt
             current_engine = rebuilt
             planning_recalculated = True
             value_recalculated = True

@@ -116,6 +116,48 @@ def test_calculate_overrides_take_session_products_over_stale_global():
     assert ov["added_products"] == [PRODUCT]
 
 
+def test_calculate_overrides_take_session_fd_vp_pap_over_stale_global():
+    """Same mirror hole as the products bug, for the OTHER per-session config:
+    forecast defaults, valuation params and purchased_and_produced must come
+    from the session, not from a stale global mirror."""
+    from ui.engine_rebuild import get_calculate_config_overrides
+
+    stale_global = {
+        "forecast_defaults": {"mode": "add", "default": 999.0},
+        "valuation_params": {"1": 111.0},
+        "purchased_and_produced": "ANDERE-SESSIE:0.9",
+    }
+    sess = {
+        "id": "a", "engine": None,
+        "forecast_defaults": {"mode": "fill_empty", "default": 5.0},
+        "valuation_params": {"1": 42.0},
+        "purchased_and_produced": "EIGEN:0.5",
+        "added_products": [],
+    }
+    ov = get_calculate_config_overrides(sess, stale_global)
+    assert ov["forecast_defaults"] == {"mode": "fill_empty", "default": 5.0}
+    assert ov["valuation_params"] == {"1": 42.0}
+    assert ov["purchased_and_produced"] == "EIGEN:0.5"
+
+    # Session WITHOUT defaults must not inherit them from the stale mirror;
+    # '' PAP means deliberately cleared and must also win over the mirror.
+    empty_sess = {"id": "b", "engine": None, "forecast_defaults": {},
+                  "purchased_and_produced": "", "added_products": []}
+    ov = get_calculate_config_overrides(empty_sess, stale_global)
+    assert "forecast_defaults" not in ov
+    assert ov["purchased_and_produced"] == ""
+
+    # A brand-new session: VP/PAP still fall through to the global config
+    # (they are config-tab values, visible before the first calculate), but
+    # forecast defaults are NEVER inherited — saving them in the config tab
+    # writes the session field, so a missing field means "not this session's".
+    ov = get_calculate_config_overrides({"id": "new", "engine": None}, stale_global)
+    assert "forecast_defaults" not in ov
+    assert "added_products" not in ov
+    assert ov["valuation_params"] == {"1": 111.0}
+    assert ov["purchased_and_produced"] == "ANDERE-SESSIE:0.9"
+
+
 # ------------------------------------------------------- snapshot/instances
 
 def _snapshot_app(sess_a):

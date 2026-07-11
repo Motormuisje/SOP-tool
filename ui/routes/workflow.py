@@ -2,7 +2,6 @@
 
 import contextlib
 import io
-import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,9 +11,10 @@ from flask import Blueprint, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 from modules.planning_engine import PlanningEngine
-
-# Concurrent calculates mutate shared cycle-manager state; serialize them.
-_calculate_lock = threading.Lock()
+# Concurrent calculates mutate shared cycle-manager state AND race with the
+# other full-rebuild paths (product CRUD, structural config changes, session
+# switch restore) on sess['engine']; one shared lock serializes them all.
+from ui.locks import engine_rebuild_lock as _calculate_lock
 
 
 def create_workflow_blueprint(
