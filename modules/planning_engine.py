@@ -151,6 +151,18 @@ class PlanningEngine:
               f"{self.data.periods[0] if self.data.periods else 'N/A'}, "
               f"actuals={self.data.forecast_actuals_months}")
 
+        # ===== STEP 1c: Product overlay (Fase 3) =====
+        # Off by default; only mutates data when config_overrides carries a
+        # non-empty 'added_products', so baseline runs stay byte-for-byte
+        # unchanged. Must run after the period window is final (forecast
+        # anchor math) and before any engine reads the shared structures.
+        _added_products = self.config_overrides.get('added_products')
+        if _added_products:
+            print(f"\n[STEP 1c] Applying product overlay "
+                  f"({len(_added_products)} added product(s))...")
+            from modules.product_overlay import apply_product_overlay
+            apply_product_overlay(self.data, _added_products)
+
         # ===== STEP 2: Demand Forecast (Line 01) =====
         print("\n[STEP 2] Calculating Demand Forecast (Line 01)...")
         # VBA: ForecastStartClmn = ForecastActualStartClmn + ForecastActualsMonths + 1
