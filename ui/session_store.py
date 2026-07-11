@@ -91,6 +91,10 @@ def save_sessions_to_disk(
             ),
             # Annotations (Fase 2.1): pure metadata, JSON-safe.
             'comments': sess.get('comments', {}),
+            # Material groups: named per-session material sets + the globally
+            # active one (view metadata; no engine involvement).
+            'material_groups': sess.get('material_groups', {}),
+            'active_material_group': sess.get('active_material_group'),
         }
     store = {
         'active_session_id': active_session_id,
@@ -178,6 +182,8 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 # [] for store files written before this field existed.
                 'added_products': data.get('added_products') or [],
                 'comments': data.get('comments') or {},
+                'material_groups': data.get('material_groups') or {},
+                'active_material_group': data.get('active_material_group'),
                 'undo_stack': [],
                 'redo_stack': [],
                 'restore_status': 'cold' if data.get('parameters') is not None else 'pending',

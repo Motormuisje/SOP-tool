@@ -100,6 +100,9 @@ def create_sessions_blueprint(
             'parameters': sess.get('parameters', {}),
             'valuation_params': global_config.get('valuation_params', {}),
             'purchased_and_produced': global_config.get('purchased_and_produced', ''),
+            # Banner/dropdown state for the switched-to session.
+            'material_groups': list((sess.get('material_groups') or {}).values()),
+            'active_material_group': sess.get('active_material_group'),
         }
 
     @bp.route('/api/sessions/snapshot', methods=['POST'])
@@ -165,6 +168,9 @@ def create_sessions_blueprint(
                 or sess.get('added_products') or []
             ),
             'comments': copy.deepcopy(sess.get('comments', {})),
+            # Material groups travel with the instance (independent copies).
+            'material_groups': copy.deepcopy(sess.get('material_groups', {})),
+            'active_material_group': sess.get('active_material_group'),
             'undo_stack': [],
             'redo_stack': [],
             'restore_status': 'cold',

@@ -48,6 +48,10 @@ def prune_material_state(sess: dict, material_number: str) -> None:
     for per_lt in (sess.get('capacity_overrides') or {}).values():
         if isinstance(per_lt, dict):
             per_lt.pop(mn, None)
+    # Material groups referencing the removed product would silently filter
+    # on a ghost; drop the member (the group itself stays).
+    from ui.routes.material_groups import prune_material_from_groups
+    prune_material_from_groups(sess, mn)
     sess['undo_stack'] = []
     sess['redo_stack'] = []
 
