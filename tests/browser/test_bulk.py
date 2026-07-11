@@ -10,6 +10,13 @@ from playwright.sync_api import expect
 
 
 def _drain(base_url):
+    # Reset to the clean baseline first (the browser tests share one
+    # session-scoped server, so prior tests may have left edits), then drain
+    # any remaining volume undo history.
+    try:
+        requests.post(base_url + "/api/reset_edits", timeout=60)
+    except requests.RequestException:
+        pass
     for _ in range(50):
         r = requests.post(base_url + "/api/undo", timeout=10)
         if not r.ok or not r.json().get("success"):
@@ -29,25 +36,25 @@ def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
     _open_planning(page)
     expect(page.locator('#planBody td.editable-cell[data-lt="01. Demand forecast"][data-period]').first).to_be_visible(timeout=60000)
 
-    # Pick 3 demand-forecast cells in one column, store a selection covering
-    # them, and read their pre-edit raw values.
+    # Select 3 adjacent period cells within ONE demand-forecast row, so the
+    # rectangular selection contains exactly those 3 L01 cells (no intervening
+    # line-type rows, no lot-size rounding).
     info = page.evaluate(
         """() => {
-            const cells = Array.from(document.querySelectorAll(
-                '#planBody td.editable-cell[data-lt="01. Demand forecast"][data-period]'));
-            // group by column, take a column with >=3 cells
-            const byCol = {};
-            for (const c of cells) { (byCol[c.cellIndex] = byCol[c.cellIndex] || []).push(c); }
-            let col = null;
-            for (const k of Object.keys(byCol)) { if (byCol[k].length >= 3) { col = k; break; } }
-            if (col === null) return null;
-            const chosen = byCol[col].slice(0, 3);
             const rows = Array.from(document.querySelectorAll('#planBody tr'));
-            const rowIdx = chosen.map(c => rows.indexOf(c.closest('tr')));
+            let rowIdx = -1, cells = null;
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i].dataset.linetype === '01. Demand forecast') {
+                    const cs = Array.from(rows[i].querySelectorAll('td.editable-cell[data-period]'));
+                    if (cs.length >= 3) { rowIdx = i; cells = cs.slice(0, 3); break; }
+                }
+            }
+            if (rowIdx < 0) return null;
+            const colIdxs = cells.map(c => c.cellIndex);
             const sel = {
                 sheet: 'planning',
-                rowMin: Math.min(...rowIdx), rowMax: Math.max(...rowIdx),
-                colMin: Number(col), colMax: Number(col),
+                rowMin: rowIdx, rowMax: rowIdx,
+                colMin: Math.min(...colIdxs), colMax: Math.max(...colIdxs),
             };
             _storedSelections = [sel];
             _renderStoredSelections();
@@ -59,10 +66,25 @@ def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
             };
         }"""
     )
-    assert info is not None, "no column with 3 demand cells"
-    assert info["count"] >= 3
+    assert info is not None, "no demand row with 3 editable period cells"
+    assert info["count"] == 3, info["count"]
 
     expect(page.locator("#bulkEditBar")).to_be_visible()
+
+    # Read authoritative values from the server (client state refresh is
+    # coupled to chart rendering, which is unavailable in this test env).
+    read_js = """async (keys) => {
+        const data = await (await fetch('/api/results')).json();
+        const out = {};
+        for (const lt of Object.keys(data.results)) {
+            for (const row of data.results[lt]) {
+                for (const p of Object.keys(row.values || {})) {
+                    out[`${lt}||${row.material_number}||${p}`] = row.values[p];
+                }
+            }
+        }
+        return keys.map(k => out[k]);
+    }"""
 
     page.fill("#bulkVal", "250")
     page.select_option("#bulkOp", "delta")
@@ -70,45 +92,16 @@ def test_bulk_edit_applies_delta_to_selection_and_group_undo(browser_page):
         page.click("#bulkEditBar button")
     page.wait_for_load_state("networkidle")
 
-    # Verify each selected cell increased by 250 in the engine results.
-    after = page.evaluate(
-        """(keys) => {
-            const out = {};
-            for (const lt of Object.keys(state.results)) {
-                for (const row of state.results[lt]) {
-                    for (const p of Object.keys(row.values || {})) {
-                        const k = `${lt}||${row.material_number}||${p}`;
-                        out[k] = row.values[p];
-                    }
-                }
-            }
-            return keys.map(k => out[k]);
-        }""",
-        info["keys"],
-    )
+    after = page.evaluate(read_js, info["keys"])
     for before, now in zip(info["raws"], after):
-        assert abs((now) - (before + 250.0)) < 1e-3
+        assert abs(now - (before + 250.0)) < 1e-3, (before, now)
 
-    # Grouped undo reverts all three in one step.
+    # Grouped undo reverts all three in one step (one #undoBtn click).
     with page.expect_response(lambda r: "/api/undo" in r.url and r.ok):
         page.click("#undoBtn")
     page.wait_for_load_state("networkidle")
-    reverted = page.evaluate(
-        """(keys) => {
-            const out = {};
-            for (const lt of Object.keys(state.results)) {
-                for (const row of state.results[lt]) {
-                    for (const p of Object.keys(row.values || {})) {
-                        const k = `${lt}||${row.material_number}||${p}`;
-                        out[k] = row.values[p];
-                    }
-                }
-            }
-            return keys.map(k => out[k]);
-        }""",
-        info["keys"],
-    )
+    reverted = page.evaluate(read_js, info["keys"])
     for before, now in zip(info["raws"], reverted):
-        assert abs(now - before) < 1e-3
+        assert abs(now - before) < 1e-3, (before, now)
 
     _drain(page.server["base_url"])
