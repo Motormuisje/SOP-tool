@@ -1020,6 +1020,18 @@
                         </label>
                     </div>
                 </div>
+                <!-- Bulk edit bar (Fase 1.2): appears when a cell range is selected -->
+                <div id="bulkEditBar" style="display:none" class="flex items-center gap-2 flex-wrap mb-2 p-2 rounded-lg bg-slate-800 border border-slate-700 text-sm">
+                    <span class="text-slate-300">&#9635; <span id="bulkSelCount">0</span> cellen geselecteerd</span>
+                    <select id="bulkOp" class="bg-slate-700 rounded px-2 py-1 text-sm" title="Bewerking op selectie">
+                        <option value="delta">Optellen (+/-)</option>
+                        <option value="set">Instellen op</option>
+                        <option value="pct">Procent (%)</option>
+                    </select>
+                    <input id="bulkVal" type="text" inputmode="decimal" placeholder="bijv. 250" class="bg-slate-700 rounded px-2 py-1 text-sm w-28">
+                    <button type="button" onclick="applyBulkEdit()" class="px-3 py-1 rounded text-sm bg-emerald-700 hover:bg-emerald-600 text-white">Toepassen op selectie</button>
+                    <span id="bulkHint" class="text-xs text-slate-500 italic">Sleep over cellen om te selecteren, pas dan een uniforme wijziging toe.</span>
+                </div>
                 <div id="planTableScroll" class="overflow-auto" style="max-height:62vh"><table class="data-table w-full"><thead id="planHead" style="position:sticky;top:0;z-index:10"></thead><tbody id="planBody"><tr><td colspan="20" class="text-center p-4 text-slate-500">Run calculations</td></tr></tbody></table></div>
                 <p class="mt-2 text-sm text-slate-400">Rows: <span id="rowCount">0</span></p>
             </div>
@@ -1640,6 +1652,97 @@ function _renderStoredSelections(tempSelection = null) {
     if (tempSelection) {
         const tempClass = stored.length >= 1 ? 'cell-range-selected-2' : 'cell-range-selected-1';
         _paintSelectionRef(tempSelection, tempClass);
+    }
+    if (typeof _updateBulkBar === 'function') _updateBulkBar();
+}
+
+// ===== Bulk edit (Fase 1.2) =====
+// Collect editable planning value cells inside the stored selections. Only the
+// planning sheet (not Values Planning) is bulk-editable; percent/derived cells
+// are excluded because a uniform +N on a fraction is meaningless.
+function _getSelectedEditableCells() {
+    const tbody = document.getElementById('planBody');
+    if (!tbody) return [];
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const seen = new Set();
+    const out = [];
+    for (const sel of _storedSelections) {
+        if (sel.sheet !== 'planning') continue;
+        for (let r = sel.rowMin; r <= sel.rowMax; r++) {
+            const row = rows[r];
+            if (!row) continue;
+            for (let c = sel.colMin; c <= sel.colMax; c++) {
+                const cell = row.cells[c];
+                if (!cell || !cell.classList.contains('editable-cell')) continue;
+                const period = cell.dataset.period;
+                const lt = cell.dataset.lt;
+                if (!period || !lt) continue;
+                const key = (cell.dataset.key) || `${lt}||${cell.dataset.matnum}||${cell.dataset.aux || ''}||${period}`;
+                if (seen.has(key)) continue;
+                const raw = parseLocaleNumber(cell.dataset.raw || '0');
+                out.push({
+                    cell,
+                    line_type: lt,
+                    material_number: cell.dataset.matnum || cell.dataset.mat,
+                    aux_column: cell.dataset.aux || '',
+                    period,
+                    raw: isNaN(raw) ? 0 : raw,
+                });
+                seen.add(key);
+            }
+        }
+    }
+    return out;
+}
+
+function _updateBulkBar() {
+    const bar = document.getElementById('bulkEditBar');
+    if (!bar) return;
+    // Only meaningful on the planning tab.
+    const cells = (_activeTabName === 'planning') ? _getSelectedEditableCells() : [];
+    const countEl = document.getElementById('bulkSelCount');
+    if (countEl) countEl.textContent = cells.length;
+    bar.style.display = cells.length > 0 ? 'flex' : 'none';
+}
+
+async function applyBulkEdit() {
+    const cells = _getSelectedEditableCells();
+    if (!cells.length) { notify('Geen bewerkbare cellen geselecteerd.', 'warning'); return; }
+    const op = document.getElementById('bulkOp').value;
+    const val = parseLocaleNumber(document.getElementById('bulkVal').value);
+    if (isNaN(val)) { notify('Voer een geldig getal in.', 'warning'); return; }
+
+    const payloadCells = cells.map(c => {
+        let nv;
+        if (op === 'set') nv = val;
+        else if (op === 'pct') nv = c.raw * (1 + val / 100);
+        else nv = c.raw + val; // delta
+        return {
+            line_type: c.line_type,
+            material_number: c.material_number,
+            aux_column: c.aux_column,
+            period: c.period,
+            new_value: nv,
+        };
+    });
+
+    setBusy(true, `Bulk-wijziging toepassen op ${payloadCells.length} cellen...`);
+    try {
+        const res = await fetch('/api/update_volume_bulk', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cells: payloadCells }),
+        });
+        const data = await res.json();
+        if (data.error) { notify(data.error, 'error'); return; }
+        await _applyVolumeChangeResult(data);
+        _syncPendingEditsToServer();
+        _markAutoSaved();
+        const failed = (data.failed && data.failed.length) ? `, ${data.failed.length} overgeslagen` : '';
+        notify(`${data.applied} cellen aangepast${failed}. Undo maakt de hele actie in één keer ongedaan.`, 'success');
+    } catch (err) {
+        notify('Bulk-fout: ' + err, 'error');
+    } finally {
+        setBusy(false);
     }
 }
 

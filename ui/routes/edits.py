@@ -6,12 +6,37 @@ apply_volume_change. This keeps this module as route orchestration only.
 
 import io
 import json
+import uuid
 from datetime import datetime
 from typing import Callable
 
 from flask import Blueprint, jsonify, request, send_file
 
 from modules.models import LineType
+
+
+def _engine_state_response(current_engine, extra: dict | None = None) -> dict:
+    """Full results/value_results/consolidation payload built from the engine.
+    Shared by bulk edit and group undo/redo so a batch returns one final
+    state rather than one response per cell."""
+    payload = {
+        'success': True,
+        'results': {
+            lt: [r.to_dict() for r in rows]
+            for lt, rows in current_engine.results.items()
+        },
+        'value_results': {
+            lt: [r.to_dict() for r in rows]
+            for lt, rows in current_engine.value_results.items()
+        },
+        'consolidation': [
+            r.to_dict()
+            for r in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
+        ],
+    }
+    if extra:
+        payload.update(extra)
+    return payload
 
 
 def create_edits_blueprint(
@@ -169,6 +194,36 @@ def create_edits_blueprint(
         }
         return jsonify(resp)
 
+    def _pop_group(from_stack: list) -> list:
+        """Pop the last entry and, if it belongs to a bulk group, every further
+        contiguous entry sharing its group_id (bulk pushes them together)."""
+        entry = from_stack.pop()
+        popped = [entry]
+        gid = entry.get('group_id')
+        if gid:
+            while from_stack and from_stack[-1].get('group_id') == gid:
+                popped.append(from_stack.pop())
+        return popped
+
+    def _apply_entries(sess, current_engine, entries, value_key):
+        """Re-apply a batch of undo/redo entries and return one combined
+        response. Single edits keep returning apply_volume_change's own
+        response (preserving edit_meta for the caller)."""
+        if len(entries) == 1:
+            e = entries[0]
+            return apply_volume_change(
+                sess, current_engine,
+                e['line_type'], e['material_number'], e['period'],
+                e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
+            )
+        for e in entries:
+            apply_volume_change(
+                sess, current_engine,
+                e['line_type'], e['material_number'], e['period'],
+                e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
+            )
+        return jsonify(_engine_state_response(current_engine, {'group_size': len(entries)}))
+
     @bp.route('/api/undo', methods=['POST'])
     def undo_edit():
         sess, current_engine = get_active()
@@ -179,21 +234,13 @@ def create_edits_blueprint(
         if not undo_stack:
             return jsonify({'error': 'Nothing to undo'}), 400
 
-        entry = undo_stack.pop()
-        redo_stack.append(entry)
-        if len(redo_stack) > 50:
-            redo_stack.pop(0)
-
-        return apply_volume_change(
-            sess,
-            current_engine,
-            entry['line_type'],
-            entry['material_number'],
-            entry['period'],
-            entry['old_value'],
-            aux_column=entry.get('aux_column', ''),
-            push_undo=False,
-        )
+        entries = _pop_group(undo_stack)
+        redo_stack.extend(entries)
+        if len(redo_stack) > 200:
+            del redo_stack[:len(redo_stack) - 200]
+        # Reverting applies old_values in stack (reverse) order so cells that
+        # share a material unwind to the true pre-bulk state.
+        return _apply_entries(sess, current_engine, entries, 'old_value')
 
     @bp.route('/api/redo', methods=['POST'])
     def redo_edit():
@@ -205,21 +252,75 @@ def create_edits_blueprint(
         if not redo_stack:
             return jsonify({'error': 'Nothing to redo'}), 400
 
-        entry = redo_stack.pop()
-        undo_stack.append(entry)
-        if len(undo_stack) > 50:
-            undo_stack.pop(0)
+        entries = _pop_group(redo_stack)
+        undo_stack.extend(entries)
+        if len(undo_stack) > 200:
+            del undo_stack[:len(undo_stack) - 200]
+        # Reapply in forward (application) order.
+        return _apply_entries(sess, current_engine, list(reversed(entries)), 'new_value')
 
-        return apply_volume_change(
-            sess,
-            current_engine,
-            entry['line_type'],
-            entry['material_number'],
-            entry['period'],
-            entry['new_value'],
-            aux_column=entry.get('aux_column', ''),
-            push_undo=False,
-        )
+    @bp.route('/api/update_volume_bulk', methods=['POST'])
+    def update_volume_bulk():
+        """Apply a batch of cell edits as one undoable group (Fase 1.2).
+
+        Each cell goes through the same apply_volume_change cascade as a single
+        edit, so a bulk result is identical to applying the cells one by one.
+        The whole batch is one undo step (shared group_id)."""
+        sess, current_engine = get_active()
+        if current_engine is None:
+            return jsonify({'error': 'No calculations run'}), 400
+
+        data = request.get_json() or {}
+        cells = data.get('cells', [])
+        if not isinstance(cells, list) or not cells:
+            return jsonify({'error': 'No cells to update'}), 400
+
+        group_id = uuid.uuid4().hex
+        undo_stack = sess.setdefault('undo_stack', [])
+        sess.setdefault('redo_stack', []).clear()
+        applied = 0
+        failed = []
+        for cell in cells:
+            try:
+                line_type = cell['line_type']
+                material_number = str(cell['material_number'])
+                period = cell['period']
+                aux_column = str(cell.get('aux_column', '') or '')
+                new_value = float(cell['new_value'])
+            except (KeyError, TypeError, ValueError):
+                failed.append({'cell': cell, 'error': 'invalid cell payload'})
+                continue
+            resp = apply_volume_change(
+                sess, current_engine, line_type, material_number, period,
+                new_value, aux_column=aux_column, push_undo=False,
+            )
+            payload = resp.get_json(silent=True) if hasattr(resp, 'get_json') else None
+            if getattr(resp, 'status_code', 200) >= 400 or not (isinstance(payload, dict) and payload.get('success')):
+                failed.append({'cell': cell, 'error': (payload or {}).get('error', 'apply failed')})
+                continue
+            em = payload.get('edit_meta', {})
+            undo_stack.append({
+                'line_type': line_type,
+                'material_number': material_number,
+                'aux_column': aux_column,
+                'period': period,
+                'old_value': em.get('old_value', 0.0),
+                'new_value': em.get('new_value', new_value),
+                'group_id': group_id,
+            })
+            applied += 1
+        if len(undo_stack) > 200:
+            del undo_stack[:len(undo_stack) - 200]
+
+        if applied == 0:
+            return jsonify({'error': 'No cells could be updated', 'failed': failed}), 400
+
+        save_sessions_to_disk()
+        return jsonify(_engine_state_response(current_engine, {
+            'applied': applied,
+            'failed': failed,
+            'group_id': group_id,
+        }))
 
     @bp.route('/api/edits/export')
     def export_edits():
