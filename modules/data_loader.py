@@ -57,6 +57,9 @@ class DataLoader:
         self.purchase_sheet_materials: Set[str] = set()
         self.purchased_and_produced: Dict[str, float] = {}
         self.bom_levels: Dict[str, int] = {}
+        # BOM cycles found in the workbook (BUGS.md M6): detected and warned
+        # about, never auto-fixed — cascade numbers stay untouched.
+        self.bom_cycle_warnings: List[List[str]] = []
         
         # Financial data (NEW)
         self.sales_prices: Dict[str, SalesPriceItem] = {}
@@ -111,6 +114,7 @@ class DataLoader:
             self._load_purchase_actuals()
 
         self._calculate_bom_levels()
+        self._warn_on_bom_cycles()
 
         if self.excel_file is not None:
             self._load_avg_sales_price()
@@ -805,6 +809,25 @@ class DataLoader:
             if m not in levels:
                 levels[m] = 0
         self.bom_levels = levels
+
+    def _warn_on_bom_cycles(self):
+        """Detect BOM cycles in the workbook (BUGS.md M6) and warn loudly.
+
+        Detection only: existing level assignment and cascade numbers are
+        deliberately left untouched (docs/ontwikkelhandleiding.md rule 4 — no silent numeric
+        changes). The UI/overlay layer uses ``bom_cycle_warnings`` to inform
+        users and to distinguish pre-existing cycles from overlay-introduced
+        ones (which are hard errors in modules/product_overlay.py).
+        """
+        from modules.product_overlay import find_bom_cycle
+        parent_to_children = defaultdict(set)
+        for b in self.bom:
+            parent_to_children[b.parent_material].add(b.component_material)
+        cycle = find_bom_cycle(parent_to_children)
+        if cycle:
+            self.bom_cycle_warnings.append(cycle)
+            print(f"  >> WAARSCHUWING: BOM-cyclus in werkboek: {' -> '.join(cycle)} "
+                  f"— afhankelijke vraag kan onvolledig doorrekenen.")
 
     def get_materials_at_level(self, level):
         # DETERMINISM FIX: sort to guarantee stable iteration across runs
