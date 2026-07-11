@@ -274,6 +274,42 @@ def create_machines_blueprint(
             'redo_depth': len(sess.get('machine_redo') or []),
         })
 
+    @bp.route('/api/machines/<mc_code>/products', methods=['GET'])
+    def machine_products(mc_code):
+        """Products (materials) routed over this machine with their production
+        plan volumes per period — volumes only, deliberately not all line
+        types, to keep the view compact (Fase 2.2 follow-up)."""
+        _, current_engine = get_active()
+        if current_engine is None:
+            return jsonify({'error': 'No calculations run'}), 400
+        data = current_engine.data
+        if mc_code not in data.machines:
+            return jsonify({'error': f'unknown machine {mc_code}'}), 404
+        periods = data.periods
+        plans = getattr(current_engine, 'all_production_plans', {}) or {}
+
+        products = []
+        for mat_num, plan in plans.items():
+            try:
+                routings = data.get_all_routings(mat_num)
+            except Exception:
+                continue
+            if not any(getattr(r, 'work_center', None) == mc_code for r in routings):
+                continue
+            values = {period: round(plan.get(period, 0.0), 2) for period in periods}
+            total = round(sum(values.values()), 2)
+            if total == 0:
+                continue  # no planned volume on this machine -> skip for compactness
+            material = data.materials.get(mat_num)
+            products.append({
+                'material_number': mat_num,
+                'material_name': getattr(material, 'name', '') if material else '',
+                'values': values,
+                'total': total,
+            })
+        products.sort(key=lambda item: item['total'], reverse=True)
+        return jsonify({'machine': mc_code, 'periods': periods, 'products': products})
+
     @bp.route('/api/machines/update', methods=['POST'])
     def update_machine_param():
         sess, current_engine = get_active()

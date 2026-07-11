@@ -36,16 +36,27 @@ def test_add_comment_marks_cell_and_persists(browser_page):
     with page.expect_response(lambda r: r.url.endswith("/api/comments") and r.request.method == "POST" and r.ok):
         page.click("#commentPopover button:has-text('Opslaan')")
 
-    # Marker appears and the comment is in state + server.
-    has_marker = page.evaluate(
+    # Marker appears and the comment is in state + server. Assert the ::after
+    # dog-ear actually RENDERS (visible triangle), not just the class.
+    marker = page.evaluate(
         """(a) => {
             const tr = document.querySelector(`#planBody tr[data-material="${a.mat}"][data-linetype="01. Demand forecast"]`);
             const cell = tr && tr.querySelector(`td[data-period="${a.period}"]`);
-            return cell ? cell.classList.contains('has-comment') : false;
+            if (!cell) return null;
+            const st = getComputedStyle(cell, '::after');
+            return {
+                hasClass: cell.classList.contains('has-comment'),
+                borderRightWidth: st.borderRightWidth,
+                borderRightColor: st.borderRightColor,
+                position: st.position,
+            };
         }""",
         anchor,
     )
-    assert has_marker
+    assert marker and marker["hasClass"], marker
+    assert marker["position"] == "absolute", marker
+    assert marker["borderRightWidth"] not in ("0px", ""), marker
+    assert marker["borderRightColor"] not in ("rgba(0, 0, 0, 0)", "transparent"), marker
 
     server_comments = page.evaluate("async () => (await (await fetch('/api/comments')).json()).comments")
     key = f"01. Demand forecast||{anchor['mat']}||{anchor['period']}"

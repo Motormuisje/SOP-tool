@@ -129,6 +129,15 @@
         body.edit-mode #planBody td.editable-cell *,
         body.edit-mode #vpBody td.editable-cell,
         body.edit-mode #vpBody td.editable-cell * { cursor: text !important; }
+        /* While drag-selecting a cell range, suppress native text selection so
+           a horizontal drag across text-containing cells selects CELLS, not
+           text (which otherwise fights the range-select and makes row
+           selection feel broken). */
+        body.range-selecting #planBody td, body.range-selecting #planBody td *,
+        body.range-selecting #vpBody td, body.range-selecting #vpBody td * {
+            user-select: none !important;
+            -webkit-user-select: none !important;
+        }
         /* ===== EDITABLE CELLS ===== */
         .editable-cell { position: relative; }
         .editable-cell::after {
@@ -293,8 +302,20 @@
         .edit-mode-btn { transition:background 0.15s, color 0.15s; }
         .edit-mode-btn.active { background:rgba(217,119,6,0.35) !important; color:#fcd34d !important; border:1px solid #d97706; }
         /* ===== COMMENTS (Fase 2.1) ===== */
+        /* Excel-style dog-ear: a filled triangle hugging the top-right corner,
+           drawn above the cell content and never clipped. */
         td.has-comment { position:relative; }
-        td.has-comment::after { content:''; position:absolute; top:1px; right:1px; border-width:0 5px 5px 0; border-style:solid; border-color:transparent #f59e0b transparent transparent; }
+        td.has-comment::after {
+            content:'';
+            position:absolute; top:0; right:0;
+            width:0; height:0;
+            border-style:solid;
+            border-width:0 9px 9px 0;
+            border-color:transparent #fbbf24 transparent transparent;
+            z-index:3;
+            pointer-events:none;
+            filter:drop-shadow(0 0 1px rgba(0,0,0,0.6));
+        }
         body.comment-mode #planBody td[data-period] { cursor: help; }
         body.comment-mode #planBody td[data-period]:hover { outline:1px dashed #f59e0b; }
         /* ===== DEPENDENCY HIGHLIGHTING ===== */
@@ -1931,6 +1952,9 @@ function _setupCellRangeSelection(tbody) {
             focusCell: cell,
             moved: false,
         };
+        // Suppress native text selection for the duration of the drag so a
+        // horizontal (across-a-row) drag selects cells instead of text.
+        document.body.classList.add('range-selecting');
         _applyRangeSelection(tbody, cell, cell);
         e.preventDefault();
     });
@@ -1949,9 +1973,13 @@ function _setupCellRangeSelection(tbody) {
 }
 
 document.addEventListener('mouseup', function() {
+    document.body.classList.remove('range-selecting');
     if (!_rangeSelectionState) return;
     const finalized = _makeSelectionRef(_rangeSelectionState.tbody, _rangeSelectionState.anchorCell, _rangeSelectionState.focusCell);
     if (finalized) _storeSelection(finalized);
+    // Clear any stray native text selection the drag may have started.
+    const nativeSel = window.getSelection && window.getSelection();
+    if (nativeSel && _rangeSelectionState.moved) { try { nativeSel.removeAllRanges(); } catch (e) {} }
     _suppressTableClick = !!_rangeSelectionState.moved;
     _rangeSelectionState = null;
     if (_suppressTableClick) {
@@ -3716,6 +3744,16 @@ async function applyDirectThroughput(mcCode) {
     }
     newOee = Math.max(0.01, newOee);
     setBusy(true, 'Doorzet toepassen (OEE aanpassen)...');
+    // Delta bookkeeping: same mechanism as saveMachineEdit, so the change
+    // shows up in the machine-delta summary panel with its downstream impact.
+    const beforeImpact = _snapshotMachineImpactState();
+    const directChange = {
+        machine: mcCode,
+        field: 'oee',
+        field_label: 'Doorzet (via OEE)',
+        old_display: `${curEff.toFixed(2)} (OEE ${(m.oee * 100).toFixed(1)}%)`,
+        new_display: `${target.toFixed(2)} (OEE ${(newOee * 100).toFixed(1)}%)`,
+    };
     try {
         const res = await fetch('/api/machines/update', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3725,12 +3763,13 @@ async function applyDirectThroughput(mcCode) {
         if (!res.ok || out.error) { notify(out.error || 'Fout bij toepassen doorzet', 'error'); return; }
         _machinesUndoDepth = out.undo_depth || 0;
         _machinesRedoDepth = out.redo_depth || 0;
+        _buildMachineDeltaSummary(beforeImpact, out, [directChange]);
         try { await _applyServerPayload(out, { deltaSource: 'plan', skipDeltaRecording: true, skipDashboard: true }); }
         catch (e) { console.warn('applyServerPayload after throughput edit:', e); }
         await loadMachinesData();   // always refresh machine numbers
         if (typeof renderOeeTable === 'function') renderOeeTable();
         openMachineDrilldown(mcCode); // reopen with refreshed numbers
-        notify(`Doeldoorzet toegepast: OEE → ${(newOee * 100).toFixed(1)}%. Undo via de machines-tab.`, 'success');
+        notify(`Doorzet ${curEff.toFixed(2)} → ${target.toFixed(2)} (OEE ${(m.oee * 100).toFixed(1)}% → ${(newOee * 100).toFixed(1)}%). Undo via de machines-tab.`, 'success', 5000);
     } catch (e) {
         notify('Fout: ' + e, 'error');
     } finally {
@@ -7839,6 +7878,7 @@ function renderOeeTable() {
                 <td class="text-center text-slate-300">${m.throughput_theoretical.toFixed(2)}</td>
                 <td class="text-center text-slate-300">${m.throughput_effective.toFixed(2)}</td>
                 <td class="text-center whitespace-nowrap">
+                    <button onclick="event.stopPropagation();toggleMachineProducts('${escapeHtml(m.code)}', this)" title="Toon producten (volumes) op deze machine" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-emerald-600 text-slate-400 hover:text-white transition-colors">&#9707; Producten</button>
                     <button onclick="event.stopPropagation();openMachineDrilldown('${escapeHtml(m.code)}')" title="Bekijk detail per periode" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-indigo-600 text-slate-400 hover:text-white transition-colors">&#128269;</button>
                     ${editBtn(`focusMachineOee('${escapeHtml(m.code)}')`, 'Bewerk OEE van deze machine')}
                 </td>
@@ -7850,7 +7890,63 @@ function renderOeeTable() {
     _setupMachineEditDelegation();
 }
 
+// ===== Machine products sub-table (volumes only, for overzicht) =====
+async function toggleMachineProducts(mcCode, btn) {
+    const row = btn.closest('tr');
+    if (!row) return;
+    const existing = row.nextElementSibling;
+    if (existing && existing.dataset.productsFor === mcCode) {
+        existing.remove();
+        btn.classList.remove('active');
+        return;
+    }
+    // Close any other open products row first.
+    document.querySelectorAll('tr[data-products-for]').forEach(tr => tr.remove());
+
+    const detail = document.createElement('tr');
+    detail.dataset.productsFor = mcCode;
+    const colspan = row.cells.length;
+    detail.innerHTML = `<td colspan="${colspan}" class="p-2" style="background:rgba(15,23,42,0.7)">
+        <span class="text-xs text-slate-400">Producten laden...</span></td>`;
+    row.after(detail);
+    btn.classList.add('active');
+
+    try {
+        const res = await fetch(`/api/machines/${encodeURIComponent(mcCode)}/products`);
+        const data = await res.json();
+        if (data.error) {
+            detail.cells[0].innerHTML = `<span class="text-xs text-red-400">${escapeHtml(data.error)}</span>`;
+            return;
+        }
+        const periods = data.periods || [];
+        const products = data.products || [];
+        if (!products.length) {
+            detail.cells[0].innerHTML = '<span class="text-xs text-slate-500">Geen gepland productievolume op deze machine.</span>';
+            return;
+        }
+        const fmtNum = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        const head = '<th class="text-left p-1">Materiaal</th><th class="text-left p-1">Naam</th>'
+            + '<th class="text-right p-1">Totaal</th>'
+            + periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('');
+        const rows = products.map(pr =>
+            `<tr>
+                <td class="p-1 font-mono text-slate-400">${escapeHtml(pr.material_number)}</td>
+                <td class="p-1 text-slate-300">${escapeHtml((pr.material_name || '').substring(0, 24))}</td>
+                <td class="p-1 text-right font-semibold text-slate-200">${fmtNum(pr.total)}</td>
+                ${periods.map(p => `<td class="p-1 text-right font-mono text-slate-400">${fmtNum(pr.values[p])}</td>`).join('')}
+            </tr>`).join('');
+        detail.cells[0].innerHTML = `<div class="overflow-auto" style="max-height:220px">
+            <div class="text-xs font-semibold text-slate-300 mb-1">Productievolumes op ${escapeHtml(mcCode)} <span class="font-normal text-slate-500">(${products.length} producten, productieplan)</span></div>
+            <table class="w-full text-xs"><thead class="text-slate-500">${head}</thead><tbody>${rows}</tbody></table></div>`;
+    } catch (e) {
+        detail.cells[0].innerHTML = `<span class="text-xs text-red-400">Fout: ${escapeHtml(String(e))}</span>`;
+    }
+}
+
 function toggleOeeGroup(grpKey) {
+    // Any open products sub-row belongs to a machine row; close them so they
+    // cannot linger detached when their group collapses.
+    document.querySelectorAll('tr[data-products-for]').forEach(tr => tr.remove());
     const children = document.querySelectorAll(`[data-oee-grp="${grpKey}"]`);
     const arrow = document.getElementById(grpKey + '-arrow');
     const isOpen = children.length > 0 && children[0].style.display !== 'none';
