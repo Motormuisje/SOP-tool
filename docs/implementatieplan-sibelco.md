@@ -1,7 +1,25 @@
 # Implementatieplan S&OP-optimalisaties (wensen Sibelco, juni 2026)
 
-Versie 1.0 — 2026-07-10
+Versie 1.1 — 2026-07-11
 Basis: e-mail Sacha Clermont 29-06-2026 + antwoordmail (sprintindeling), bugregister `BUGS.md`, docs/ontwikkelhandleiding.md-werkwijze.
+
+---
+
+## 0. Openstaande punten (bewust uitgesteld)
+
+- **Forecast-standaardvolumes — herziening uitgesteld (klant, 2026-07-11).**
+  De basisfunctie is gebouwd en werkt (Fase 1.3: globaal en/of per materiaal,
+  modi *lege perioden vullen* / *optellen*, opt-in, per instance). De klant wil
+  deze nog aanpassen maar heeft de richting nog niet bepaald. **Bewust
+  open gelaten** tot de klant kiest. Kandidaat-richtingen om t.z.t. voor te
+  leggen (niet besloten):
+  1. Niveau *per productgroep/cluster* i.p.v. alleen globaal + per materiaal.
+  2. Extra modus / drempel, bijv. *aanvullen tot minimaal N* of beperking tot
+     bepaalde perioden.
+  3. Zichtbaarheid: markeer in de planningtabel welke L01-cellen door een
+     default zijn gezet (indicator + tooltip), niet alleen in de export.
+  4. Beheer-UI: regels toevoegen/verwijderen i.p.v. het tekstveld `MAT:aantal`.
+  Geen bouw hierop tot de klant de gewenste variant(en) aangeeft.
 
 ---
 
