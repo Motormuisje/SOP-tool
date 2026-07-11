@@ -149,6 +149,63 @@ def test_validate_rejects_duplicate_added_number():
     assert 'al als dynamisch product' in str(exc.value)
 
 
+# ------------------------------------------------------------------ sourcing
+
+_PRODUCED_FIELDS = dict(
+    bom_as_parent=[{'component': 'M2', 'qty_per': 1.0}],
+    routing=[{'work_center': 'PBA01', 'base_quantity': 100, 'standard_time': 1}],
+)
+
+
+@pytest.mark.parametrize('broken, msg_part', [
+    (dict(sourcing='teleportatie'), 'Ongeldige verwervingswijze'),
+    (dict(sourcing='purchased',
+          routing=[{'work_center': 'PBA01', 'base_quantity': 1, 'standard_time': 1}]),
+     'geen routing'),
+    (dict(sourcing='purchased', bom_as_parent=[{'component': 'M2', 'qty_per': 1}]),
+     'verbruikt geen componenten'),
+    (dict(sourcing='purchased', pap_fraction=0.5), 'productiefractie'),
+    (dict(sourcing='produced',
+          routing=[{'work_center': 'PBA01', 'base_quantity': 1, 'standard_time': 1}]),
+     'stuklijstcomponent'),
+    (dict(sourcing='produced', bom_as_parent=[{'component': 'M2', 'qty_per': 1}]),
+     'routing-regel'),
+    (dict(sourcing='produced', moq=25, **_PRODUCED_FIELDS), 'MOQ en lead time'),
+    (dict(sourcing='produced', lead_time=2, **_PRODUCED_FIELDS), 'MOQ en lead time'),
+    (dict(sourcing='produced', pap_fraction=1.0, **_PRODUCED_FIELDS), 'productiefractie'),
+    (dict(sourcing='mix'), 'productiefractie verplicht'),
+])
+def test_sourcing_rejects_dead_field_combinations(broken, msg_part):
+    data = _fake_data()
+    with pytest.raises(ValueError) as exc:
+        validate_added_product(_product(**broken), data)
+    assert msg_part in str(exc.value)
+
+
+def test_sourcing_happy_paths():
+    data = _fake_data()
+    purchased = validate_added_product(
+        _product(sourcing='purchased', moq=30, lead_time=2), data)
+    assert purchased['sourcing'] == 'purchased' and purchased['moq'] == 30.0
+
+    produced = validate_added_product(
+        _product(sourcing='produced', **_PRODUCED_FIELDS), data)
+    assert produced['sourcing'] == 'produced'
+
+    mix = validate_added_product(
+        _product(sourcing='mix', pap_fraction=0.6, moq=10, **_PRODUCED_FIELDS), data)
+    assert mix['sourcing'] == 'mix' and mix['pap_fraction'] == 0.6
+
+
+def test_without_sourcing_legacy_combinations_stay_valid():
+    """Pre-selector payloads (no 'sourcing' key) keep the engine inference:
+    a produced-looking product with an MOQ must not start failing rebuilds."""
+    data = _fake_data()
+    out = validate_added_product(_product(moq=25, lead_time=2, **_PRODUCED_FIELDS), data)
+    assert out['sourcing'] is None
+    assert out['moq'] == 25.0 and out['lead_time'] == 2
+
+
 # -------------------------------------------------------------------- cycles
 
 def test_find_bom_cycle_none_on_dag():

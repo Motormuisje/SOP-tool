@@ -27,10 +27,18 @@ from modules.models import (
 
 PRODUCT_TYPES = ('bulk', 'packaged', 'raw', 'packaging', 'other')
 
+# How the product is sourced. The engine derives purchase-vs-production from
+# BOM/routing/PAP membership (inventory_engine.py:127-152); an explicit
+# sourcing declares the INTENT so mismatching fields (e.g. an MOQ on a
+# produced product, which the engine would silently ignore) are rejected with
+# a clear message instead of surprising the user. Optional: products stored
+# without it (pre-selector API payloads) keep the legacy engine inference.
+SOURCING_TYPES = ('purchased', 'produced', 'mix')
+
 # Every key an AddedProduct dict may carry. Unknown keys are dropped by
 # validate_added_product so persisted session stores stay clean.
 ADDED_PRODUCT_FIELDS = (
-    'material_number', 'name', 'product_type', 'product_family',
+    'material_number', 'name', 'product_type', 'product_family', 'sourcing',
     'flat_volume', 'volumes', 'starting_stock', 'safety_stock',
     'bom_as_parent', 'bom_as_child', 'routing',
     'lead_time', 'moq', 'pap_fraction',
@@ -149,6 +157,13 @@ def validate_added_product(product: dict, data=None, other_added: Iterable[dict]
     if ptype not in PRODUCT_TYPES:
         raise ValueError(
             f'Ongeldig producttype "{ptype}". Toegestaan: {", ".join(PRODUCT_TYPES)}.')
+    sourcing = product.get('sourcing')
+    if sourcing is not None:
+        sourcing = str(sourcing).strip().lower()
+        if sourcing not in SOURCING_TYPES:
+            raise ValueError(
+                f'Ongeldige verwervingswijze "{sourcing}". '
+                f'Toegestaan: {", ".join(SOURCING_TYPES)}.')
 
     other_numbers = {
         normalize_material_number(p.get('material_number'))
@@ -169,6 +184,7 @@ def validate_added_product(product: dict, data=None, other_added: Iterable[dict]
         'material_number': mn,
         'name': name,
         'product_type': ptype,
+        'sourcing': sourcing,
         'product_family': str(product.get('product_family') or '').strip(),
         'flat_volume': _as_float(product.get('flat_volume'), 'vast volume', allow_none=True),
         'starting_stock': _as_float(product.get('starting_stock'), 'startvoorraad'),
@@ -237,7 +253,59 @@ def validate_added_product(product: dict, data=None, other_added: Iterable[dict]
         })
     out['routing'] = routing_rows
 
+    _check_sourcing_consistency(out)
     return out
+
+
+def _check_sourcing_consistency(p: dict) -> None:
+    """Reject field combinations the engine would silently ignore.
+
+    The engine's branch logic (inventory_engine.py:127-152): PAP membership →
+    production AND purchase; BOM parent + routing → production only; anything
+    else → purchase only. Fields outside the declared sourcing would be dead
+    data — better a clear Dutch error than a value that does nothing.
+    Products without a declared sourcing (legacy/API) skip these checks.
+    """
+    sourcing = p.get('sourcing')
+    if sourcing is None:
+        return
+    if sourcing == 'purchased':
+        if p['routing']:
+            raise ValueError(
+                'Een aangekocht product heeft geen routing: er wordt niets '
+                'geproduceerd. Kies "Geproduceerd" of "Mix", of verwijder de routing.')
+        if p['bom_as_parent']:
+            raise ValueError(
+                'Een aangekocht product verbruikt geen componenten: de stuklijst '
+                'zou genegeerd worden. Kies "Geproduceerd" of "Mix", of verwijder '
+                'de componenten.')
+        if p['pap_fraction'] is not None:
+            raise ValueError(
+                'De productiefractie geldt alleen voor "Mix" '
+                '(deels inkoop, deels productie).')
+    elif sourcing == 'produced':
+        if not p['bom_as_parent']:
+            raise ValueError(
+                'Een geproduceerd product heeft minstens één stuklijstcomponent '
+                'nodig: zonder componenten behandelt het model het als inkoop.')
+        if not p['routing']:
+            raise ValueError(
+                'Een geproduceerd product heeft minstens één routing-regel nodig: '
+                'zonder routing behandelt het model het als inkoop.')
+        if p['moq'] > 0 or p['lead_time'] > 0:
+            raise ValueError(
+                'MOQ en lead time gelden alleen voor inkoop en zouden bij een '
+                'geproduceerd product genegeerd worden. Kies "Aangekocht" of '
+                '"Mix", of maak de inkoopvelden leeg.')
+        if p['pap_fraction'] is not None:
+            raise ValueError(
+                'De productiefractie geldt alleen voor "Mix" '
+                '(deels inkoop, deels productie).')
+    elif sourcing == 'mix':
+        if p['pap_fraction'] is None:
+            raise ValueError(
+                'Bij "Mix" is de productiefractie verplicht (0 t/m 1): het deel '
+                'van de behoefte dat via eigen productie loopt.')
 
 
 def _overlay_edges(added_products: List[dict]) -> List[tuple]:

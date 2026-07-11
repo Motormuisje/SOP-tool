@@ -7264,6 +7264,16 @@ async function openProductModal(materialNumber) {
         <datalist id="prodMatDatalist">${matOptions}</datalist>
         <datalist id="prodMachineDatalist">${machineOptions}</datalist>
 
+        <div class="mb-4">
+          <label class="text-xs text-slate-400 font-semibold block mb-1">Hoe wordt dit product verkregen? *</label>
+          <select id="prodSourcing" onchange="_prodApplySourcing()" class="${_PROD_INPUT_CLS} w-full">
+            <option value="purchased">Aangekocht &mdash; extern ingekocht (lead time, MOQ)</option>
+            <option value="produced">Geproduceerd &mdash; zelf gemaakt uit componenten (stuklijst + routing)</option>
+            <option value="mix">Mix &mdash; deels inkoop, deels eigen productie (productiefractie)</option>
+          </select>
+          <p id="prodSourcingHint" class="text-xs text-slate-500 mt-1"></p>
+        </div>
+
         <div class="grid grid-cols-2 gap-3 mb-4">
           <div><label class="text-xs text-slate-400 font-semibold block mb-1">Materiaalnummer *</label>
             <input id="prodNumber" type="text" value="${val(p.material_number)}" ${existingProduct ? 'readonly' : ''} placeholder="bijv. 900000001" class="${_PROD_INPUT_CLS} w-full ${existingProduct ? 'opacity-60' : ''}"></div>
@@ -7287,8 +7297,8 @@ async function openProductModal(materialNumber) {
           <div id="prodPeriodVolumes" class="grid grid-cols-3 gap-2 mt-2">${periodInputs}</div>
         </details>
 
-        <div class="mb-4"><div class="flex items-center justify-between">
-            <label class="text-xs text-slate-400 font-semibold">Stuklijst &mdash; dit product gebruikt componenten</label>
+        <div class="mb-4" id="prodSectionBomParent"><div class="flex items-center justify-between">
+            <label class="text-xs text-slate-400 font-semibold">Stuklijst &mdash; dit product gebruikt componenten <span class="text-slate-600 font-normal">(vereist bij productie)</span></label>
             <button onclick="addProductLinkRow('prodBomParentTbody','parent')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
           <table class="text-sm"><tbody id="prodBomParentTbody">${bomParentRows}</tbody></table>
         </div>
@@ -7297,24 +7307,24 @@ async function openProductModal(materialNumber) {
             <button onclick="addProductLinkRow('prodBomChildTbody','child')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
           <table class="text-sm"><tbody id="prodBomChildTbody">${bomChildRows}</tbody></table>
         </div>
-        <div class="mb-4"><div class="flex items-center justify-between">
-            <label class="text-xs text-slate-400 font-semibold">Routing &mdash; capaciteit op bestaande machines</label>
+        <div class="mb-4" id="prodSectionRouting"><div class="flex items-center justify-between">
+            <label class="text-xs text-slate-400 font-semibold">Routing &mdash; capaciteit op bestaande machines <span class="text-slate-600 font-normal">(vereist bij productie)</span></label>
             <button onclick="addProductRoutingRow()" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
           <table class="text-sm"><tbody id="prodRoutingTbody">${routingRows}</tbody></table>
         </div>
 
         <div class="grid grid-cols-3 gap-3 mb-2">
-          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Lead time inkoop (maanden)</label>
+          <div id="prodWrapLeadTime"><label class="text-xs text-slate-400 font-semibold block mb-1">Lead time inkoop (maanden)</label>
             <input id="prodLeadTime" type="text" value="${val(p.lead_time)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
-          <div><label class="text-xs text-slate-400 font-semibold block mb-1">MOQ</label>
+          <div id="prodWrapMoq"><label class="text-xs text-slate-400 font-semibold block mb-1">MOQ</label>
             <input id="prodMoq" type="text" value="${val(p.moq)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
-          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Productiefractie (0-1, optioneel)</label>
-            <input id="prodPapFraction" type="text" value="${val(p.pap_fraction)}" placeholder="leeg = automatisch" class="${_PROD_INPUT_CLS} w-full text-right"></div>
+          <div id="prodWrapPap"><label class="text-xs text-slate-400 font-semibold block mb-1">Productiefractie (0-1) *</label>
+            <input id="prodPapFraction" type="text" value="${val(p.pap_fraction)}" placeholder="bijv. 0,6 = 60% productie" class="${_PROD_INPUT_CLS} w-full text-right"></div>
         </div>
         <div class="grid grid-cols-3 gap-3 mb-5">
           <div><label class="text-xs text-slate-400 font-semibold block mb-1">Verkoopprijs / eenheid</label>
             <input id="prodSalesPrice" type="text" value="${val(p.sales_price)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
-          <div><label class="text-xs text-slate-400 font-semibold block mb-1">Inkoopkost / eenheid</label>
+          <div id="prodWrapRawCost"><label class="text-xs text-slate-400 font-semibold block mb-1">Inkoopkost / eenheid</label>
             <input id="prodRawCost" type="text" value="${val(p.raw_material_cost)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
           <div><label class="text-xs text-slate-400 font-semibold block mb-1">Voorraadwaarde / eenheid</label>
             <input id="prodInvValue" type="text" value="${val(p.default_inventory_value)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
@@ -7327,6 +7337,41 @@ async function openProductModal(materialNumber) {
       </div>`;
     document.body.appendChild(modal);
     modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    document.getElementById('prodSourcing').value = _prodInferSourcing(p);
+    _prodApplySourcing();
+}
+
+function _prodInferSourcing(p) {
+    if (p.sourcing) return p.sourcing;
+    // Products saved before the selector existed: infer from their fields
+    // the way the engine resolves them (PAP -> mix; BOM/routing -> produced).
+    if (p.pap_fraction !== null && p.pap_fraction !== undefined) return 'mix';
+    if ((p.routing || []).length || (p.bom_as_parent || []).length) return 'produced';
+    return 'purchased';
+}
+
+const _PROD_SOURCING_HINTS = {
+    purchased: 'Het product wordt extern ingekocht. De inkoopplanning volgt de vraag, afgerond op de MOQ en verschoven met de lead time.',
+    produced: 'Het product wordt zelf gemaakt: minstens één stuklijstcomponent en één routing-regel zijn vereist. Componenten krijgen automatisch afhankelijke vraag.',
+    mix: 'De productiefractie bepaalt welk deel via eigen productie loopt (bijv. 0,6 = 60% productie, 40% inkoop).',
+};
+
+function _prodApplySourcing() {
+    const sourcing = document.getElementById('prodSourcing').value;
+    const show = (id, visible) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !visible);
+    };
+    const produces = sourcing === 'produced' || sourcing === 'mix';
+    const purchases = sourcing === 'purchased' || sourcing === 'mix';
+    show('prodSectionBomParent', produces);
+    show('prodSectionRouting', produces);
+    show('prodWrapLeadTime', purchases);
+    show('prodWrapMoq', purchases);
+    show('prodWrapRawCost', purchases);
+    show('prodWrapPap', sourcing === 'mix');
+    const hint = document.getElementById('prodSourcingHint');
+    if (hint) hint.textContent = _PROD_SOURCING_HINTS[sourcing] || '';
 }
 
 function _prodNum(id) {
@@ -7337,26 +7382,39 @@ function _prodNum(id) {
 }
 
 function collectProductForm() {
+    const sourcing = document.getElementById('prodSourcing').value;
+    const produces = sourcing === 'produced' || sourcing === 'mix';
+    const purchases = sourcing === 'purchased' || sourcing === 'mix';
     const product = {
         material_number: document.getElementById('prodNumber').value.trim(),
         name: document.getElementById('prodName').value.trim(),
         product_type: document.getElementById('prodType').value,
         product_family: document.getElementById('prodFamily').value.trim(),
+        sourcing: sourcing,
     };
     if (!product.material_number) return { error: 'Materiaalnummer is verplicht.' };
     if (!product.name) return { error: 'Productnaam is verplicht.' };
 
+    // Only collect fields belonging to the chosen sourcing: hidden sections
+    // may still hold values from before a selector switch.
     const numFields = [
         ['flat_volume', 'prodFlatVolume'], ['starting_stock', 'prodStartingStock'],
-        ['safety_stock', 'prodSafetyStock'], ['lead_time', 'prodLeadTime'],
-        ['moq', 'prodMoq'], ['pap_fraction', 'prodPapFraction'],
-        ['sales_price', 'prodSalesPrice'], ['raw_material_cost', 'prodRawCost'],
+        ['safety_stock', 'prodSafetyStock'],
+        ['sales_price', 'prodSalesPrice'],
         ['default_inventory_value', 'prodInvValue'],
     ];
+    if (purchases) {
+        numFields.push(['lead_time', 'prodLeadTime'], ['moq', 'prodMoq'],
+                       ['raw_material_cost', 'prodRawCost']);
+    }
+    if (sourcing === 'mix') numFields.push(['pap_fraction', 'prodPapFraction']);
     for (const [key, id] of numFields) {
         const v = _prodNum(id);
         if (v !== null && isNaN(v)) return { error: 'Ongeldig getal in het formulier.' };
         if (v !== null) product[key] = v;
+    }
+    if (sourcing === 'mix' && product.pap_fraction === undefined) {
+        return { error: 'Bij "Mix" is de productiefractie verplicht (0 t/m 1).' };
     }
 
     const volumes = {};
@@ -7376,7 +7434,7 @@ function collectProductForm() {
         links[kind].push(kind === 'parent'
             ? { component: ref, qty_per: qty } : { parent: ref, qty_per: qty });
     });
-    if (links.parent.length) product.bom_as_parent = links.parent;
+    if (produces && links.parent.length) product.bom_as_parent = links.parent;
     if (links.child.length) product.bom_as_child = links.child;
 
     const routing = [];
@@ -7389,7 +7447,14 @@ function collectProductForm() {
             standard_time: parseLocaleNumber(tr.querySelector('.prod-rout-st').value),
         });
     });
-    if (routing.length) product.routing = routing;
+    if (produces && routing.length) product.routing = routing;
+
+    if (sourcing === 'produced' && !(product.bom_as_parent || []).length) {
+        return { error: 'Een geproduceerd product heeft minstens één stuklijstcomponent nodig.' };
+    }
+    if (sourcing === 'produced' && !(product.routing || []).length) {
+        return { error: 'Een geproduceerd product heeft minstens één routing-regel nodig.' };
+    }
 
     return { product };
 }

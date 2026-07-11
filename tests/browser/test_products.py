@@ -78,6 +78,94 @@ def test_add_and_delete_dynamic_product(browser_page):
             pass
 
 
+def test_sourcing_selector_toggles_sections(browser_page):
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_config(page)
+    page.evaluate("() => openProductModal()")
+    page.wait_for_selector("#productModal #prodSourcing", timeout=15000)
+
+    # Default: purchased -> purchase fields visible, production sections hidden.
+    assert page.locator("#prodSourcing").input_value() == "purchased"
+    assert page.locator("#prodWrapMoq").is_visible()
+    assert not page.locator("#prodSectionRouting").is_visible()
+    assert not page.locator("#prodSectionBomParent").is_visible()
+    assert not page.locator("#prodWrapPap").is_visible()
+
+    page.select_option("#prodSourcing", "produced")
+    assert page.locator("#prodSectionRouting").is_visible()
+    assert page.locator("#prodSectionBomParent").is_visible()
+    assert not page.locator("#prodWrapMoq").is_visible()
+    assert not page.locator("#prodWrapLeadTime").is_visible()
+
+    page.select_option("#prodSourcing", "mix")
+    assert page.locator("#prodSectionRouting").is_visible()
+    assert page.locator("#prodWrapMoq").is_visible()
+    assert page.locator("#prodWrapPap").is_visible()
+
+    page.evaluate("() => document.getElementById('productModal').remove()")
+    assert page.js_errors == []
+
+
+def test_add_produced_product_end_to_end(browser_page):
+    """Sourcing 'produced': component + routing via the dynamic row editors;
+    the result must carry a production plan and NO purchase rows."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    mn = "900000042"
+    page.reload(wait_until="networkidle")
+    _open_config(page)
+
+    listing = requests.get(base_url + "/api/products/added", timeout=60).json()
+    component = listing["materials"][0]["number"]
+    machine = listing["machines"][0]
+
+    try:
+        page.evaluate("() => openProductModal()")
+        page.wait_for_selector("#productModal #prodSourcing", timeout=15000)
+        page.fill("#prodNumber", mn)
+        page.fill("#prodName", "Browsertest geproduceerd")
+        page.fill("#prodFlatVolume", "90")
+        page.select_option("#prodSourcing", "produced")
+        page.click("#prodSectionBomParent button")
+        page.fill("#prodBomParentTbody .prod-link-ref", component)
+        page.fill("#prodBomParentTbody .prod-link-qty", "2")
+        page.click("#prodSectionRouting button")
+        page.fill("#prodRoutingTbody .prod-rout-wc", machine)
+        page.fill("#prodRoutingTbody .prod-rout-bq", "1000")
+        page.fill("#prodRoutingTbody .prod-rout-st", "8")
+        with page.expect_response(
+                lambda r: "/api/products/added" in r.url
+                and r.request.method == "POST" and r.ok,
+                timeout=180000):
+            page.click("#btnSaveProduct")
+
+        page.wait_for_function(
+            """(mn) => {
+                const prod = (state.results && state.results['06. Production plan']) || [];
+                return prod.some(r => String(r.material_number) === mn);
+            }""",
+            arg=mn,
+            timeout=60000,
+        )
+        branch = page.evaluate(
+            """(mn) => ({
+                production: ((state.results['06. Production plan'] || [])
+                    .filter(r => String(r.material_number) === mn)).length,
+                purchase: ((state.results['06. Purchase receipt'] || [])
+                    .filter(r => String(r.material_number) === mn)).length,
+            })""",
+            mn,
+        )
+        assert branch["production"] == 1 and branch["purchase"] == 0, branch
+        assert page.js_errors == []
+    finally:
+        try:
+            requests.delete(base_url + f"/api/products/added/{mn}", timeout=300)
+        except requests.RequestException:
+            pass
+
+
 def test_add_rejects_workbook_collision_with_dutch_error(browser_page):
     page = browser_page
     base_url = page.server["base_url"]

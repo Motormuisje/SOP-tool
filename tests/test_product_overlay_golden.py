@@ -180,6 +180,129 @@ def test_dependent_demand_child_direction(integrated_engine, integration_partner
     assert reqs, "existing parent's L08 does not list the added component"
 
 
+# --------------------------------------------------- sourcing combination matrix
+# All purchase/production/mix field combinations in ONE engine run, including
+# the deliberately "wrong" legacy combos (produced + MOQ, routing-only,
+# BOM-only) that the engine resolves silently — nothing may crash and every
+# product must land in the branch the engine rules dictate.
+
+M_PURCHASED = "900000101"   # sourcing=purchased + MOQ + lead time
+M_PRODUCED = "900000102"    # sourcing=produced (BOM + routing)
+M_LEGACY_MOQ = "900000103"  # legacy: produced-looking + MOQ (user scenario)
+M_ROUTING_ONLY = "900000104"  # legacy: routing but no BOM -> purchase branch
+M_BOM_ONLY = "900000105"    # legacy: BOM parent but no routing -> purchase branch
+M_MIX = "900000106"         # sourcing=mix (pap_fraction) + everything
+M_VOLUMES = "900000107"     # purchased, per-period volumes only + starting stock
+
+
+@pytest.fixture(scope="module")
+def matrix_engine(golden_fixture_path, integration_partners):
+    x = integration_partners["component"]
+    wc = integration_partners["machine"]
+    bom = [{"component": x, "qty_per": 1.5}]
+    routing = [{"work_center": wc, "base_quantity": 1000.0, "standard_time": 8.0}]
+    return _run(golden_fixture_path, [
+        {"material_number": M_PURCHASED, "name": "Matrix inkoop",
+         "product_type": "raw", "sourcing": "purchased",
+         "flat_volume": 100.0, "safety_stock": 10.0, "moq": 30.0, "lead_time": 2},
+        {"material_number": M_PRODUCED, "name": "Matrix productie",
+         "product_type": "bulk", "sourcing": "produced",
+         "flat_volume": 80.0, "bom_as_parent": bom, "routing": routing},
+        {"material_number": M_LEGACY_MOQ, "name": "Matrix legacy moq",
+         "product_type": "bulk",  # geen sourcing: legacy pad
+         "flat_volume": 60.0, "moq": 25.0, "bom_as_parent": bom, "routing": routing},
+        {"material_number": M_ROUTING_ONLY, "name": "Matrix routing zonder BOM",
+         "product_type": "bulk", "flat_volume": 40.0, "routing": routing},
+        {"material_number": M_BOM_ONLY, "name": "Matrix BOM zonder routing",
+         "product_type": "bulk", "flat_volume": 30.0, "bom_as_parent": bom},
+        {"material_number": M_MIX, "name": "Matrix mix",
+         "product_type": "bulk", "sourcing": "mix", "pap_fraction": 0.6,
+         "flat_volume": 50.0, "moq": 10.0, "bom_as_parent": bom, "routing": routing},
+        {"material_number": M_VOLUMES, "name": "Matrix per-periode",
+         "product_type": "other", "sourcing": "purchased",
+         "volumes": {}, "flat_volume": None, "starting_stock": 500.0,
+         "safety_stock": 5.0},
+    ])
+
+
+def _line_totals(engine, mat):
+    return {
+        lt: sum(r.values.values())
+        for lt, rows in engine.results.items()
+        for r in rows if r.material_number == mat
+    }
+
+
+def test_matrix_every_product_processed_no_crash(matrix_engine):
+    for mat in (M_PURCHASED, M_PRODUCED, M_LEGACY_MOQ, M_ROUTING_ONLY,
+                M_BOM_ONLY, M_MIX, M_VOLUMES):
+        totals = _line_totals(matrix_engine, mat)
+        assert LineType.TOTAL_DEMAND.value in totals, mat
+        assert LineType.INVENTORY.value in totals, mat
+        assert LineType.MIN_TARGET_STOCK.value in totals, mat
+
+
+def test_matrix_purchased_gets_purchase_rows_with_moq_ceiling(matrix_engine):
+    totals = _line_totals(matrix_engine, M_PURCHASED)
+    assert LineType.PURCHASE_RECEIPT.value in totals
+    assert LineType.PURCHASE_PLAN.value in totals
+    assert LineType.PRODUCTION_PLAN.value not in totals
+    receipts = _rows(matrix_engine, LineType.PURCHASE_RECEIPT, M_PURCHASED)[0]
+    nonzero = [v for v in receipts.values.values() if v > 1e-9]
+    assert nonzero, "purchased product ordered nothing"
+    for v in nonzero:  # MOQ 30 -> every order a multiple of 30
+        assert abs(v / 30.0 - round(v / 30.0)) < 1e-6, v
+
+
+def test_matrix_produced_gets_production_no_purchase(matrix_engine):
+    totals = _line_totals(matrix_engine, M_PRODUCED)
+    assert totals.get(LineType.PRODUCTION_PLAN.value, 0) > 0
+    assert LineType.PURCHASE_RECEIPT.value not in totals
+    assert LineType.PURCHASE_PLAN.value not in totals
+
+
+def test_matrix_legacy_produced_with_moq_is_harmless(matrix_engine):
+    """The user scenario: produced-looking product with an MOQ filled in.
+    Engine rules: BOM parent + routing -> production branch; the MOQ is
+    registered but never consulted. Nothing crashes, no purchase rows appear."""
+    assert matrix_engine.data.purchase_moq.get(M_LEGACY_MOQ) == 25.0
+    totals = _line_totals(matrix_engine, M_LEGACY_MOQ)
+    assert totals.get(LineType.PRODUCTION_PLAN.value, 0) > 0
+    assert LineType.PURCHASE_RECEIPT.value not in totals
+    assert LineType.PURCHASE_PLAN.value not in totals
+
+
+def test_matrix_routing_without_bom_falls_back_to_purchase(matrix_engine):
+    totals = _line_totals(matrix_engine, M_ROUTING_ONLY)
+    assert LineType.PRODUCTION_PLAN.value not in totals
+    assert LineType.PURCHASE_RECEIPT.value in totals
+
+
+def test_matrix_bom_without_routing_falls_back_to_purchase(matrix_engine, integration_partners):
+    totals = _line_totals(matrix_engine, M_BOM_ONLY)
+    assert LineType.PRODUCTION_PLAN.value not in totals
+    assert LineType.PURCHASE_RECEIPT.value in totals
+    # No production -> the component receives NO dependent demand from it.
+    x = integration_partners["component"]
+    dd = [r for r in _rows(matrix_engine, LineType.DEPENDENT_DEMAND, x)
+          if r.aux_column == M_BOM_ONLY]
+    assert not dd, "purchase-branch product must not create dependent demand"
+
+
+def test_matrix_mix_gets_both_branches(matrix_engine):
+    totals = _line_totals(matrix_engine, M_MIX)
+    assert LineType.PRODUCTION_PLAN.value in totals
+    assert LineType.PURCHASE_RECEIPT.value in totals
+
+
+def test_matrix_starting_stock_covers_demandless_product(matrix_engine):
+    inv = _rows(matrix_engine, LineType.INVENTORY, M_VOLUMES)
+    assert inv and inv[0].starting_stock == 500.0
+    # No volumes anywhere: L01 row absent, demand zero, inventory stays flat.
+    assert not _rows(matrix_engine, LineType.DEMAND_FORECAST, M_VOLUMES)
+    assert all(abs(v - 500.0) < 1e-6 for v in inv[0].values.values())
+
+
 # ------------------------------------------------------------------- TP3-04
 
 def test_restart_rebuild_and_replay_restore_product_and_edit(
