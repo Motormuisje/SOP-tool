@@ -1620,7 +1620,7 @@
     </div>
 <script src="{{ url_for('static', filename='sop_planning.js') }}?v=20260711b"></script>
 <script>
-let state = { periods: [], results: null, lineTypes: [], valueResults: null, valueLineTypes: [], consolidation: [], cellEdits: {}, valueAuxEdits: {}, valueRowDeltas: {}, demandTurnoverDeltas: {}, top10Overstocks: [], activeSessionId: null, dashboardDirty: false, moqRawNeeds: {}, machineDeltaSummary: null, machineDeltaSummaries: {}, comments: {} };
+let state = { periods: [], results: null, lineTypes: [], valueResults: null, valueLineTypes: [], consolidation: [], cellEdits: {}, valueAuxEdits: {}, valueRowDeltas: {}, demandTurnoverDeltas: {}, top10Overstocks: [], activeSessionId: null, dashboardDirty: false, moqRawNeeds: {}, machineDeltaSummary: null, machineDeltaSummaries: {}, comments: {}, materialGroups: [], activeMaterialGroup: null };
 // Resize all Chart.js charts when window is restored from minimized state
 let _resizeTimer = null;
 window.addEventListener('resize', () => {
@@ -5460,6 +5460,20 @@ let _vpEditedRowsOnly = false;
 let _planEditFilterMode = null;
 let _vpEditFilterMode = null;
 let _editedMaterialScope = null;
+// Materiaalgroepen: gid of the toolbar group filter (null = alle groepen).
+// Separate from _editedMaterialScope so edit-flows never clear it.
+let _materialGroupFilterId = null;
+function _setMaterialGroupFilter(gid, opts = {}) {
+    _materialGroupFilterId = gid || null;
+    const sel = document.getElementById('matGroupSelect');
+    if (sel) sel.value = _materialGroupFilterId || '';
+    if (!opts.skipFilter && typeof filterTable === 'function') filterTable();
+}
+function _materialGroupFilterSet() {
+    if (!_materialGroupFilterId) return null;
+    const group = (state.materialGroups || []).find(g => g.id === _materialGroupFilterId);
+    return group ? new Set((group.materials || []).map(String)) : null;
+}
 let _vpMaterialScope = null;
 let _isSwitchingSession = false;
 const _copyHoldDelayMs = 420;
@@ -7422,13 +7436,16 @@ function updateEditBadge() {
     if (count === 0) {
         _editedRowsOnly = false;
         _planEditFilterMode = null;
-        _editedMaterialScope = null;
+        // NOTE: _editedMaterialScope is deliberately NOT cleared here. It is
+        // also set by non-edit flows (chart-analysis "toon in planningstabel")
+        // and this function runs on every badge refresh — clearing it here
+        // silently dropped the user's material filter. Explicit clear paths
+        // (toggleEditedOnlyFilter, Reset All, jump-to-single-material) remain.
     }
     const vpEditedRowCount = _getVpEditedRowCount();
     if (vpEditedRowCount === 0) {
         _vpEditedRowsOnly = false;
         _vpEditFilterMode = null;
-        _vpMaterialScope = null;
     }
 
     const badge = document.getElementById('editBadge');
@@ -8785,6 +8802,11 @@ function _captureFilterSnapshot() {
         planEditMode:      _planEditFilterMode,
         vpEditedOnly:      _vpEditedRowsOnly,
         vpEditMode:        _vpEditFilterMode,
+        // Material scopes are part of the filter state: without them the
+        // "←" undo silently dropped/could not restore an active scope.
+        materialScope:     _editedMaterialScope ? [..._editedMaterialScope] : null,
+        vpMaterialScope:   _vpMaterialScope ? [..._vpMaterialScope] : null,
+        groupFilter:       _materialGroupFilterId || null,
     };
 }
 
@@ -8809,6 +8831,9 @@ function undoFilterState() {
     _planEditFilterMode  = prev.planEditMode;
     _vpEditedRowsOnly    = prev.vpEditedOnly;
     _vpEditFilterMode    = prev.vpEditMode;
+    _editedMaterialScope = prev.materialScope ? new Set(prev.materialScope) : null;
+    _vpMaterialScope     = prev.vpMaterialScope ? new Set(prev.vpMaterialScope) : null;
+    _setMaterialGroupFilter(prev.groupFilter || null, { skipHistory: true, skipFilter: true });
     _rebuildLtDropdown('ltDropdown',   'ltFilterLabel',   'plan');
     _rebuildLtDropdown('vpLtDropdown', 'vpLtFilterLabel', 'vp');
     updateLtLabel('ltDropdown',   'ltFilterLabel');
@@ -8831,6 +8856,7 @@ function _runPlanFilter() {
     _refreshPlanRowEditFlagsFromResults();
     const s = document.getElementById('matSearch').value.toLowerCase();
     const selectedLts = getSelectedLts('ltDropdown');
+    const groupSet = _materialGroupFilterSet();
     const rows = [...document.querySelectorAll('#planBody tr[data-material]')];
     const planEditRows = _getPlanningEditedRowKeys();
     const planEditLineMaterials = _getPlanningEditedLineMaterialKeys();
@@ -8849,7 +8875,8 @@ function _runPlanFilter() {
             || (_planEditFilterMode === 'value' && matchValueEdit)
             || (_planEditFilterMode === 'all' && (r.dataset.hasEdits === '1' || matchPlanEdit || matchValueEdit));
         const matchMaterialScope = !_editedMaterialScope || _editedMaterialScope.has(r.dataset.material || '');
-        const show = matchSearch && matchLt && matchEdited && matchMaterialScope;
+        const matchGroup = !groupSet || groupSet.has(r.dataset.material || '');
+        const show = matchSearch && matchLt && matchEdited && matchMaterialScope && matchGroup;
         const nextDisplay = show ? '' : 'none';
         if (r.style.display !== nextDisplay) r.style.display = nextDisplay;
         if (show) visibleCount += 1;
