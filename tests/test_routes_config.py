@@ -549,3 +549,28 @@ def test_master_file_upload_empty_sanitized_name_rejected(config_route_app):
         content_type="multipart/form-data",
     )
     assert resp.status_code == 400
+
+
+def test_forecast_defaults_saved_and_returned(config_route_app):
+    """Fase 1.3: forecast_defaults round-trips through config settings + GET."""
+    resp = config_route_app.client.post("/api/config/settings", json={
+        "forecast_defaults": {
+            "mode": "fill_empty", "default": "7000",
+            "per_material": {"MAT-1": "500", "bad": "x"},
+        },
+    })
+    assert resp.status_code == 200
+    fcd = config_route_app.global_config["forecast_defaults"]
+    assert fcd["mode"] == "fill_empty"
+    assert fcd["default"] == 7000.0
+    assert fcd["per_material"] == {"MAT-1": 500.0}  # invalid entry dropped
+
+    got = config_route_app.client.get("/api/config").get_json()
+    assert got["forecast_defaults"]["default"] == 7000.0
+
+
+def test_forecast_defaults_invalid_mode_coerced(config_route_app):
+    config_route_app.client.post("/api/config/settings", json={
+        "forecast_defaults": {"mode": "nonsense", "default": 10},
+    })
+    assert config_route_app.global_config["forecast_defaults"]["mode"] == "fill_empty"

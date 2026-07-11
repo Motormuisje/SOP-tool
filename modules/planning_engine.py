@@ -163,6 +163,16 @@ class PlanningEngine:
         self.results[LineType.DEMAND_FORECAST.value] = forecast_rows
         forecasts = forecast_engine.get_all_forecasts()
 
+        # Optional forecast default volumes overlay (Fase 1.3). Off by default;
+        # only mutates Line 01 when config_overrides carries a non-empty
+        # 'forecast_defaults', so baseline runs are byte-for-byte unchanged.
+        _fc_defaults = self.config_overrides.get('forecast_defaults')
+        if _fc_defaults:
+            from modules.forecast_engine import apply_forecast_defaults
+            _n = apply_forecast_defaults(forecast_rows, forecasts, _fc_defaults)
+            if _n:
+                print(f"  >> forecast defaults applied to {_n} period cells")
+
         # ===== STEP 3: BOM structure analysis =====
         print("\n[STEP 3] Analyzing BOM structure...")
         bom_engine = BOMEngine(self.data)

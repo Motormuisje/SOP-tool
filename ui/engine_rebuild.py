@@ -19,6 +19,9 @@ def get_config_overrides(global_config: dict) -> dict:
     vp = global_config.get('valuation_params')
     if vp and any(float(v or 0) != 0 for v in vp.values()):
         ov['valuation_params'] = vp
+    fc_defaults = global_config.get('forecast_defaults')
+    if fc_defaults and (fc_defaults.get('default') not in (None, '') or fc_defaults.get('per_material')):
+        ov['forecast_defaults'] = fc_defaults
     return ov
 
 

@@ -3,6 +3,7 @@
 import contextlib
 from datetime import datetime
 import io
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -10,6 +11,36 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
 from modules.data_loader import DataLoader
+
+
+def _sanitize_forecast_defaults(raw) -> dict:
+    """Coerce a forecast-defaults payload to a safe, JSON-serialisable dict.
+
+    Shape: {'mode': 'fill_empty'|'add', 'default': float|None,
+            'per_material': {material_number: float}}.
+    Invalid entries are dropped rather than raising a 500.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    mode = raw.get('mode', 'fill_empty')
+    if mode not in ('fill_empty', 'add'):
+        mode = 'fill_empty'
+    out = {'mode': mode}
+    default = raw.get('default')
+    if default not in (None, ''):
+        try:
+            out['default'] = float(default)
+        except (TypeError, ValueError):
+            pass
+    per_material = {}
+    for mat, val in (raw.get('per_material') or {}).items():
+        try:
+            per_material[str(mat)] = float(val)
+        except (TypeError, ValueError):
+            continue
+    if per_material:
+        out['per_material'] = per_material
+    return out
 
 
 def create_config_blueprint(
@@ -86,6 +117,7 @@ def create_config_blueprint(
             'unlimited_machines': global_config.get('unlimited_machines', ''),
             'purchased_and_produced': global_config.get('purchased_and_produced', ''),
             'valuation_params': global_config.get('valuation_params', {}),
+            'forecast_defaults': global_config.get('forecast_defaults', {}),
             'file_defaults': {
                 'site': fd.get('site', ''),
                 'forecast_months': fd.get('forecast_months', 12),
@@ -174,17 +206,21 @@ def create_config_blueprint(
             'unlimited_machines': str(global_config.get('unlimited_machines', '') or ''),
         }
 
+        old_fc_defaults = json.dumps(global_config.get('forecast_defaults', {}), sort_keys=True)
         if 'site' in data:
             global_config['site'] = data['site'].strip()
         if 'forecast_months' in data:
             global_config['forecast_months'] = int(data['forecast_months'] or 12)
         if 'unlimited_machines' in data:
             global_config['unlimited_machines'] = data['unlimited_machines'].strip()
+        if 'forecast_defaults' in data:
+            global_config['forecast_defaults'] = _sanitize_forecast_defaults(data['forecast_defaults'])
 
         structural_config_changed = (
             str(global_config.get('site', '') or '') != old_config['site']
             or int(global_config.get('forecast_months', 0) or 0) != old_config['forecast_months']
             or str(global_config.get('unlimited_machines', '') or '') != old_config['unlimited_machines']
+            or json.dumps(global_config.get('forecast_defaults', {}), sort_keys=True) != old_fc_defaults
         )
 
         if 'purchased_and_produced' in data:

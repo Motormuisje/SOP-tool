@@ -11,6 +11,63 @@ from modules.models import PlanningRow, LineType
 from modules.data_loader import DataLoader
 
 
+def apply_forecast_defaults(rows, forecasts, config):
+    """Overlay configurable default volumes onto Line 01 (opt-in, Fase 1.3).
+
+    ``config`` shape (all optional):
+        {'mode': 'fill_empty' | 'add',
+         'default': float,                # global default for every forecast material
+         'per_material': {mat: float}}    # per-material overrides of the global default
+
+    ``mode='fill_empty'`` sets periods whose forecast is <= 0 to the default;
+    ``mode='add'`` adds the default on top of every forecast period. Both the
+    Line 01 ``PlanningRow`` values and the ``forecasts`` dict (which feeds the
+    downstream cascade) are updated so they stay consistent.
+
+    With an empty/absent config this is a no-op, so baseline numbers are
+    unchanged (golden parity holds). Returns the number of periods modified.
+    """
+    if not config:
+        return 0
+    mode = str(config.get('mode', 'fill_empty'))
+    global_default = config.get('default')
+    per_material = config.get('per_material', {}) or {}
+
+    def _default_for(mat):
+        if mat in per_material:
+            try:
+                return float(per_material[mat])
+            except (TypeError, ValueError):
+                return None
+        if global_default in (None, ''):
+            return None
+        try:
+            return float(global_default)
+        except (TypeError, ValueError):
+            return None
+
+    changed = 0
+    for row in rows:
+        d = _default_for(row.material_number)
+        if d is None:
+            continue
+        fdict = forecasts.get(row.material_number) if forecasts is not None else None
+        for period in list(row.values.keys()):
+            current = row.values.get(period, 0.0) or 0.0
+            if mode == 'add':
+                new_val = current + d
+            else:  # fill_empty
+                if current > 0:
+                    continue
+                new_val = d
+            if new_val != current:
+                row.values[period] = new_val
+                if fdict is not None:
+                    fdict[period] = new_val
+                changed += 1
+    return changed
+
+
 class ForecastEngine:
     def __init__(self, data: DataLoader, months_actuals: int = 12, months_forecast: int = 12):
         self.data = data
