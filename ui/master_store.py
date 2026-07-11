@@ -13,6 +13,40 @@ from typing import Optional
 
 MASTER_STORE_FILENAME = 'master_store.json'
 
+# Module-level store location, set once at app boot (ui/app.py). Read-side
+# consumers (workflow calculate, engine rebuilds) use the mtime-cached
+# accessor so every rebuild sees the LATEST store without re-reading the
+# file on every request.
+_store_path: Optional[Path] = None
+_cache = {'mtime': None, 'record': None}
+
+
+def set_store_path(path) -> None:
+    global _store_path
+    _store_path = Path(path)
+    _cache['mtime'] = None
+    _cache['record'] = None
+
+
+def get_store_path() -> Optional[Path]:
+    return _store_path
+
+
+def get_current_master_record() -> Optional[dict]:
+    """The latest stored master record, or None when no store exists."""
+    if _store_path is None:
+        return None
+    try:
+        mtime = _store_path.stat().st_mtime
+    except OSError:
+        _cache['mtime'] = None
+        _cache['record'] = None
+        return None
+    if _cache['mtime'] != mtime:
+        _cache['record'] = load_master_store(_store_path)
+        _cache['mtime'] = mtime
+    return _cache['record']
+
 
 def load_master_store(store_path: Path) -> Optional[dict]:
     """The stored master dict, or None when absent/corrupt (quarantined)."""

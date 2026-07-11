@@ -42,6 +42,7 @@ from ui.routes.edit_state import create_edit_state_blueprint
 from ui.routes.edits import create_edits_blueprint
 from ui.routes.exports import create_exports_blueprint
 from ui.routes.machines import create_machines_blueprint
+from ui.routes.master_data import create_master_data_blueprint
 from ui.routes.material_groups import create_material_groups_blueprint
 from ui.routes.pap import create_pap_blueprint
 from ui.routes.products import create_products_blueprint
@@ -128,6 +129,9 @@ _cycle_manager = CycleManager(str(_CYCLE_STORAGE_DIR))
 
 
 SESSIONS_STORE = APP_DATA_ROOT / 'sessions_store.json'
+# App-beheerde masterdata (master-config vervanging).
+from ui.master_store import MASTER_STORE_FILENAME, set_store_path
+set_store_path(APP_DATA_ROOT / MASTER_STORE_FILENAME)
 SCENARIOS_STORE = APP_DATA_ROOT / 'scenarios_store.json'
 GLOBAL_CONFIG_FILE = APP_DATA_ROOT / 'global_config.json'
 
@@ -341,6 +345,10 @@ app.register_blueprint(create_pap_blueprint(
 app.register_blueprint(create_material_groups_blueprint(
     lambda: _get_active(),
     _save_sessions_to_disk,
+))
+app.register_blueprint(create_master_data_blueprint(
+    _global_config,
+    lambda: APP_UPLOADS_DIR,
 ))
 app.register_blueprint(create_products_blueprint(
     lambda: _get_active(),

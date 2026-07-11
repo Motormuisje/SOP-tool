@@ -119,22 +119,28 @@ def test_upload_rejects_missing_required_loader_data(workflow_error_app, monkeyp
 
 
 @pytest.mark.no_fixture
-def test_multi_file_upload_requires_configured_master_file(workflow_error_app):
-    response = workflow_error_app.client.post(
-        "/api/upload",
-        data={
-            "bom_file": (io.BytesIO(b"bom"), "bom.xlsx"),
-            "routing_file": (io.BytesIO(b"routing"), "routing.xlsx"),
-            "stock_file": (io.BytesIO(b"stock"), "stock.xlsx"),
-            "forecast_file": (io.BytesIO(b"forecast"), "forecast.xlsx"),
-        },
-        content_type="multipart/form-data",
-    )
+def test_multi_file_upload_requires_master_source(workflow_error_app, tmp_path):
+    # Deterministisch: geen app-beheerde master-store aanwezig.
+    from ui import master_store
+    previous = master_store.get_store_path()
+    master_store.set_store_path(tmp_path / "no_master_store.json")
+    try:
+        response = workflow_error_app.client.post(
+            "/api/upload",
+            data={
+                "bom_file": (io.BytesIO(b"bom"), "bom.xlsx"),
+                "routing_file": (io.BytesIO(b"routing"), "routing.xlsx"),
+                "stock_file": (io.BytesIO(b"stock"), "stock.xlsx"),
+                "forecast_file": (io.BytesIO(b"forecast"), "forecast.xlsx"),
+            },
+            content_type="multipart/form-data",
+        )
+    finally:
+        if previous is not None:
+            master_store.set_store_path(previous)
 
     assert response.status_code == 400
-    assert response.get_json() == {
-        "error": "No master data file configured. Upload a base file in the Config tab first."
-    }
+    assert "Geen masterdata" in response.get_json()["error"]
     assert workflow_error_app.sessions == {}
     assert workflow_error_app.get_active_session_id() is None
     assert workflow_error_app.save_calls == []
@@ -1105,18 +1111,20 @@ def test_calculate_returns_500_when_engine_run_raises(workflow_calculate_app, tm
 
 
 @pytest.mark.no_fixture
-def test_calculate_returns_500_when_active_session_has_no_workbook_path(
+def test_calculate_rejects_session_without_workbook_or_extracts(
     workflow_calculate_app,
 ):
+    """Geen bronbestand én geen extracts: nette 400 (voorheen 500 via
+    KeyError). Sessies zonder file_path MAAR MET extracts zijn sinds de
+    master-config-vervanging legitiem (app-beheerde masterdata)."""
     sid = workflow_calculate_app.add_session()
     del workflow_calculate_app.sessions[sid]["file_path"]
+    workflow_calculate_app.sessions[sid].pop("extract_files", None)
 
     response = workflow_calculate_app.client.post("/api/calculate", json={})
 
-    assert response.status_code == 500
-    payload = response.get_json()
-    assert "file_path" in payload["error"]
-    assert "trace" in payload
+    assert response.status_code == 400
+    assert "bronbestand" in response.get_json()["error"]
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from modules.planning_engine import PlanningEngine
 # other full-rebuild paths (product CRUD, structural config changes, session
 # switch restore) on sess['engine']; one shared lock serializes them all.
 from ui.locks import engine_rebuild_lock as _calculate_lock
+from ui import master_store
 
 
 def create_workflow_blueprint(
@@ -121,13 +122,25 @@ def create_workflow_blueprint(
                             import traceback
                             print(f'[cycle_manager] pre-run snapshot ERROR (MoM will not work): {exc}\n{traceback.format_exc()}')
 
+                    if not sess.get('file_path') and not sess.get('extract_files'):
+                        return jsonify({'error': 'Sessie heeft geen bronbestand of extracts.'}), 400
+                    master_data = None
+                    if not sess.get('file_path') and sess.get('extract_files'):
+                        # Sessie zonder basiswerkboek: rekent vanuit de
+                        # LAATSTE app-beheerde masterdata (app = bron van
+                        # waarheid; bewerkingen gelden bij herberekening).
+                        record = master_store.get_current_master_record()
+                        if record is None:
+                            return jsonify({'error': 'Geen masterdata in de app. Importeer masterdata in de Config-tab.'}), 400
+                        master_data = record['master']
                     engine = PlanningEngine(
-                        sess['file_path'],
+                        sess.get('file_path') or None,
                         planning_month=planning_month,
                         months_actuals=months_actuals,
                         months_forecast=months_forecast,
                         extract_files=sess.get('extract_files'),
                         config_overrides=get_config_overrides(),
+                        master_data=master_data,
                     )
                     engine.run()
                     install_clean_engine_baseline(sess, engine)
@@ -180,7 +193,9 @@ def _session_payload(
 ):
     payload = {
         'id': session_id,
-        'file_path': str(file_path),
+        # '' = geen basiswerkboek: de sessie rekent vanuit de app-beheerde
+        # master-store (+ extracts).
+        'file_path': str(file_path) if file_path else '',
         'filename': filename,
         'custom_name': requested_name,
         'engine': None,
@@ -232,10 +247,13 @@ def _upload_multi_file(
             base_file.save(str(base_file_path))
         except Exception as exc:
             return jsonify(classify_upload_exception(exc, 'opslaan base-file')), 400
+    elif master_store.get_current_master_record() is not None:
+        # App-beheerde masterdata: geen basiswerkboek nodig.
+        base_file_path = None
     elif global_config.get('master_file') and Path(global_config['master_file']).exists():
         base_file_path = Path(global_config['master_file'])
     else:
-        return jsonify({'error': 'No master data file configured. Upload a base file in the Config tab first.'}), 400
+        return jsonify({'error': 'Geen masterdata: importeer masterdata in de Config-tab (of upload een basisbestand).'}), 400
 
     filename_keywords = {
         'bom_file': ['bom'],
@@ -286,11 +304,19 @@ def _upload_multi_file(
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             from modules.data_loader import DataLoader
-            loader = DataLoader(
-                excel_file=str(base_file_path),
-                extract_files=saved_paths,
-                config_overrides=get_config_overrides(),
-            )
+            if base_file_path is None:
+                record = master_store.get_current_master_record()
+                loader = DataLoader(
+                    extract_files=saved_paths,
+                    config_overrides=get_config_overrides(),
+                    master_data=record['master'],
+                )
+            else:
+                loader = DataLoader(
+                    excel_file=str(base_file_path),
+                    extract_files=saved_paths,
+                    config_overrides=get_config_overrides(),
+                )
             loader.load_all()
     except Exception as exc:
         import traceback
