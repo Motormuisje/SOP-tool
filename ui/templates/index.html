@@ -4829,8 +4829,7 @@ const _MASTER_DATASETS = {
     safety_stock: { label: 'Veiligheidsvoorraad', kind: 'dict',
         cols: [['safety_stock', 'Veiligheidsvoorraad', 'number'], ['strategic_stock', 'Strategisch', 'number'], ['lot_size', 'Lotgrootte', 'number'], ['target_stock', 'Doelvoorraad', 'number']] },
     purchase: { label: 'Inkoop (lead time/MOQ)', kind: 'purchase' },
-    sales_prices: { label: 'Verkoopprijzen', kind: 'dict',
-        cols: [['volume_2025', 'Volume', 'number'], ['ex_works_revenue', 'Omzet (ExWorks)', 'number']] },
+    sales_prices: { label: 'Verkoopprijzen', kind: 'sales_prices' },
     material_costs: { label: 'Grondstofkosten', kind: 'dict',
         cols: [['cost_per_unit', 'Kost per eenheid', 'number']] },
     machine_costs: { label: 'Machinekosten', kind: 'dict',
@@ -4949,6 +4948,29 @@ async function openMasterDatasetModal(dataset) {
       </div>`;
     document.body.appendChild(modal);
     modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    if (spec.kind === 'sales_prices') {
+        document.getElementById('masterDatasetBody').addEventListener('input', _salesPriceRowInput);
+    }
+}
+
+function _masterRound(value, decimals) {
+    const n = Number(value || 0);
+    return Number.isFinite(n) ? Number(n.toFixed(decimals)) : 0;
+}
+
+function _masterMoney(value) {
+    const n = Number(value || 0);
+    return Number.isFinite(n) ? n.toLocaleString('nl-NL', { maximumFractionDigits: 2 }) : '0';
+}
+
+// Live herrekening in de verkoopprijzen-grid: omzet volgt prijs × volume.
+function _salesPriceRowInput(event) {
+    const row = event.target.closest('tr[data-master-key]');
+    if (!row) return;
+    const price = parseLocaleNumber((row.querySelector('[data-master-col="price"] .master-edit') || {}).value || '');
+    const vol = parseLocaleNumber((row.querySelector('[data-master-col="volume"] .master-edit') || {}).value || '');
+    const out = row.querySelector('[data-master-col="revenue_display"]');
+    if (out) out.textContent = (Number.isNaN(price) || Number.isNaN(vol)) ? '—' : _masterMoney(price * vol);
 }
 
 function _masterInput(kind, value) {
@@ -4972,6 +4994,31 @@ function _masterDatasetHtml(spec, value) {
         return '<table class="w-full text-sm"><tbody>' + Object.entries(labels).map(([field, label]) => `
             <tr data-master-field="${field}"><td class="p-2 text-slate-300">${label}</td>
             <td class="p-2">${_masterInput('number', (value || {})[field])}</td></tr>`).join('') + '</tbody></table>';
+    }
+    if (spec.kind === 'sales_prices') {
+        // De bron (SAP-blad) kent geen prijs per eenheid: alleen historisch
+        // volume + ExWorks-omzet. De engine rekent prijs = omzet / volume.
+        // Hier is de PRIJS het primaire invoerveld; de omzet is afgeleide
+        // weergave en wordt bij opslaan herrekend als prijs = prijs × volume.
+        return `<p class="text-xs text-slate-500 mb-2">De verkoopprijs is afgeleid uit het historische volume en de
+            ExWorks-omzet (prijs = omzet / volume). Pas de prijs of het volume aan; de omzet wordt automatisch
+            herrekend. Ongewijzigde rijen blijven exact zoals ze zijn.</p>`
+            + `<table class="w-full text-xs"><thead><tr class="text-slate-400">
+            <th class="text-left p-1">Materiaal/Code</th>
+            <th class="text-right p-1">Prijs per eenheid</th>
+            <th class="text-right p-1">Volume</th>
+            <th class="text-right p-1">Omzet (ExWorks)</th></tr></thead><tbody>`
+            + Object.entries(value || {}).map(([key, item]) => {
+                const vol = Number(item.volume_2025 || 0);
+                const rev = Number(item.ex_works_revenue || 0);
+                const price = vol > 0 ? rev / vol : 0;
+                return `<tr data-master-key="${escapeHtml(String(key))}">
+                    <td class="p-1 font-mono">${escapeHtml(String(key))}</td>
+                    <td class="p-1 text-right" data-master-col="price">${_masterInput('number', _masterRound(price, 4))}</td>
+                    <td class="p-1 text-right" data-master-col="volume">${_masterInput('number', _masterRound(vol, 3))}</td>
+                    <td class="p-1 text-right text-slate-400" data-master-col="revenue_display">${_masterMoney(rev)}</td>
+                </tr>`;
+            }).join('') + '</tbody></table>';
     }
     if (spec.kind === 'purchase') {
         const lead = (value || {}).lead_times || {};
@@ -5022,6 +5069,33 @@ function collectMasterDataset(dataset) {
             out[row.dataset.masterField] = parsed;
         }
         return { value: out };
+    }
+    if (spec.kind === 'sales_prices') {
+        // Prijs is het invoerveld; opgeslagen wordt volume + omzet
+        // (omzet = prijs × volume). Rijen waar niets is getypt behouden hun
+        // exacte originele waarden — de afgeronde weergave mag nooit een
+        // ongewijzigde rij herschrijven.
+        const value = {};
+        for (const [key, item] of Object.entries(original || {})) value[key] = item;
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-key]')) {
+            const key = row.dataset.masterKey;
+            const orig = (original || {})[key] || {};
+            const priceInput = row.querySelector('[data-master-col="price"] .master-edit');
+            const volInput = row.querySelector('[data-master-col="volume"] .master-edit');
+            if (!priceInput || !volInput) continue;
+            const priceChanged = priceInput.value !== priceInput.defaultValue;
+            const volChanged = volInput.value !== volInput.defaultValue;
+            if (!priceChanged && !volChanged) continue;
+            const origVol = Number(orig.volume_2025 || 0);
+            const origPrice = origVol > 0 ? Number(orig.ex_works_revenue || 0) / origVol : 0;
+            const vol = volChanged ? _masterCellValue(row.querySelector('[data-master-col="volume"]'), 'number') : origVol;
+            const price = priceChanged ? _masterCellValue(row.querySelector('[data-master-col="price"]'), 'number') : origPrice;
+            if (vol === null || price === null) return { error: `Ongeldig getal bij ${key}.` };
+            if (vol <= 0) return { error: `Volume bij ${key} moet groter dan 0 zijn (de prijs is omzet / volume).` };
+            if (price < 0) return { error: `Prijs bij ${key} kan niet negatief zijn.` };
+            value[key] = { ...orig, volume_2025: vol, ex_works_revenue: price * vol };
+        }
+        return { value };
     }
     if (spec.kind === 'purchase') {
         const value = { ...(original || {}), lead_times: {}, moq: {} };

@@ -107,3 +107,79 @@ def test_master_data_import_and_edit_flow(browser_page, golden_fixture_path):
                        json={"value": materials}, timeout=120)
     assert str(key) == original_key  # de grid bewerkte de eerste rij
     assert page.js_errors == []
+
+
+def _ensure_store(page, base_url, golden_fixture_path):
+    status = requests.get(base_url + "/api/master_data", timeout=60).json()
+    if status.get("exists"):
+        return
+    with golden_fixture_path.open("rb") as workbook:
+        resp = requests.post(base_url + "/api/master_data/import",
+                             files={"file": (golden_fixture_path.name, workbook)},
+                             timeout=300)
+    assert resp.ok and resp.json().get("success"), resp.text
+
+
+def test_sales_price_edit_recomputes_revenue(browser_page, golden_fixture_path):
+    """Prijs per eenheid is het invoerveld; omzet = prijs x volume.
+
+    Ongewijzigde rijen moeten EXACT round-trippen (de afgeronde weergave mag
+    de opgeslagen data niet herschrijven)."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    page.reload(wait_until="networkidle")
+    _open_config(page)
+    _ensure_store(page, base_url, golden_fixture_path)
+
+    original = requests.get(base_url + "/api/master_data/sales_prices",
+                            timeout=60).json()["value"]
+    keys = sorted(original.keys())
+    assert len(keys) >= 2, "test heeft minstens 2 prijsregels nodig"
+    target, untouched = keys[0], keys[1]
+    orig_vol = float(original[target]["volume_2025"])
+    orig_rev = float(original[target]["ex_works_revenue"])
+    orig_price = orig_rev / orig_vol
+
+    try:
+        # 1) Round-trip zonder wijziging: opslaan verandert niets.
+        page.evaluate("() => openMasterDatasetModal('sales_prices')")
+        page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+        with page.expect_response(
+                lambda r: "/api/master_data/sales_prices" in r.url
+                and r.request.method == "PATCH" and r.ok, timeout=60000):
+            page.evaluate("() => saveMasterDataset('sales_prices')")
+        after = requests.get(base_url + "/api/master_data/sales_prices",
+                             timeout=60).json()["value"]
+        assert after == original, "opslaan zonder wijziging herschreef de data"
+
+        # 2) Prijs verdubbelen via het prijsveld; omzet-weergave rekent live mee.
+        page.evaluate("() => openMasterDatasetModal('sales_prices')")
+        page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+        shown = page.evaluate(
+            """([key, newPrice]) => {
+                const row = document.querySelector(`#masterDatasetModal tr[data-master-key="${key}"]`);
+                const input = row.querySelector('[data-master-col="price"] .master-edit');
+                input.value = String(newPrice);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                return row.querySelector('[data-master-col="revenue_display"]').textContent;
+            }""",
+            [target, round(orig_price * 2, 4)],
+        )
+        assert shown not in ("", "—")  # live herrekend, geen foutstreepje
+        with page.expect_response(
+                lambda r: "/api/master_data/sales_prices" in r.url
+                and r.request.method == "PATCH" and r.ok, timeout=60000):
+            page.evaluate("() => saveMasterDataset('sales_prices')")
+
+        after = requests.get(base_url + "/api/master_data/sales_prices",
+                             timeout=60).json()["value"]
+        new_rev = float(after[target]["ex_works_revenue"])
+        assert abs(new_rev - 2 * orig_rev) / (2 * orig_rev) < 1e-3, \
+            f"omzet niet ~verdubbeld: {orig_rev} -> {new_rev}"
+        assert float(after[target]["volume_2025"]) == orig_vol  # volume onaangetast
+        assert after[untouched] == original[untouched]  # buurman exact gelijk
+    finally:
+        requests.patch(base_url + "/api/master_data/sales_prices",
+                       json={"value": original}, timeout=120)
+        page.evaluate("() => { const m = document.getElementById('masterDatasetModal'); if (m) m.remove(); }")
+    assert page.js_errors == []
