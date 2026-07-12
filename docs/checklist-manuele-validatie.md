@@ -148,208 +148,312 @@ startvoorraad- en bulk-edits zijn weg.
 *Verwacht:* commentaar-indicator zichtbaar en de tekst blijft bewaard.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+
 ## D. Dynamische producten
 
-**D1 — Aangekocht product.** Voeg een product toe met sourcing
-"aangekocht", inclusief MOQ en levertijd.
-*Verwacht:* inkooplijnen aanwezig; orders respecteren de MOQ (geen order
-kleiner dan de MOQ) en de levertijd (orders schuiven naar voren).
+**D1 — Aangekocht product (MOQ + lead time).** Voeg een aangekocht product toe met MOQ 250 en lead time 2 maanden.
+*Verwacht:* inkooplijnen aanwezig; geen order kleiner dan 250; orders schuiven de lead time naar voren.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**D2 — Geproduceerd product.** Voeg een product toe met sourcing
-"geproduceerd", inclusief BOM-regel en routing (machine + uren).
-*Verwacht:* productielijnen aanwezig; de gekozen machinegroep toont extra
-uren; de BOM-component krijgt afgeleide vraag.
+**D2 — Geproduceerd met BOM + routing.** Voeg een geproduceerd product toe met een bestaand materiaal als component en een machine-routing.
+*Verwacht:* productielijnen aanwezig; de machinegroep krijgt extra uren; de component krijgt afgeleide vraag.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**D3 — Mix-product.** Voeg een product toe met sourcing "mix" (bv. 30%
-aangekocht / 70% geproduceerd).
-*Verwacht:* zowel inkoop- als productielijnen, in de opgegeven verhouding.
+**D3 — Mix-product (PAP-verdeling).** Voeg een mix-product toe met 30% aangekocht / 70% geproduceerd.
+*Verwacht:* zowel inkoop- als productielijnen in de opgegeven verhouding.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**D4 — Financiële aansluiting.** Controleer de financiële cijfers voor de
-drie testproducten.
-*Verwacht:* omzet = prijs × volume; kosten (grondstof/machine) sluiten aan
-bij de ingevoerde parameters; de totalen op het dashboard zijn met de
-producten meegegroeid.
+**D4 — Financiële aansluiting (3 producten).** Controleer omzet en kosten van de drie testproducten.
+*Verwacht:* omzet = prijs × volume; grondstof-/machinekost sluit aan; dashboardtotalen zijn meegegroeid.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**D5 — Wisselen en verwijderen.** Wissel naar de andere instantie en terug;
-verwijder daarna één testproduct.
-*Verwacht:* producten blijven bij hun eigen instantie; na verwijderen is
-het product overal weg (tabel, grafieken, financieel) en klopt de planning
-weer zonder het product.
+**D5 — Product gebruikt een ánder toegevoegd product *(gemelde bug)*.** Voeg product B toe dat testproduct A (uit D1) als BOM-component gebruikt.
+*Verwacht:* A staat in de componentenlijst (gemarkeerd 'toegevoegd'); B slaat op; A krijgt afgeleide vraag van B.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**D6 — Edge: MOQ groter dan de vraag.** Voeg een aangekocht product toe met een klein volume maar een grote MOQ.
+*Verwacht:* de order is minstens de MOQ; er ontstaat overschot dat de voorraad opbouwt.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D7 — Edge: bronbestand-nummer geweigerd.** Probeer een product toe te voegen met een materiaalnummer dat al in het bronbestand staat.
+*Verwacht:* nette Nederlandse foutmelding; niets wordt toegevoegd.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D8 — Edge: zelf-referentie geweigerd.** Probeer een product op te slaan dat zichzelf als component heeft.
+*Verwacht:* foutmelding 'kan niet aan zichzelf gekoppeld worden'; niets opgeslagen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D9 — Product bewerken (upsert).** Open een bestaand testproduct, wijzig het volume en sla op.
+*Verwacht:* de planning herberekent met de nieuwe waarde; er ontstaat geen duplicaat (zelfde nummer).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D10 — Verwijderen + sessiewissel.** Wissel naar de andere instantie en terug; verwijder daarna één testproduct.
+*Verwacht:* producten blijven bij hun eigen instantie; na verwijderen is het product overal weg en klopt de planning zonder het product.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 
 ## E. Grafiek-analyse
 
-**E1 — Automatische detectie.** Vergroot de financiële grafiek, klik
-"Analyse".
-*Verwacht:* paneel naast de grafiek toont de grootste beweging met de
-producten die haar verklaren; niets is afgeknipt.
+**E1 — Automatische detectie (financieel).** Vergroot de financiële grafiek en klik 'Analyse'.
+*Verwacht:* paneel toont de grootste beweging met de verklarende producten; niets afgeknipt.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E2 — Twee punten klikken.** Klik twee punten in de grafiek.
-*Verwacht:* een pijl verbindt de punten; het paneel verklaart precies dát
-verschil; de productbijdragen tellen op tot (ongeveer) het totale verschil.
+**E2 — Twee punten met verbindingspijl.** Klik twee punten in de grafiek.
+*Verwacht:* een pijl verbindt de punten; het paneel verklaart precies dát verschil; de bijdragen tellen op tot ~het verschil.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E3 — Volumegrafiek.** Sluit, vergroot de volumegrafiek en analyseer een
-beweging.
-*Verwacht:* zelfde analyse-ervaring; bijdragen per product in eenheden
-i.p.v. euro's.
+**E3 — Volumegrafiek.** Analyseer een beweging in de volumegrafiek.
+*Verwacht:* zelfde ervaring; bijdragen in eenheden i.p.v. euro's.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E4 — FTE-drill.** Analyseer de FTE-grafiek en klik door.
+**E4 — FTE-drill naar producten.** Analyseer de FTE-grafiek en klik door.
 *Verwacht:* je ziet door welke producten de FTE-verandering komt.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E5 — Overige grafieken.** Open de analyse ook op een machinegrafiek en op
-de voorraadkwaliteitsgrafiek.
-*Verwacht:* elke grafiek heeft een werkende analyse-knop met een logisch
-verhaal (uren per product, kwaliteitscategorieën).
+**E5 — Machinegrafiek-analyse.** Open de analyse op een machine-/capaciteitsgrafiek.
+*Verwacht:* werkende analyse met uren per product.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E6 — Naar tabel.** Klik "naar tabel" op de top-movers.
-*Verwacht:* de planningstabel filtert op die producten en je kunt er direct
-een waarde aanpassen (inputfout-scenario).
+**E6 — Voorraadkwaliteit-analyse.** Open de analyse op de voorraadkwaliteitsgrafiek.
+*Verwacht:* logische uitsplitsing naar categorieën/producten.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E7 — Analyse-export.** Exporteer de analyse.
+**E7 — Top-movers naar tabel.** Klik 'naar tabel' op de top-movers.
+*Verwacht:* de planningstabel filtert op die producten; je kunt direct een waarde aanpassen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E8 — Movers aanpasbaar (inputfout).** Pas via de top-mover-tabel een waarde aan.
+*Verwacht:* de wijziging cascadeert normaal; de grafiek en het paneel bewegen mee.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E9 — Excel-export van de analyse.** Exporteer de analyse.
 *Verwacht:* Excel-bestand met dezelfde cijfers als het paneel.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**E10 — Edge: identieke punten.** Selecteer twee punten met (vrijwel) dezelfde waarde.
+*Verwacht:* het paneel meldt netjes 'geen noemenswaardig verschil' i.p.v. een lege/foutieve uitsplitsing.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E11 — Edge: dalende beweging.** Analyseer een duidelijke daling.
+*Verwacht:* de bijdragen zijn negatief en verklaren de daling; tekens kloppen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E12 — Edge: analyse na een edit.** Doe een edit en heropen de analyse.
+*Verwacht:* het paneel gebruikt de nieuwe cijfers, niet de oude.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E13 — Analyse onder actieve groep.** Doe een analyse terwijl een materiaalgroep actief is.
+*Verwacht:* de analyse werkt op de gescoopte cijfers; de bijdragen sluiten aan op het gescoopte totaal.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E14 — Meerdere grafieken achter elkaar.** Analyseer 3 verschillende grafieken na elkaar zonder te herladen.
+*Verwacht:* elke analyse is correct en onafhankelijk; geen restanten van de vorige.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
+
 ## F. Materiaalgroepen
 
-**F1 — Groep opslaan.** Sla vanuit de analyse een groep op (bv. "top 10
-movers 04-26→06-26").
-*Verwacht:* de groep staat in de dropdown boven de planningstabel.
+**F1 — Groep opslaan vanuit analyse.** Sla een groep op (bv. 'top 10 movers 04-26→06-26').
+*Verwacht:* de groep verschijnt in de dropdown boven de tabel.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F2 — Combineren met linetypes.** Selecteer de groep en filter daarna op
-linetypes.
-*Verwacht:* beide filters werken samen; je ziet alleen de gekozen lijnen
-van de groepsmaterialen.
+**F2 — Tweede groep opslaan.** Sla een tweede, andere groep op.
+*Verwacht:* beide groepen staan in de dropdown; ze zijn los selecteerbaar.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F3 — Terug naar "Alle groepen"** *(bugcheck 11-07)*. Kies in de dropdown
-weer "Alle groepen".
+**F3 — Combineren met linetype-filter.** Selecteer een groep en filter daarna op linetypes.
+*Verwacht:* beide filters werken samen; alleen de gekozen lijnen van de groepsmaterialen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F4 — Terug naar 'Alle groepen' *(bugcheck 11-07)*.** Kies in de dropdown weer 'Alle groepen'.
 *Verwacht:* álle rijen komen terug; je zit niet vast in de groepsweergave.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F4 — Maak actief.** Activeer de groep.
-*Verwacht:* banner "actieve groep" zichtbaar; dashboard toont de
-groepsbijdrage (bijdragemarge — vaste kosten/EBIT/ROCE bewust verborgen);
-machines tonen de uren van de groep; de dropdown toont de groep met
-"· actief".
+**F5 — Wisselen tussen twee groepen.** Wissel direct van groep 1 naar groep 2.
+*Verwacht:* de tabel toont meteen de materialen van groep 2, geen mengbeeld.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F5 — Analyse onder actieve groep.** Doe een grafiekanalyse terwijl de
-groep actief is.
-*Verwacht:* de analyse werkt op de gescoopte cijfers en de bijdragen
-sluiten aan op het gescoopte totaal.
+**F6 — Maak actief (scoping).** Activeer een groep.
+*Verwacht:* banner zichtbaar; dashboard toont de bijdragemarge van de groep; machines tonen de groepsuren; dropdown toont '· actief'.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F6 — Groep hoort bij de instantie.** Wissel met actieve groep naar de
-andere instantie en terug.
-*Verwacht:* de andere instantie kent de groep niet en is ongescoopt; terug
-in de eerste instantie is de groep nog steeds actief.
+**F7 — Bijdragemarge klopt.** Controleer de gescoopte financiële cijfers.
+*Verwacht:* bijdragemarge = omzet − grondstof − machinekost; vaste kosten/EBIT/ROCE zijn bewust weggelaten.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F7 — Actieve groep overleeft herstart.** Herstart de app met de groep
-actief.
+**F8 — FTE/capaciteit blijven fabrieksbreed.** Bekijk FTE en capaciteit onder een actieve groep.
+*Verwacht:* die blijven fabrieksbreed (eerlijkheidsregel); alleen omzet/kosten/volume zijn gescoopt.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F9 — Analyse onder actieve groep.** Doe een grafiekanalyse met de groep actief.
+*Verwacht:* gescoopte labels bekend; bijdragen sluiten aan op het gescoopte totaal.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F10 — Groep hoort bij de instantie.** Wissel met actieve groep naar de andere instantie en terug.
+*Verwacht:* de andere instantie kent de groep niet en is ongescoopt; terug is de groep nog actief.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F11 — Actieve groep overleeft herstart.** Herstart de app met een groep actief.
 *Verwacht:* na warm-up is de groep nog actief (banner + gescoopte cijfers).
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F8 — Lege doorsnede.** Filter met actieve groep op een linetype die geen
-groepsmateriaal heeft.
-*Verwacht:* nette uitleg + knop "Herstel filters" (geen stille lege tabel).
+**F12 — Lege doorsnede.** Filter met actieve groep op een linetype zonder groepsmateriaal.
+*Verwacht:* nette uitleg + knop 'Herstel filters'; geen stille lege tabel.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F9 — Deactiveren en verwijderen.** Zet de groep uit (dropdown → "Alle
-groepen") en verwijder haar daarna.
-*Verwacht:* banner weg, dashboard en machines weer fabrieksbreed; na
-verwijderen is de groep uit de dropdown.
+**F13 — Deactiveren.** Zet de groep uit via 'Alle groepen'.
+*Verwacht:* banner weg; dashboard en machines weer fabrieksbreed.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**F14 — Groep verwijderen.** Verwijder een opgeslagen groep.
+*Verwacht:* de groep verdwijnt uit de dropdown; als hij actief was, wordt gedeactiveerd.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F15 — Edge: groep met verwijderd materiaal.** Verwijder een materiaal/product dat in een groep zit en open de groep.
+*Verwacht:* de groep negeert het ontbrekende materiaal netjes (geen crash, teller klopt).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F16 — Edge: undo onder actieve groep.** Doe een edit onder een actieve groep en maak hem ongedaan.
+*Verwacht:* undo herstelt alleen de edit; de actieve groep en scoping blijven intact.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F17 — Edge: groep opslaan met huidige filters.** Filter de tabel en sla dan een groep op.
+*Verwacht:* de groep bevat exact de zichtbare materialen op dat moment.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F18 — Export blijft fabrieksbreed onder groep.** Exporteer met een actieve groep.
+*Verwacht:* het exportbestand bevat de volledige fabriek (groepen scopen alleen de weergave).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 
 ## G. Machines & capaciteit
 
 **G1 — OEE aanpassen.** Wijzig de OEE van één machine.
-*Verwacht:* automatische herberekening; bezetting in tabel én grafiek
-consistent.
+*Verwacht:* automatische herberekening; bezetting in tabel én grafiek consistent.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**G2 — Doeldoorzet.** Gebruik de directe doorzet-aanpassing op een machine.
-*Verwacht:* de OEE wordt evenredig aangepast om de doeldoorzet te halen en
-de herberekening volgt automatisch.
+**G2 — Doeldoorzet (reverse-OEE).** Gebruik de directe doorzet-aanpassing.
+*Verwacht:* de OEE wordt evenredig aangepast om de doeldoorzet te halen; herberekening volgt.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**G3 — Machine-drill.** Klik door op een machine.
-*Verwacht:* je ziet welke producten uren op die machine draaien; de som van
-de productuurbijdragen klopt met het machinetotaal.
+**G3 — Machine-drill naar producten.** Klik door op een machine.
+*Verwacht:* je ziet welke producten uren draaien; de som klopt met het machinetotaal.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**G4 — Machine-overrides ongedaan maken.** Maak de OEE-wijziging (G1)
-ongedaan (undo of reset).
+**G4 — OEE-override ongedaan maken.** Maak de OEE-wijziging ongedaan (undo/reset).
 *Verwacht:* bezetting en FTE exact terug naar de oude waarden.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**G5 — FTE volgt capaciteit.** Vergelijk de FTE-lijnen (L10–L12) vóór en ná
-een forse capaciteitswijziging (bv. G1 opnieuw, of een grote forecast-edit).
+**G5 — FTE volgt capaciteit.** Vergelijk FTE-lijnen vóór/ná een forse capaciteitswijziging.
 *Verwacht:* de FTE-behoefte beweegt logisch mee met de gedraaide uren.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**G6 — Capaciteits-override persistent.** Wijzig een capaciteitscel (L07/L09/L11/L12) en herstart de app.
+*Verwacht:* de override staat er na de herstart nog en de cijfers kloppen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G7 — Edge: OEE = 0.** Zet de OEE van een machine op 0.
+*Verwacht:* nette afhandeling (machine effectief buiten gebruik of duidelijke melding), geen deling-door-nul.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G8 — Edge: unlimited-capacity machine.** Controleer een machine uit de 'unlimited capacity'-lijst.
+*Verwacht:* die wordt nooit als bottleneck getoond; bezetting begrensd tot 100% beschikbaar.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G9 — Bezetting boven 100%.** Verhoog de vraag zodat een machine overbelast raakt.
+*Verwacht:* de grafiek toont de overbezetting duidelijk (>100%) i.p.v. stil af te kappen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G10 — Machine × groep-scoping.** Bekijk de machine-uren onder een actieve materiaalgroep.
+*Verwacht:* de machinegrafiek toont de uren van de groepsmaterialen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
+
 ## H. Exports
 
-**H1 — Planningsexport.** Exporteer het planningswerkboek en open het.
-*Verwacht:* Excel opent zonder reparatiemelding; structuur klopt (lijnen,
-perioden, groepering); steekproef van 3 cellen = exact de UI-waarden.
+**H1 — Planningsexport (structuur + waarden).** Exporteer het planningswerkboek en open het.
+*Verwacht:* opent zonder reparatiemelding; structuur klopt; steekproef van 3 cellen = exact de UI-waarden.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**H2 — Export bevat de bewerkingen.** Doe een herkenbare edit (bv. L01 een
-rond getal) en exporteer opnieuw.
-*Verwacht:* de geëxporteerde cel toont de bewerkte waarde, niet de
-oorspronkelijke.
+**H2 — Export bevat de bewerkingen.** Doe een herkenbare edit en exporteer opnieuw.
+*Verwacht:* de geëxporteerde cel toont de bewerkte waarde, niet de oorspronkelijke.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**H3 — Export blijft fabrieksbreed onder actieve groep.** Activeer een
-groep en exporteer.
-*Verwacht:* het exportbestand bevat de volledige fabriek (bewuste keuze:
-groepen scopen alleen de weergave, nooit de cijfers die de deur uitgaan).
+**H3 — Export bevat toegevoegde producten.** Exporteer met een toegevoegd product in de sessie.
+*Verwacht:* het product staat met al zijn lijnen in de export.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**H4 — MoM-export** *(indien vorige maand beschikbaar)*.
+**H4 — Export fabrieksbreed onder groep.** Activeer een groep en exporteer.
+*Verwacht:* het bestand bevat de volledige fabriek (bewuste keuze).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H5 — MoM-delta-export.** Exporteer de maand-over-maand-delta (indien vorige maand beschikbaar).
 *Verwacht:* delta-werkboek met verschillen t.o.v. de vorige maand.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**H5 — DB-export.** Draai de platte database-export.
-*Verwacht:* exportbestand met één rij per materiaal × lijn × periode;
-aantallen plausibel.
+**H6 — DB-export (plat).** Draai de platte database-export.
+*Verwacht:* één rij per materiaal × lijn × periode; aantallen plausibel.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**H7 — Analyse-export.** Exporteer een grafiekanalyse.
+*Verwacht:* Excel met dezelfde cijfers als het analysepaneel.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H8 — Edge: export direct na herstart.** Herstart en exporteer meteen (warme sessie).
+*Verwacht:* de export klopt; geen lege of half-geladen data.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H9 — Edge: export met commentaar.** Zet commentaar op een cel en exporteer.
+*Verwacht:* de opmerking komt mee (of wordt netjes genegeerd) zonder de cijfers te verstoren.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H10 — Twee instanties, aparte exports.** Exporteer beide instanties.
+*Verwacht:* elk exportbestand hoort bij de juiste instantie (cijfers/perioden kloppen per instantie).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 
 ## I. Afsluitend
 
 **I1 — Geen fouten.** Blik terug over de hele sessie.
 *Verwacht:* geen rode foutmeldingen of lege schermen gezien.
-☐ OK — Opmerkingen: ______________
+☐ OK — Screenshot — Opmerkingen: ______________
 
-**I2 — Taal & meldingen.** Beoordeel de meldingen die je onderweg zag.
-*Verwacht:* alle gebruikersgerichte meldingen in begrijpelijk Nederlands,
-met een handelingsperspectief (wat moet ik nu doen).
-☐ OK — Opmerkingen: ______________
+**I2 — Taal & meldingen.** Beoordeel de meldingen.
+*Verwacht:* alle gebruikersgerichte meldingen in begrijpelijk Nederlands met handelingsperspectief.
+☐ OK — Screenshot — Opmerkingen: ______________
 
-**I3 — Opruimen.** Verwijder de testproducten (D), de testgroep (F), de
-tweede instantie (B) en draai masterdata-testwijzigingen (A) terug.
+**I3 — Consistentie tabel ↔ grafiek.** Vergelijk een paar tabelwaarden met de bijbehorende grafiek.
+*Verwacht:* tabel en grafiek vertellen hetzelfde verhaal (geen divergentie).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I4 — Consistentie dashboard ↔ detail.** Vergelijk een dashboard-KPI met de onderliggende detailregels.
+*Verwacht:* de KPI is de correcte optelsom van de details.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I5 — Herstart-stabiliteit.** Herstart de app een laatste keer.
+*Verwacht:* alle instanties + data intact; cijfers identiek aan vóór de herstart.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I6 — Opruimen.** Verwijder testproducten, testgroepen en de tweede instantie; draai masterdata-testwijzigingen terug.
 *Verwacht:* verwijderen werkt netjes; de overige data blijft intact.
-☐ OK — Opmerkingen: ______________
+☐ OK — Screenshot — Opmerkingen: ______________
 
-**I4 — Schone eindstaat.** Herstart de app een laatste keer.
-*Verwacht:* alleen de echte instantie(s) en data zijn er nog; cijfers
-identiek aan het begin van de sessie (vóór de testwijzigingen).
-☐ OK — Opmerkingen: ______________
+**I7 — Schone eindstaat.** Herstart nog een keer na het opruimen.
+*Verwacht:* alleen de echte instantie(s) en data zijn er nog.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I8 — Golden-parity intact.** Bevestig dat de kern onaangeroerd is (python main.py --test).
+*Verwacht:* de pariteits-smoke slaagt; de single-file-flow is byte-identiek gebleven.
+☐ OK — Screenshot — Opmerkingen: ______________
 
 ---
 
 **Eindoordeel:** ☐ Alles akkoord ☐ Akkoord met opmerkingen ☐ Afwijkingen gevonden
 
 **Handtekening / paraaf:** ______________
+
