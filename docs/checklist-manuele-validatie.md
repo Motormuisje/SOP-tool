@@ -1,14 +1,14 @@
 # Checklist manuele validatie — Apex Rainier fase 3
 
 **Uitgevoerd door:** ______________  **Datum:** ______________
-**Versie/commit:** `86e0237` (tag `milestone-fase-3`)
+**Versie/commit:** `a18e54b` (tag `milestone-fase-3`)
 
-Doorloop de checks in volgorde — samen vormen ze één sessie van ± 45–60 min.
-Vink af, plak per check een screenshot (in de Word-versie in `exports/`) en
-noteer afwijkingen. Verwacht gedrag staat bij elke check; wijkt iets af,
-noteer dan wat je zag i.p.v. wat er had moeten staan.
+Doorloop de checks per testsoort (secties A–I, samen ± 1,5–2 uur; secties
+zijn ook los uit te voeren, alleen A → B horen als eerste). Vink af, plak
+per check een screenshot (Excel-/Word-versie in `exports/`) en noteer bij
+een afwijking wat je zág in plaats van wat er had moeten staan.
 
-**Voorbereiding:** `python main.py` → browser opent op de app. Houd een
+**Voorbereiding:** `python main.py` → browser opent de app. Houd een
 maandwerkboek (MS_RECONC .xlsm) klaar.
 
 ---
@@ -37,6 +37,33 @@ actieve instantie en klik Calculate.
 *Verwacht:* originele naam terug in tabel; versieteller weer +1.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**A5 — Prijswijziging werkt financieel door.** Wijzig in de dataset
+verkoopprijzen de prijs van één materiaal fors (bv. ×2), sla op en
+herbereken.
+*Verwacht:* de omzet van dat materiaal (financiële tab/grafiek) beweegt
+evenredig mee; andere materialen ongewijzigd. Zet daarna terug + herbereken.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**A6 — Foutieve invoer wordt geweigerd.** Zet in een numeriek veld (bv.
+veiligheidsvoorraad of prijs) tekst zoals "abc" en probeer op te slaan.
+*Verwacht:* duidelijke Nederlandse foutmelding; er wordt níéts opgeslagen
+(versieteller ongewijzigd, waarde in de grid na heropenen ongewijzigd).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**A7 — Re-import met diff-bevestiging.** Importeer hetzelfde (of een nieuw)
+werkboek nogmaals via de masterdata-kaart.
+*Verwacht:* de app toont eerst een verschiloverzicht (aantallen/gewijzigde
+sleutels) en overschrijft pas na expliciete bevestiging — de app is de bron
+van waarheid, een import gebeurt nooit stilzwijgend.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**A8 — Materiaal deactiveren.** Zet in de materialen-grid de Actief-vlag
+van één (klein) materiaal uit, sla op, herbereken.
+*Verwacht:* het materiaal verdwijnt uit de planning (geen lijnen meer).
+Zet de vlag weer aan + herbereken: het materiaal is terug met dezelfde
+cijfers als vóór de deactivering.
+☐ OK — Screenshot — Opmerkingen: ______________
+
 ## B. Sessies & persistentie
 
 **B1 — Nieuwe instantie.** Maak een tweede instantie aan, upload het
@@ -45,19 +72,38 @@ werkboek, Calculate.
 maanden vooruit; geen foutmeldingen.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**B2 — Wisselen.** Wissel een paar keer tussen beide instanties.
-*Verwacht:* waarden, config-velden én filters horen telkens bij de gekozen
-instantie; niets "lekt" mee van de vorige.
+**B2 — Wisselen zonder lekkage.** Wissel een paar keer tussen beide
+instanties.
+*Verwacht:* waarden, config-velden (site, forecast-maanden, valuatie) én
+filters horen telkens bij de gekozen instantie; niets "lekt" mee van de
+vorige.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**B3 — Herstart.** Sluit de app volledig af en start opnieuw.
+**B3 — Instantie hernoemen.** Hernoem de tweede instantie.
+*Verwacht:* nieuwe naam overal zichtbaar (lijst, kop) en blijft na herstart.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**B4 — Parameters wijzigen.** Verander in de tweede instantie de
+planningsmaand of het aantal actuals-maanden en herbereken.
+*Verwacht:* de periodekolommen verschuiven mee; de eerste instantie
+behoudt haar eigen parameters.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**B5 — Herstart.** Sluit de app volledig af en start opnieuw.
 *Verwacht:* beide instanties staan er nog; na warm-up tonen ze dezelfde
-cijfers als vóór de herstart.
+cijfers, namen en parameters als vóór de herstart.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**B6 — Config per instantie na herstart.** Wissel na de herstart naar de
+tweede instantie en open de Config-tab.
+*Verwacht:* de config-velden tonen de waarden van déze instantie, niet die
+van de eerst geladen instantie.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 ## C. Bewerkingen & cascade
 
-**C1 — Forecast-edit.** Wijzig één L01-cel (demand forecast) fors, bv. ×2.
+**C1 — Forecast-edit cascadeert.** Wijzig één L01-cel (demand forecast)
+fors, bv. ×2.
 *Verwacht:* L03/L04/L06 van dat materiaal bewegen mee; de machinegrafiek
 van de betrokken machinegroep verandert; tabel en grafiek vertellen
 hetzelfde verhaal.
@@ -67,27 +113,72 @@ hetzelfde verhaal.
 *Verwacht:* alle afgeleide lijnen exact terug naar de oude waarden.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**C3 — Reset.** Doe twee edits (L01 + L06), klik daarna Reset.
-*Verwacht:* alles terug naar de baseline; de bewerkingenlijst is leeg.
+**C3 — Cascade naar componenten.** Wijzig het productieplan (L06) van een
+eindproduct met een BOM.
+*Verwacht:* de afgeleide vraag (L03/L08) van zijn componenten beweegt mee —
+de keten ouder → kind klopt.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**C4 — Commentaar.** Zet een commentaar op een cel, herstart de app.
+**C4 — Combinatie + herstart (replay).** Doe twee edits na elkaar (eerst
+L01, dan L06 van een ander materiaal), noteer twee afgeleide waarden,
+herstart de app.
+*Verwacht:* na de herstart staan exact dezelfde eindwaarden — de opgeslagen
+bewerkingen worden in de juiste volgorde opnieuw toegepast.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C5 — Bulk-edit.** Selecteer meerdere perioden van een lijn (slepen) en
+pas ze in één keer aan.
+*Verwacht:* alle geselecteerde cellen krijgen de nieuwe waarde; de cascade
+loopt één keer netjes door.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C6 — Startvoorraad-edit (L04).** Wijzig de startvoorraad van een
+materiaal.
+*Verwacht:* de voorraadlijn (L04) schuift over de hele horizon mee en de
+productie-/inkoopplanning reageert waar de voorraad onder de
+veiligheidsvoorraad zou zakken.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C7 — Reset.** Klik Reset na de bovenstaande edits.
+*Verwacht:* alles terug naar de baseline; de bewerkingenlijst is leeg; ook
+startvoorraad- en bulk-edits zijn weg.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C8 — Commentaar.** Zet een commentaar op een cel, herstart de app.
 *Verwacht:* commentaar-indicator zichtbaar en de tekst blijft bewaard.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 ## D. Dynamische producten
 
-**D1 — Product toevoegen (mix).** Voeg een product toe met sourcing "mix",
-inclusief MOQ en een BOM-regel; sla op.
-*Verwacht:* volledige herberekening; het product heeft alle relevante
-lijnen (L01 t/m L12 waar van toepassing) én verschijnt in de financiële
-cijfers (omzet/kosten sluiten aan bij prijs × volume).
+**D1 — Aangekocht product.** Voeg een product toe met sourcing
+"aangekocht", inclusief MOQ en levertijd.
+*Verwacht:* inkooplijnen aanwezig; orders respecteren de MOQ (geen order
+kleiner dan de MOQ) en de levertijd (orders schuiven naar voren).
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**D2 — Product overleeft wisselen.** Wissel naar de andere instantie en
-terug.
-*Verwacht:* het toegevoegde product staat er nog met dezelfde cijfers; de
-andere instantie heeft het product níét.
+**D2 — Geproduceerd product.** Voeg een product toe met sourcing
+"geproduceerd", inclusief BOM-regel en routing (machine + uren).
+*Verwacht:* productielijnen aanwezig; de gekozen machinegroep toont extra
+uren; de BOM-component krijgt afgeleide vraag.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D3 — Mix-product.** Voeg een product toe met sourcing "mix" (bv. 30%
+aangekocht / 70% geproduceerd).
+*Verwacht:* zowel inkoop- als productielijnen, in de opgegeven verhouding.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D4 — Financiële aansluiting.** Controleer de financiële cijfers voor de
+drie testproducten.
+*Verwacht:* omzet = prijs × volume; kosten (grondstof/machine) sluiten aan
+bij de ingevoerde parameters; de totalen op het dashboard zijn met de
+producten meegegroeid.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D5 — Wisselen en verwijderen.** Wissel naar de andere instantie en terug;
+verwijder daarna één testproduct.
+*Verwacht:* producten blijven bij hun eigen instantie; na verwijderen is
+het product overal weg (tabel, grafieken, financieel) en klopt de planning
+weer zonder het product.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 ## E. Grafiek-analyse
@@ -103,16 +194,28 @@ producten die haar verklaren; niets is afgeknipt.
 verschil; de productbijdragen tellen op tot (ongeveer) het totale verschil.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E3 — FTE-drill.** Analyseer de FTE-grafiek en klik door.
+**E3 — Volumegrafiek.** Sluit, vergroot de volumegrafiek en analyseer een
+beweging.
+*Verwacht:* zelfde analyse-ervaring; bijdragen per product in eenheden
+i.p.v. euro's.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E4 — FTE-drill.** Analyseer de FTE-grafiek en klik door.
 *Verwacht:* je ziet door welke producten de FTE-verandering komt.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E4 — Naar tabel.** Klik "naar tabel" op de top-movers.
+**E5 — Overige grafieken.** Open de analyse ook op een machinegrafiek en op
+de voorraadkwaliteitsgrafiek.
+*Verwacht:* elke grafiek heeft een werkende analyse-knop met een logisch
+verhaal (uren per product, kwaliteitscategorieën).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E6 — Naar tabel.** Klik "naar tabel" op de top-movers.
 *Verwacht:* de planningstabel filtert op die producten en je kunt er direct
 een waarde aanpassen (inputfout-scenario).
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**E5 — Analyse-export.** Exporteer de analyse.
+**E7 — Analyse-export.** Exporteer de analyse.
 *Verwacht:* Excel-bestand met dezelfde cijfers als het paneel.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
@@ -147,13 +250,26 @@ groep actief is.
 sluiten aan op het gescoopte totaal.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F6 — Deactiveren.** Zet de groep weer uit (dropdown → "Alle groepen").
-*Verwacht:* banner weg; dashboard en machines weer fabrieksbreed.
+**F6 — Groep hoort bij de instantie.** Wissel met actieve groep naar de
+andere instantie en terug.
+*Verwacht:* de andere instantie kent de groep niet en is ongescoopt; terug
+in de eerste instantie is de groep nog steeds actief.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**F7 — Lege doorsnede.** Activeer de groep en filter op een linetype die
-geen groepsmateriaal heeft.
+**F7 — Actieve groep overleeft herstart.** Herstart de app met de groep
+actief.
+*Verwacht:* na warm-up is de groep nog actief (banner + gescoopte cijfers).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F8 — Lege doorsnede.** Filter met actieve groep op een linetype die geen
+groepsmateriaal heeft.
 *Verwacht:* nette uitleg + knop "Herstel filters" (geen stille lege tabel).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F9 — Deactiveren en verwijderen.** Zet de groep uit (dropdown → "Alle
+groepen") en verwijder haar daarna.
+*Verwacht:* banner weg, dashboard en machines weer fabrieksbreed; na
+verwijderen is de groep uit de dropdown.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 ## G. Machines & capaciteit
@@ -163,31 +279,73 @@ geen groepsmateriaal heeft.
 consistent.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**G2 — Machine-drill.** Klik door op een machine.
-*Verwacht:* je ziet welke producten uren op die machine draaien.
+**G2 — Doeldoorzet.** Gebruik de directe doorzet-aanpassing op een machine.
+*Verwacht:* de OEE wordt evenredig aangepast om de doeldoorzet te halen en
+de herberekening volgt automatisch.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G3 — Machine-drill.** Klik door op een machine.
+*Verwacht:* je ziet welke producten uren op die machine draaien; de som van
+de productuurbijdragen klopt met het machinetotaal.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G4 — Machine-overrides ongedaan maken.** Maak de OEE-wijziging (G1)
+ongedaan (undo of reset).
+*Verwacht:* bezetting en FTE exact terug naar de oude waarden.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G5 — FTE volgt capaciteit.** Vergelijk de FTE-lijnen (L10–L12) vóór en ná
+een forse capaciteitswijziging (bv. G1 opnieuw, of een grote forecast-edit).
+*Verwacht:* de FTE-behoefte beweegt logisch mee met de gedraaide uren.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 ## H. Exports
 
 **H1 — Planningsexport.** Exporteer het planningswerkboek en open het.
-*Verwacht:* structuur klopt (lijnen, perioden, groepering); steekproef van
-3 cellen = exact de UI-waarden.
+*Verwacht:* Excel opent zonder reparatiemelding; structuur klopt (lijnen,
+perioden, groepering); steekproef van 3 cellen = exact de UI-waarden.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**H2 — MoM-export** *(indien vorige maand beschikbaar)*.
+**H2 — Export bevat de bewerkingen.** Doe een herkenbare edit (bv. L01 een
+rond getal) en exporteer opnieuw.
+*Verwacht:* de geëxporteerde cel toont de bewerkte waarde, niet de
+oorspronkelijke.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H3 — Export blijft fabrieksbreed onder actieve groep.** Activeer een
+groep en exporteer.
+*Verwacht:* het exportbestand bevat de volledige fabriek (bewuste keuze:
+groepen scopen alleen de weergave, nooit de cijfers die de deur uitgaan).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H4 — MoM-export** *(indien vorige maand beschikbaar)*.
 *Verwacht:* delta-werkboek met verschillen t.o.v. de vorige maand.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H5 — DB-export.** Draai de platte database-export.
+*Verwacht:* exportbestand met één rij per materiaal × lijn × periode;
+aantallen plausibel.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 ## I. Afsluitend
 
 **I1 — Geen fouten.** Blik terug over de hele sessie.
-*Verwacht:* geen rode foutmeldingen of lege schermen gezien; alle meldingen
-waren in het Nederlands en begrijpelijk.
+*Verwacht:* geen rode foutmeldingen of lege schermen gezien.
 ☐ OK — Opmerkingen: ______________
 
-**I2 — Opruimen.** Verwijder het testproduct (D1), de testgroep (F1) en de
-tweede instantie (B1) als je die niet houdt.
-*Verwacht:* verwijderen werkt netjes en de overige data blijft intact.
+**I2 — Taal & meldingen.** Beoordeel de meldingen die je onderweg zag.
+*Verwacht:* alle gebruikersgerichte meldingen in begrijpelijk Nederlands,
+met een handelingsperspectief (wat moet ik nu doen).
+☐ OK — Opmerkingen: ______________
+
+**I3 — Opruimen.** Verwijder de testproducten (D), de testgroep (F), de
+tweede instantie (B) en draai masterdata-testwijzigingen (A) terug.
+*Verwacht:* verwijderen werkt netjes; de overige data blijft intact.
+☐ OK — Opmerkingen: ______________
+
+**I4 — Schone eindstaat.** Herstart de app een laatste keer.
+*Verwacht:* alleen de echte instantie(s) en data zijn er nog; cijfers
+identiek aan het begin van de sessie (vóór de testwijzigingen).
 ☐ OK — Opmerkingen: ______________
 
 ---
