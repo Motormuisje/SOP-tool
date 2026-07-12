@@ -21,11 +21,28 @@ def trim_stack_group_aware(stack: list, cap: int = UNDO_STACK_CAP) -> None:
             stack.pop(0)
 
 
+def aux_str(value) -> str:
+    """Canonical string form of an aux column, for edit keys and JSON payloads.
+
+    Only None (and '') collapse to ''. Numeric aux values keep their value:
+    zero is a REAL aux (e.g. an L01 row with 0 actuals), so `aux or ''` is
+    wrong — it made the backend key ('') diverge from the frontend key ('0'),
+    splitting one cell over two pending-edit entries; the stale one then
+    resurrected an undone edit on restart. Int-like floats render without the
+    trailing '.0' so Python matches JavaScript's String(150.0) === '150'.
+    """
+    if value is None:
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
 def pending_edit_key(line_type, material_number, aux_column, period) -> str:
     return (
         f"{str(line_type)}||"
         f"{str(material_number)}||"
-        f"{str(aux_column or '').strip()}||"
+        f"{aux_str(aux_column)}||"
         f"{str(period)}"
     )
 

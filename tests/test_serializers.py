@@ -79,6 +79,9 @@ def test_row_payload_converts_to_json_safe_dict():
     assert payload == {
         "material_number": "MAT-1",
         "values": {"2025-12": None},
+        # row_payload garandeert canonieke aux-strings in elk payload
+        "aux_column": "",
+        "aux_2_column": "",
     }
 
 
@@ -111,3 +114,26 @@ def test_payload_builders_return_frontend_shapes():
     assert planning_payload["results"][LineType.DEMAND_FORECAST.value][0]["material_number"] == "MAT-1"
     assert planning_payload["value_results"][LineType.CONSOLIDATION.value][0]["values"] == {"2025-12": 100.0}
     assert planning_payload["moq_raw_needs"] == {"MAT-RAW": {"2025-12": 3.0}}
+
+
+def test_row_payload_serializes_aux_as_canonical_string():
+    """Aux verlaat de API als string: '0' blijft '0' (falsy-zero-bug) en
+    int-achtige floats verliezen '.0' zodat Python-sleutels gelijk zijn aan
+    JavaScripts String(150.0) === '150'."""
+    from modules.models import PlanningRow
+    from ui.serializers import row_payload
+
+    def payload_for(aux, aux2=None):
+        return row_payload(PlanningRow(
+            material_number="M", material_name="n", product_type="t",
+            product_family="f", spc_product="s", product_cluster="c",
+            product_name="p", line_type="01. Demand forecast",
+            aux_column=aux, aux_2_column=aux2, values={},
+        ))
+
+    assert payload_for(0)["aux_column"] == "0"
+    assert payload_for(150.0)["aux_column"] == "150"
+    assert payload_for(47.07)["aux_column"] == "47.07"
+    assert payload_for(None)["aux_column"] == ""
+    assert payload_for("tekst")["aux_column"] == "tekst"
+    assert payload_for(1, aux2=0.4)["aux_2_column"] == "0.4"

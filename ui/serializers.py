@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import Enum
 
 from modules.models import LineType
+from ui.pending_edits import aux_str
 
 
 def moq_warnings_payload(engine) -> dict:
@@ -68,4 +69,11 @@ def json_safe(value):
 
 
 def row_payload(row) -> dict:
-    return json_safe(row.to_dict())
+    payload = json_safe(row.to_dict())
+    # Aux columns leave the API as canonical STRINGS. Numeric aux values
+    # (0, 150.0) serialized as JSON numbers before, and every falsy-zero
+    # `aux || ''` in the frontend then built a different edit key than the
+    # backend ('' vs '0') — an undone edit resurrected after restart.
+    payload['aux_column'] = aux_str(payload.get('aux_column'))
+    payload['aux_2_column'] = aux_str(payload.get('aux_2_column'))
+    return payload

@@ -165,3 +165,44 @@ def test_apply_volume_change_skips_undo_when_push_undo_false(edit_route_app):
     assert status == 200
     assert payload["success"] is True
     assert sess["undo_stack"] == []
+
+
+def test_undo_with_numeric_zero_aux_clears_pending_edit(edit_route_app):
+    """Regressie (manuele validatie, C4-herstart): rijen met aux_column = 0.
+
+    De edit-sleutel werd met `aux or ''` gebouwd: het getal 0 is falsy, dus
+    de edit schreef sleutel-aux '0' terwijl de undo sleutel-aux '' popte —
+    de entry overleefde in pending_edits en de replay na een herstart voerde
+    de ongedaan gemaakte edit opnieuw uit. aux_str() houdt beide gelijk.
+    """
+    sess = edit_route_app.make_session()
+    engine = sess["engine"]
+    target_row, period = _editable_demand_cell(engine)
+    target_row.aux_column = 0  # numerieke nul-aux, zoals L01 zonder actuals
+    old_value = float(target_row.get_value(period))
+    new_value = old_value + 100.0
+
+    with edit_route_app.app.app_context():
+        apply_volume_change(
+            sess, engine, LineType.DEMAND_FORECAST.value,
+            target_row.material_number, period, new_value,
+            aux_column="0", push_undo=True,
+        )
+        expected_key = (
+            f"{LineType.DEMAND_FORECAST.value}||"
+            f"{target_row.material_number}||0||{period}"
+        )
+        assert expected_key in sess["pending_edits"]
+        entry = sess["undo_stack"][-1]
+        assert entry["aux_column"] == "0"  # niet '': nul is een echte aux
+        # Undo zoals /api/undo dat doet: oude waarde met de aux uit de entry.
+        apply_volume_change(
+            sess, engine, entry["line_type"], entry["material_number"],
+            entry["period"], entry["old_value"],
+            aux_column=entry["aux_column"], push_undo=False,
+        )
+
+    assert sess["pending_edits"] == {}  # niets om te resurrecten bij replay
+    row = next(r for r in engine.results[LineType.DEMAND_FORECAST.value]
+               if r.material_number == target_row.material_number)
+    assert period not in (row.manual_edits or {})

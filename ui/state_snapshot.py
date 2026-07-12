@@ -2,6 +2,7 @@
 
 import copy
 
+from ui.pending_edits import aux_str
 from modules.models import LineType, PlanningRow
 from ui.parsers import format_purchased_and_produced, valuation_params_from_config
 from ui.serializers import row_payload
@@ -77,7 +78,7 @@ def build_pending_edits_from_results_snapshot(results_snapshot) -> dict:
         for row in rows or []:
             line_type = str(row.get('line_type', '') or lt)
             material = str(row.get('material_number', ''))
-            aux = str(row.get('aux_column', '') or '')
+            aux = aux_str(row.get('aux_column'))
             edits = row.get('manual_edits', {}) or {}
             for period, edit in edits.items():
                 if not isinstance(edit, dict):

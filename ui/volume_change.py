@@ -37,7 +37,7 @@ snapshot/persist/replay for these stores; this module only writes them):
 from flask import jsonify
 
 from modules.models import LineType
-from ui.pending_edits import pending_edit_key, trim_stack_group_aware
+from ui.pending_edits import aux_str, pending_edit_key, trim_stack_group_aware
 from ui.replay import recalculate_value_results
 from ui.state_snapshot import ensure_reset_baseline
 
@@ -409,18 +409,18 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         return resp
     rows = current_engine.results.get(line_type, [])
     material_number = str(material_number)
-    aux_column = str(aux_column or '').strip()
+    aux_column = aux_str(aux_column)
     material_rows = [r for r in rows if str(getattr(r, 'material_number', '')) == material_number]
     target_row = next(
         (r for r in material_rows
-         if str(getattr(r, 'aux_column', '') or '').strip() == aux_column),
+         if aux_str(getattr(r, 'aux_column', None)) == aux_column),
         None
     )
     if target_row is None and len(material_rows) == 1:
         # Backward-compatible fallback for older clients and harmless formatting drift.
         target_row = material_rows[0]
     if target_row is None:
-        available_aux = sorted({str(getattr(r, 'aux_column', '') or '').strip() for r in material_rows})
+        available_aux = sorted({aux_str(getattr(r, 'aux_column', None)) for r in material_rows})
         detail = f'Row not found for {line_type} / {material_number}'
         if aux_column:
             detail += f' / aux "{aux_column}"'
@@ -460,7 +460,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         undo_stack = sess.setdefault('undo_stack', [])
         sess.setdefault('redo_stack', []).clear()
         undo_stack.append({'line_type': line_type, 'material_number': material_number,
-                           'aux_column': str(getattr(target_row, 'aux_column', '') or ''),
+                           'aux_column': aux_str(getattr(target_row, 'aux_column', None)),
                            'period': period, 'old_value': old_value, 'new_value': new_value})
         # Same cap as the bulk endpoint (200) and group-aware, so single edits
         # can no longer erode a bulk group one oldest-entry at a time.
