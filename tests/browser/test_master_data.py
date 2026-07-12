@@ -1,5 +1,8 @@
 """Masterdata in de app — import + bewerken via de Config-tab."""
 
+import math
+
+import pytest
 import requests
 from playwright.sync_api import expect
 
@@ -182,4 +185,54 @@ def test_sales_price_edit_recomputes_revenue(browser_page, golden_fixture_path):
         requests.patch(base_url + "/api/master_data/sales_prices",
                        json={"value": original}, timeout=120)
         page.evaluate("() => { const m = document.getElementById('masterDatasetModal'); if (m) m.remove(); }")
+    assert page.js_errors == []
+
+
+def test_locale_parser_rejects_malformed_numbers(browser_page, golden_fixture_path):
+    """Gemelde bug (checklist A6): '3000,5,6' werd stil 300056.
+
+    De parser moet echte groepen-van-drie eisen en het hele veld moet een
+    getal zijn; de masterdata-grid weigert het veld dan met een NL-fout."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    page.reload(wait_until="networkidle")
+    _open_config(page)
+    _ensure_store(page, base_url, golden_fixture_path)
+
+    cases = {
+        "3000,5,6": None, "12abc": None, "abc": None, "12.34,5": None,
+        "1.234,5": 1234.5, "1,234.5": 1234.5, "1.234.567": 1234567,
+        "1,234,567": 1234567, "2,5": 2.5, "2.5": 2.5, "-1.234,5": -1234.5,
+        "1e3": 1000, "1,23": 1.23,
+    }
+    got = page.evaluate(
+        "(keys) => Object.fromEntries(keys.map(k => [k, parseLocaleNumber(k)]))",
+        list(cases))
+    for raw, expected in cases.items():
+        actual = got[raw]
+        if expected is None:
+            assert actual is None or (isinstance(actual, float) and math.isnan(actual)),                 f"{raw!r} moest NaN zijn, was {actual}"
+        else:
+            assert actual == pytest.approx(expected), f"{raw!r}: {actual}"
+
+    # Volledige A6-flow: foutieve lotgrootte in de veiligheidsvoorraad-grid
+    # levert een foutmelding op en er wordt NIETS opgeslagen.
+    version_before = requests.get(base_url + "/api/master_data", timeout=60).json()["version"]
+    original = requests.get(base_url + "/api/master_data/safety_stock",
+                            timeout=60).json()["value"]
+    page.evaluate("() => openMasterDatasetModal('safety_stock')")
+    page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+    error = page.evaluate(
+        """() => {
+            const row = document.querySelector('#masterDatasetModal tr[data-master-key]');
+            row.querySelector('[data-master-col="lot_size"] .master-edit').value = '3000,5,6';
+            return (collectMasterDataset('safety_stock').error || '');
+        }""")
+    assert "Ongeldig getal" in error
+    page.evaluate("() => document.getElementById('masterDatasetModal').remove()")
+    status = requests.get(base_url + "/api/master_data", timeout=60).json()
+    assert status["version"] == version_before
+    after = requests.get(base_url + "/api/master_data/safety_stock",
+                         timeout=60).json()["value"]
+    assert after == original
     assert page.js_errors == []

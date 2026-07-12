@@ -10,24 +10,37 @@
 // separator is thousands grouping ("1,234,567" / "1.234.567"). A single
 // comma is a decimal separator (Dutch client: "2,5" means 2.5); a single
 // dot keeps its plain-JS meaning ("2.5" stays 2.5).
+// STRICT: grouping must be real groups of three ("3000,5,6" is NaN, not
+// 300056) and the whole string must be a number ("12abc" is NaN, not 12).
+// Callers rely on NaN to reject/revert invalid input.
 function parseLocaleNumber(value) {
   if (typeof value === 'number') return value;
-  let s = String(value == null ? '' : value).trim();
+  const s = String(value == null ? '' : value).trim();
   if (!s) return NaN;
-  const commas = (s.match(/,/g) || []).length;
-  const dots = (s.match(/\./g) || []).length;
+  const sign = (s[0] === '-' || s[0] === '+') ? s[0] : '';
+  let body = sign ? s.slice(1) : s;
+  const commas = (body.match(/,/g) || []).length;
+  const dots = (body.match(/\./g) || []).length;
+  const grouped = (part, sep) =>
+    new RegExp('^\\d{1,3}(\\' + sep + '\\d{3})+$').test(part);
   if (commas && dots) {
-    s = (s.lastIndexOf(',') > s.lastIndexOf('.'))
-      ? s.replace(/\./g, '').replace(',', '.')
-      : s.replace(/,/g, '');
+    const decSep = body.lastIndexOf(',') > body.lastIndexOf('.') ? ',' : '.';
+    const grpSep = decSep === ',' ? '.' : ',';
+    const pieces = body.split(decSep);
+    if (pieces.length !== 2 || !/^\d+$/.test(pieces[1]) ||
+        !grouped(pieces[0], grpSep)) return NaN;
+    body = pieces[0].split(grpSep).join('') + '.' + pieces[1];
   } else if (commas > 1) {
-    s = s.replace(/,/g, '');
+    if (!grouped(body, ',')) return NaN;
+    body = body.replace(/,/g, '');
   } else if (dots > 1) {
-    s = s.replace(/\./g, '');
+    if (!grouped(body, '.')) return NaN;
+    body = body.replace(/\./g, '');
   } else if (commas === 1) {
-    s = s.replace(',', '.');
+    body = body.replace(',', '.');
   }
-  return parseFloat(s);
+  if (!/^(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(body)) return NaN;
+  return parseFloat(sign + body);
 }
 window.parseLocaleNumber = parseLocaleNumber;
 
