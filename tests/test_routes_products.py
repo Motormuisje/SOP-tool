@@ -99,8 +99,31 @@ def test_get_returns_lists_for_datalists(products_app):
     body = products_app.app.test_client().get('/api/products/added').get_json()
     assert body['added_products'] == [PRODUCT]
     assert body['machines'] == ['PBA01']
-    assert body['materials'] == [{'number': 'M1', 'name': 'Bestaand'}]
+    # The added product (MN) is not in this fake engine's data.materials, so
+    # only the workbook material appears — now carrying the 'added' flag.
+    assert body['materials'] == [{'number': 'M1', 'name': 'Bestaand', 'added': False}]
     assert body['periods'] == ['2026-01', '2026-02']
+
+
+def test_get_lists_added_product_as_selectable_material(products_app):
+    """Regressie: een eerder toegevoegd product moet in de materialenlijst
+    staan zodat een VOLGEND product het als BOM-component kan gebruiken.
+
+    De rebuild na een toevoeging overlayt het product in engine.data.materials;
+    de lijst filterde die er weer uit, waardoor het onzichtbaar werd bij het
+    bouwen van een tweede product erbovenop."""
+    engine = products_app.holder['engine']
+    engine.data.materials[MN] = Material(
+        material_number=MN, name='Test', product_type=ProductType.BULK_PRODUCT,
+        product_family='F')
+    products_app.sess['added_products'] = [dict(PRODUCT)]
+    body = products_app.app.test_client().get('/api/products/added').get_json()
+    by_num = {m['number']: m for m in body['materials']}
+    assert MN in by_num, 'toegevoegd product ontbreekt in de keuzelijst'
+    assert by_num[MN]['added'] is True
+    assert by_num[MN]['name'].endswith('(toegevoegd)')
+    # Werkboekmateriaal blijft ongemarkeerd.
+    assert by_num['M1'] == {'number': 'M1', 'name': 'Bestaand', 'added': False}
 
 
 # ----------------------------------------------------------------- POST

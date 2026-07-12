@@ -121,10 +121,18 @@ def create_products_blueprint(
         return jsonify({
             'added_products': added,
             'machines': sorted(engine.data.machines.keys()),
+            # Include the already-added products too: a new product must be
+            # able to reference an earlier one as a BOM component/parent.
+            # validate_added_product allows other_added references and rejects
+            # only self-links, so the datalist should offer them (marked so
+            # they are recognizable). Excluding them made an added material
+            # invisible when building the next product on top of it.
             'materials': [
-                {'number': mn, 'name': mat.name}
+                {'number': mn,
+                 'name': (f'{mat.name} (toegevoegd)' if mn in added_numbers
+                          else mat.name),
+                 'added': mn in added_numbers}
                 for mn, mat in sorted(engine.data.materials.items())
-                if mn not in added_numbers
             ],
             'periods': list(engine.data.periods or []),
         })
