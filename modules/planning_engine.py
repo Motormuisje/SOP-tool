@@ -92,9 +92,12 @@ class PlanningEngine:
             self.data = DataLoader(extract_files=self.extract_files,
                                    config_overrides=self.config_overrides,
                                    master_data=self.master_data)
-        elif self.extract_files:
+        elif self.extract_files or self.master_data is not None:
+            # Workbook (+ evt. extracts); master_data overlayt het werkboek
+            # wanneer de app-masterdata bestaat (app = bron van waarheid).
             self.data = DataLoader(excel_file=self.file_path, extract_files=self.extract_files,
-                                   config_overrides=self.config_overrides)
+                                   config_overrides=self.config_overrides,
+                                   master_data=self.master_data)
         else:
             self.data = DataLoader(self.file_path, config_overrides=self.config_overrides)
         self.data.load_all()

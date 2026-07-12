@@ -124,15 +124,14 @@ def create_workflow_blueprint(
 
                     if not sess.get('file_path') and not sess.get('extract_files'):
                         return jsonify({'error': 'Sessie heeft geen bronbestand of extracts.'}), 400
-                    master_data = None
-                    if not sess.get('file_path') and sess.get('extract_files'):
-                        # Sessie zonder basiswerkboek: rekent vanuit de
-                        # LAATSTE app-beheerde masterdata (app = bron van
-                        # waarheid; bewerkingen gelden bij herberekening).
-                        record = master_store.get_current_master_record()
-                        if record is None:
-                            return jsonify({'error': 'Geen masterdata in de app. Importeer masterdata in de Config-tab.'}), 400
-                        master_data = record['master']
+                    # App-masterdata (indien aanwezig) geldt bij ELKE
+                    # berekening: werkboek-vrije sessies rekenen er volledig
+                    # uit, werkboek-sessies krijgen de overlay (app = bron
+                    # van waarheid — bewerkingen gelden bij herberekening).
+                    record = master_store.get_current_master_record()
+                    master_data = record['master'] if record else None
+                    if not sess.get('file_path') and master_data is None:
+                        return jsonify({'error': 'Geen masterdata in de app. Importeer masterdata in de Config-tab.'}), 400
                     engine = PlanningEngine(
                         sess.get('file_path') or None,
                         planning_month=planning_month,

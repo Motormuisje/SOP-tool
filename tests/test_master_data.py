@@ -130,3 +130,72 @@ def test_master_store_persistence_round_trip(tmp_path):
     store_path.write_text('{{{', encoding='utf-8')
     assert load_master_store(store_path) is None
     assert not store_path.exists()
+
+
+def test_workbook_overlay_applies_app_edits(golden_fixture_path):
+    """Gemelde bug: naam wijzigen in de masterdata-grid + herberekenen paste
+    de naam niet toe op een werkboek-sessie. De app is de bron van waarheid:
+    met een store overlayt die het werkboek — hernoemde materialen en
+    app-only materialen komen door, werkboek-Config en transactiedata
+    blijven van het werkboek."""
+    from modules.master_data import overlay_master_data
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        baseline = DataLoader(str(golden_fixture_path))
+        baseline.load_all()
+
+    master = json.loads(json.dumps(serialize_master(baseline), default=str))
+    first_mn = master['materials'][0]['material_number']
+    master['materials'][0]['name'] = 'HERNOEMD IN APP'
+    master['materials'].append({**master['materials'][1],
+                                'material_number': 'APPONLY1',
+                                'name': 'App-only materiaal'})
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        hybrid = DataLoader(str(golden_fixture_path), master_data=master)
+        hybrid.load_all()
+
+    # App wint per sleutel; app-only komt erbij; de rest is ongewijzigd.
+    assert hybrid.materials[first_mn].name == 'HERNOEMD IN APP'
+    assert 'APPONLY1' in hybrid.materials
+    unchanged = [mn for mn in baseline.materials if mn != first_mn]
+    for mn in unchanged[:25]:
+        assert hybrid.materials[mn] == baseline.materials[mn]
+
+    # Werkboek blijft leidend voor Config-ankers en transactiedata.
+    assert hybrid.config.initial_date == baseline.config.initial_date
+    assert hybrid.forecast_actuals_months == baseline.forecast_actuals_months
+    assert hybrid.forecasts == baseline.forecasts
+    assert hybrid.stock_levels == baseline.stock_levels
+    assert len(hybrid.bom) == len(baseline.bom)
+
+
+def test_workbook_session_rebuild_picks_up_store_edit(golden_fixture_path, tmp_path):
+    """Route-niveau van de gemelde bug: een sessie MET werkboek herbouwt met
+    de laatste app-masterdata zodra de store bestaat."""
+    from ui import master_store
+    from ui.engine_rebuild import build_clean_engine_for_session
+    from ui.master_store import save_master_store
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        loader = DataLoader(str(golden_fixture_path))
+        loader.load_all()
+    master = json.loads(json.dumps(serialize_master(loader), default=str))
+    first_mn = master['materials'][0]['material_number']
+    master['materials'][0]['name'] = 'HERNOEMD VIA STORE'
+
+    store_path = tmp_path / 'master_store.json'
+    save_master_store(store_path, master, source_filename='edit.xlsm')
+    master_store.set_store_path(store_path)
+
+    sess = {
+        'id': 'wb', 'file_path': str(golden_fixture_path), 'extract_files': None,
+        'parameters': {'planning_month': '2025-12', 'months_actuals': 11,
+                       'months_forecast': 12},
+        'pending_edits': {}, 'value_aux_overrides': {}, 'machine_overrides': {},
+        'inventory_overrides': {}, 'capacity_overrides': {}, 'engine': None,
+    }
+    with contextlib.redirect_stdout(io.StringIO()):
+        engine = build_clean_engine_for_session(sess, {})
+    assert engine is not None
+    assert engine.data.materials[first_mn].name == 'HERNOEMD VIA STORE'

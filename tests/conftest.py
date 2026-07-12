@@ -437,3 +437,18 @@ def session_route_app(golden_fixture_path):
         wait_calls=wait_calls,
         callback_overrides=callback_overrides,
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_master_store(tmp_path):
+    """Tests mogen nooit de echte app-masterdata van deze machine oppikken:
+    de store-overlay geldt bij elke berekening zodra een store bestaat, dus
+    elke test krijgt standaard een leeg (niet-bestaand) store-pad. Tests die
+    de store zelf nodig hebben (store_env) overschrijven dit expliciet."""
+    from ui import master_store
+
+    previous = master_store.get_store_path()
+    master_store.set_store_path(tmp_path / "isolated_master_store.json")
+    yield
+    if previous is not None:
+        master_store.set_store_path(previous)

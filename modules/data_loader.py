@@ -142,6 +142,16 @@ class DataLoader:
             self._load_cost_raw_material()
             self._load_cost_machine_hour()
             self._load_valuation_params()
+            # App-managed master data overlays the workbook (the app is the
+            # source of truth once a master store exists): store entries
+            # replace matching workbook entries and add app-only ones, while
+            # the workbook keeps supplying Config anchors, transactional
+            # sheets and purchase actuals. Without a store this is a no-op.
+            if self.master_data is not None:
+                from modules.master_data import overlay_master_data
+                overlay_master_data(self, self.master_data)
+                print(f"  Master store overlay: {len(self.master_data.get('materials') or [])} "
+                      f"materialen (app is bron van waarheid)")
             self._apply_valuation_overrides()
 
         print("-" * 60)

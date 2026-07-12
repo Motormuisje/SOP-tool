@@ -117,15 +117,14 @@ def build_clean_engine_for_session(
     months_forecast = int(params.get('months_forecast', 12) or 12)
     if global_config.get('forecast_months'):
         months_forecast = int(global_config.get('forecast_months') or months_forecast)
-    master_data = None
-    if not sess.get('file_path') and sess.get('extract_files'):
-        # Sessie zonder basiswerkboek (master-config vervanging): rebuilds
-        # gebruiken de LAATSTE app-beheerde masterdata.
-        from ui.master_store import get_current_master_record
-        record = get_current_master_record()
-        if record is None:
-            return None
-        master_data = record['master']
+    # App-masterdata (indien aanwezig) geldt bij ELKE rebuild: werkboek-vrije
+    # sessies rekenen er volledig uit, werkboek-sessies krijgen de overlay
+    # (app = bron van waarheid).
+    from ui.master_store import get_current_master_record
+    record = get_current_master_record()
+    master_data = record['master'] if record else None
+    if not sess.get('file_path') and master_data is None:
+        return None
     engine = PlanningEngine(
         sess.get('file_path') or None,
         planning_month=params.get('planning_month'),

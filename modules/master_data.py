@@ -170,6 +170,65 @@ def _rebuild_machine_groups(loader) -> None:
     }
 
 
+def overlay_master_data(loader, master: dict) -> None:
+    """Overlay the app-managed master data onto a WORKBOOK-loaded DataLoader.
+
+    Used when a session still has a base workbook (single-file or multi-file
+    with base): the app is the source of truth for master data, so store
+    entries replace matching workbook entries (by material number / machine
+    code) and add app-only ones. Merge semantics keep workbook-only entries
+    (e.g. new SKUs in a fresh monthly workbook) working; deactivating happens
+    via the material's 'Actief' flag, not by deletion.
+
+    Deliberately NOT overlaid: the workbook's Config sheet (period anchors,
+    forecast_actuals_months — month-specific) and purchase ACTUALS (monthly
+    data living in the Purchase sheet's date columns).
+    """
+    for item in master.get('materials') or []:
+        fields = dict(item)
+        fields['product_type'] = ProductType(fields['product_type'])
+        material = Material(**fields)
+        loader.materials[material.material_number] = material
+
+    for item in master.get('machines') or []:
+        fields = dict(item)
+        fields['shift_system'] = ShiftSystem(fields['shift_system'])
+        machine = Machine(**fields)
+        loader.machines[machine.machine_code] = machine
+    _rebuild_machine_groups(loader)
+    finalize_shift_systems(loader)
+    loader._extend_machine_availability_to_periods()
+
+    fte = master.get('fte') or {}
+    if fte:
+        loader.fte_hours_per_year = float(fte.get('fte_hours_per_year') or loader.fte_hours_per_year)
+        loader.shift_hours = {str(k): float(v) for k, v in (fte.get('shift_hours') or {}).items()} or loader.shift_hours
+        if '3-shift system' not in loader.shift_hours:
+            loader.shift_hours['3-shift system'] = 520
+        loader.default_shift_name = str(fte.get('default_shift_name') or loader.default_shift_name)
+
+    for mat, cfg_dict in (master.get('safety_stock') or {}).items():
+        loader.safety_stock[str(mat)] = SafetyStockConfig(**cfg_dict)
+
+    purchase = master.get('purchase') or {}
+    loader.purchase_lead_times.update(
+        {str(m): int(v) for m, v in (purchase.get('lead_times') or {}).items()})
+    loader.purchase_moq.update(
+        {str(m): float(v) for m, v in (purchase.get('moq') or {}).items()})
+    loader.purchase_sheet_materials |= set(purchase.get('sheet_materials') or [])
+
+    for mat, item in (master.get('sales_prices') or {}).items():
+        loader.sales_prices[str(mat)] = SalesPriceItem(**item)
+    for mat, item in (master.get('material_costs') or {}).items():
+        loader.material_costs[str(mat)] = RawMaterialCost(**item)
+    for mc, item in (master.get('machine_costs') or {}).items():
+        loader.machine_costs[str(mc)] = MachineCost(**item)
+
+    vp = master.get('valuation_params')
+    if vp:
+        loader.valuation_params = ValuationParameters(**vp)
+
+
 def finalize_shift_systems(loader) -> None:
     """Derive shift systems from the FINAL config (after overrides), exactly
     like _load_machines: UNLIMITED when listed, otherwise 3-shift."""
