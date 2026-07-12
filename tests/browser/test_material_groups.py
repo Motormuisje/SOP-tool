@@ -191,6 +191,76 @@ def test_save_group_from_analysis_and_filter_with_linetypes(browser_page):
         _delete_all_groups(base_url)
 
 
+def test_dropdown_alle_groepen_escapes_active_group(browser_page):
+    """Regressie (gemeld): groep actief → dropdown terug naar 'Alle groepen'
+    liet de tabel gescoopt achter ('vast in de groepsweergave'). Nu stuurt de
+    dropdown de activatie zolang een groep actief is, en toont hij de actieve
+    groep in plaats van misleidend 'Alle groepen'. Gedreven via de ECHTE
+    select (select_option), niet programmatisch — dat was het testgat."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    page.reload(wait_until="networkidle")
+    gid = None
+    try:
+        _open_planning(page)
+        total_rows = page.evaluate(
+            "() => [...document.querySelectorAll('#planBody tr[data-material]')]"
+            ".filter(r => r.style.display !== 'none').length")
+
+        results = requests.get(base_url + "/api/results", timeout=120).json()["results"]
+        mats = [str(r["material_number"]) for r in results["03. Total demand"][:2]]
+        gid = requests.post(base_url + "/api/material_groups", json={
+            "name": "Dropdown escape", "materials": mats}, timeout=60).json()["group"]["id"]
+        page.evaluate("() => loadMaterialGroups()")
+        page.wait_for_function("() => (state.materialGroups || []).length > 0",
+                               timeout=15000)
+
+        # Activeer via de dropdown? Nee — via het menu, zoals de gebruiker.
+        page.evaluate("(g) => activateMaterialGroup(g)", gid)
+        expect(page.locator("#activeGroupBanner")).to_be_visible(timeout=60000)
+        page.evaluate("() => window.showTab('planning')")
+        page.wait_for_function(
+            """(n) => [...document.querySelectorAll('#planBody tr[data-material]')]
+                .filter(r => r.style.display !== 'none').length < n""",
+            arg=total_rows, timeout=15000)
+
+        # De dropdown toont de ACTIEVE groep, niet 'Alle groepen'.
+        assert page.locator("#matGroupSelect").input_value() == gid
+        label = page.evaluate(
+            "() => document.querySelector('#matGroupSelect option:checked').textContent")
+        assert "actief" in label
+
+        # ECHTE select: terug naar 'Alle groepen' → deactiveert alles.
+        page.select_option("#matGroupSelect", "")
+        expect(page.locator("#activeGroupBanner")).to_be_hidden(timeout=60000)
+        page.wait_for_function(
+            """(n) => [...document.querySelectorAll('#planBody tr[data-material]')]
+                .filter(r => r.style.display !== 'none').length === n""",
+            arg=total_rows, timeout=60000)
+        assert "scoped" not in requests.get(base_url + "/api/dashboard",
+                                            timeout=120).json()
+
+        # En andersom: groep kiezen in de dropdown zonder actieve groep is
+        # een tabelfilter; daarna 'Alle groepen' herstelt (pure flow).
+        page.select_option("#matGroupSelect", gid)
+        page.wait_for_function(
+            """(n) => [...document.querySelectorAll('#planBody tr[data-material]')]
+                .filter(r => r.style.display !== 'none').length < n""",
+            arg=total_rows, timeout=15000)
+        page.select_option("#matGroupSelect", "")
+        page.wait_for_function(
+            """(n) => [...document.querySelectorAll('#planBody tr[data-material]')]
+                .filter(r => r.style.display !== 'none').length === n""",
+            arg=total_rows, timeout=15000)
+        assert page.js_errors == []
+    finally:
+        try:
+            requests.post(base_url + "/api/material_groups/deactivate", timeout=60)
+        except requests.RequestException:
+            pass
+        _delete_all_groups(base_url)
+
+
 def test_activate_group_scopes_dashboard_values_machines(browser_page):
     """'Maak actief': banner overal zichtbaar, dashboard toont alleen de
     groepsbijdrage, values tonen de bijdragemarge, machines-tab toont het

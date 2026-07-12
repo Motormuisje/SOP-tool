@@ -5052,14 +5052,35 @@ function _renderMatGroupSelect() {
     const show = groups.length > 0;
     sel.classList.toggle('hidden', !show);
     if (wrap) wrap.classList.toggle('hidden', !show);
+    const activeId = state.activeMaterialGroup ? state.activeMaterialGroup.id : null;
     sel.innerHTML = '<option value="">Alle groepen</option>' + groups.map(g =>
-        `<option value="${escapeHtml(g.id)}" ${g.id === _materialGroupFilterId ? 'selected' : ''}>${escapeHtml(g.name)} (${(g.materials || []).length})</option>`
+        `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)} (${(g.materials || []).length})${g.id === activeId ? ' · actief' : ''}</option>`
     ).join('');
-    sel.value = _materialGroupFilterId || '';
+    // De dropdown moet tonen wat de tabel ECHT laat zien: een actieve groep
+    // scoopt alles, ook als er geen expliciet tabelfilter staat. "Alle
+    // groepen" tonen terwijl de tabel gescoopt is, is precies de verwarring
+    // die de vastzit-bug veroorzaakte.
+    sel.value = _materialGroupFilterId || activeId || '';
 }
 
-function onMatGroupFilterChange(sel) {
-    _setMaterialGroupFilter(sel.value || null);
+async function onMatGroupFilterChange(sel) {
+    const gid = sel.value || null;
+    const active = state.activeMaterialGroup;
+    if (active) {
+        // Zolang een groep ACTIEF is, stuurt de dropdown de activatie:
+        // "Alle groepen" deactiveert (alles weer zichtbaar), een andere
+        // groep kiezen verlegt de activatie. Een los tabelfilter bovenop
+        // een actieve groep bestaat niet meer (dat was de vastzit-bug).
+        _setMaterialGroupFilter(null, { skipFilter: true });
+        if (!gid) {
+            await deactivateMaterialGroup();
+        } else if (gid !== active.id) {
+            await activateMaterialGroup(gid);
+        }
+        _renderMatGroupSelect();
+        return;
+    }
+    _setMaterialGroupFilter(gid);
 }
 
 function _activeGroupMaterialSet() {
@@ -5154,6 +5175,8 @@ async function activateMaterialGroup(gid) {
                             { method: 'POST' });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
+    // Een actieve groep vervangt het losse tabelfilter (één waarheid).
+    _setMaterialGroupFilter(null, { skipFilter: true });
     _applyMaterialGroupsPayload(data.groups, data.active_group_id, data.unknown_counts);
     document.getElementById('matGroupMenu')?.classList.add('hidden');
     await _refreshAfterGroupChange();
