@@ -261,6 +261,164 @@ def test_dropdown_alle_groepen_escapes_active_group(browser_page):
         _delete_all_groups(base_url)
 
 
+def test_empty_filter_state_shows_hint_with_reset(browser_page):
+    """Klasse-fix: elke filtercombinatie die alles wegfiltert moet zichzelf
+    uitleggen en een uitweg bieden (voorheen: lege tabel zonder verklaring)."""
+    page = browser_page
+    page.reload(wait_until="networkidle")
+    _open_planning(page)
+    total = page.evaluate(
+        "() => [...document.querySelectorAll('#planBody tr[data-material]')]"
+        ".filter(r => r.style.display !== 'none').length")
+
+    page.evaluate(
+        "() => { document.getElementById('matSearch').value = 'XXNIETBESTAANDXX'; filterTable(); }")
+    page.wait_for_selector("#planEmptyHint", state="visible", timeout=10000)
+    hint = page.evaluate("() => document.getElementById('planEmptyHint').textContent")
+    assert "Geen rijen zichtbaar" in hint and "Herstel filters" in hint
+
+    page.click("#planEmptyHint button")
+    page.wait_for_function(
+        """(n) => [...document.querySelectorAll('#planBody tr[data-material]')]
+            .filter(r => r.style.display !== 'none').length === n""",
+        arg=total, timeout=10000)
+    assert not page.locator("#planEmptyHint").is_visible()
+    assert page.evaluate("() => document.getElementById('matSearch').value") == ""
+    assert page.js_errors == []
+
+
+def test_analysis_scope_cleared_on_session_switch(browser_page):
+    """Klasse-fix: de 'Toon in planningstabel'-scope verwees na een
+    sessiewissel naar materialen van de vorige sessie (lege tabel)."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    sid_orig = page.server["session_id"]
+    sid_b = None
+    page.reload(wait_until="networkidle")
+    try:
+        _open_planning(page)
+        snap = requests.post(base_url + "/api/sessions/snapshot",
+                             json={"name": "Scope wissel test"}, timeout=120)
+        sid_b = snap.json()["session"]["id"]
+
+        page.evaluate(
+            """() => {
+                const r = document.querySelector('#planBody tr[data-material]');
+                _editedMaterialScope = new Set([r.dataset.material]);
+                _vpMaterialScope = new Set([r.dataset.material]);
+                filterTable();
+            }""")
+        page.evaluate("(sid) => switchSession(sid)", sid_b)
+        page.wait_for_function("(sid) => state.activeSessionId === sid",
+                               arg=sid_b, timeout=180000)
+        cleared = page.evaluate(
+            "() => _editedMaterialScope === null && _vpMaterialScope === null")
+        assert cleared, "analyse-/VP-scope had gewist moeten zijn na sessiewissel"
+        page.evaluate("(sid) => switchSession(sid)", sid_orig)
+        page.wait_for_function("(sid) => state.activeSessionId === sid",
+                               arg=sid_orig, timeout=180000)
+        assert page.js_errors == []
+    finally:
+        try:
+            requests.post(base_url + "/api/sessions/switch",
+                          json={"session_id": sid_orig}, timeout=300)
+            if sid_b:
+                requests.delete(base_url + f"/api/sessions/{sid_b}", timeout=60)
+        except requests.RequestException:
+            pass
+
+
+def test_analysis_works_under_active_group(browser_page):
+    """Klasse-fix: onder een actieve groep toont de financiële grafiek
+    gescoopte labels (Groepsomzet, Bijdragemarge) — de analyse moet die
+    kennen én de productbijdragen tot de groep beperken; de volumetrend
+    moet reconciliëren met de gescoopte reeks. Ook: filter-undo mag het
+    losse groepsfilter niet terugbrengen bovenop de actieve groep."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    page.reload(wait_until="networkidle")
+    gid = None
+    try:
+        _open_planning(page)
+        results = requests.get(base_url + "/api/results", timeout=120).json()["results"]
+        mats = [str(r["material_number"])
+                for r in results.get("03. Total demand", [])
+                if sum(r["values"].values()) > 0][:3]
+        gid = requests.post(base_url + "/api/material_groups", json={
+            "name": "Analyse scope", "materials": mats}, timeout=60).json()["group"]["id"]
+        page.evaluate("() => loadMaterialGroups()")
+        page.wait_for_function("() => (state.materialGroups || []).length > 0",
+                               timeout=15000)
+        # Snapshot met groepsfilter in de historie, daarna activeren.
+        page.select_option("#matGroupSelect", gid)
+        page.evaluate("() => pushFilterHistory()")
+        page.evaluate("(g) => activateMaterialGroup(g)", gid)
+        expect(page.locator("#activeGroupBanner")).to_be_visible(timeout=60000)
+
+        # B-guard: undo mag het losse filter niet herstellen bij actieve groep.
+        page.evaluate("() => undoFilterState()")
+        assert page.evaluate("() => _materialGroupFilterId") is None
+
+        page.evaluate("() => window.showTab('dashboard')")
+        page.wait_for_function(
+            "() => window._dashboardData && window._dashboardData.scoped",
+            timeout=60000)
+
+        # Financiële grafiek: gescoopte labels zijn analyseerbaar.
+        page.evaluate(
+            "() => openChartZoomForCanvas(document.getElementById('financialChart'), 'fin')")
+        page.evaluate("() => openChartAnalysis()")
+        page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+        page.evaluate(
+            """() => {
+                const ds = _zoomChart.data.datasets.findIndex(d => d.label === 'Groepsomzet');
+                return _analysisApplySelection(ds, 1, 2);
+            }""")
+        page.wait_for_function(
+            "() => window._lastChartAnalysis && window._lastChartAnalysis.iA === 1",
+            timeout=30000)
+        check = page.evaluate(
+            """(mats) => {
+                const a = window._lastChartAnalysis;
+                return {
+                    head: document.getElementById('chartAnalysisHeadline').textContent,
+                    inGroup: a.rows.filter(r => r.material)
+                        .every(r => mats.includes(String(r.material))),
+                    reconciles: Math.abs(a.contributorSum - a.totalDelta)
+                        <= Math.max(1, 0.01 * Math.abs(a.totalDelta)),
+                };
+            }""", mats)
+        assert "Omzet" in check["head"] or "Geen noemenswaardige" in check["head"]
+        assert check["inGroup"], "bijdragen buiten de actieve groep in de analyse"
+        assert check["reconciles"], check
+
+        # Volumetrend: bijdragen ⊆ groep en som sluit aan op de gescoopte reeks.
+        page.evaluate("() => closeChartZoom()")
+        page.evaluate(
+            "() => openChartZoomForCanvas(document.getElementById('demandTrendChart'), 'trend')")
+        page.evaluate("() => openChartAnalysis()")
+        page.wait_for_function("() => !!window._lastChartAnalysis", timeout=30000)
+        check = page.evaluate(
+            """(mats) => {
+                const a = window._lastChartAnalysis;
+                return {
+                    inGroup: a.rows.filter(r => r.material)
+                        .every(r => mats.includes(String(r.material))),
+                    reconciles: Math.abs(a.contributorSum - a.totalDelta)
+                        <= Math.max(1, 0.01 * Math.abs(a.totalDelta)),
+                };
+            }""", mats)
+        assert check["inGroup"] and check["reconciles"], check
+        page.evaluate("() => closeChartZoom()")
+        assert page.js_errors == []
+    finally:
+        try:
+            requests.post(base_url + "/api/material_groups/deactivate", timeout=60)
+        except requests.RequestException:
+            pass
+        _delete_all_groups(base_url)
+
+
 def test_activate_group_scopes_dashboard_values_machines(browser_page):
     """'Maak actief': banner overal zichtbaar, dashboard toont alleen de
     groepsbijdrage, values tonen de bijdragemarge, machines-tab toont het
