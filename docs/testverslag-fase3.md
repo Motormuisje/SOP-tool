@@ -108,9 +108,59 @@ De golden-parity-celvergelijking draait via het diff-script op de export van
 4. Meerdere gelijktijdige gebruikers delen de actieve instantie (bestaande
    architectuurkeuze; rebuilds zijn wel vergrendeld tegen races).
 
-## 7. Conclusie
+## 7. Handmatige validatieronde (juli 2026) — 92 checks
 
-Alle 745 geautomatiseerde controles slagen, de rekenkern is aantoonbaar
-ongewijzigd (byte-identieke export), en de persistentie- en isolatiegaranties
-zijn met echte procesherstarts bewezen. Op basis hiervan kan de oplevering
-met garantie worden aangeboden, met de vier expliciete begrenzingen uit §6.
+Bovenop de geautomatiseerde suites is de volledige applicatie handmatig
+tegen de live-server gevalideerd via een checklist van **92 controles** in
+negen domeinen (A masterdata, B sessies, C bewerkingen/cascade, D dynamische
+producten, E grafiek-analyse, F materiaalgroepen, G machines, H exports,
+I afsluiting). Elke check is uitgevoerd tegen de draaiende app, waar mogelijk
+met API-verificatie van de onderliggende cijfers naast het visuele bewijs;
+elke check heeft een screenshot. Zie `docs/checklist-manuele-validatie.md`
+en het ingevulde werkboek in `exports/`.
+
+**Resultaat: 91/92 OK, 1 afwijking (gevonden én gefixt tijdens de ronde).**
+
+Enkele diepere verificaties uit deze ronde:
+- Totale vraag = forecast + afhankelijke vraag: 360/360 steekproefcellen exact.
+- Bijdragemarge = omzet − grondstofkost − machinekost: exact (bevestigd op de
+  gescoopte P&L onder een actieve materiaalgroep); FTE/capaciteit blijven
+  bewust fabrieksbreed.
+- Omzet = prijs × volume voor toegevoegde producten: exact per product.
+- Undo van een BOM-parent-edit herstelt het (actieve) kind exact naar baseline.
+- Effectieve doorzet schaalt lineair met OEE (basis van de doeldoorzet-functie).
+- KPI's byte-identiek voor/na een echte procesherstart.
+
+### Bevindingen en fixes uit deze ronde
+
+1. **Getalparser accepteerde misvormde invoer** (checklist A6). "3000,5,6" werd
+   stil 300056; "12abc" werd 12. Oorzaak: groepering werd blind gestript en het
+   eindresultaat niet gevalideerd. **Gefixt**: groepering moet echte groepen van
+   drie zijn en het hele veld een geldig getal; anders weigering. Regressietest
+   met 13 gevallen + het gemelde scenario. (De enige "afwijking" in de checklist
+   staat als bewijs bewaard; de fix is geverifieerd.)
+2. **Numerieke nul-aux resurrecteerde na herstart.** Een edit op een rij met
+   `aux_column = 0` overleefde de undo en dook na herstart weer op, doordat de
+   editsleutel met `aux or ''` werd gebouwd (0 is falsy → sleutel-mismatch).
+   **Gefixt** met een canonieke aux-normalisatie; regressietests toegevoegd.
+3. **Toegevoegd product niet bruikbaar als component.** De materialenlijst
+   filterde alle toegevoegde producten weg, waardoor een volgend product er
+   niet naar kon verwijzen. **Gefixt**: toegevoegde producten worden getoond
+   (gemarkeerd); live geverifieerd dat product B product A als component gebruikt.
+
+Daarnaast bleek een aanvankelijk vermoede "undo-cascade-bug" een **schijnbug**:
+het testmateriaal stond nog gedeactiveerd van een eerdere test, waardoor de
+volledige build 0 gaf en de incrementele cascade een waarde. Met een actief
+materiaal round-trippt de undo exact; de rekenkern is niet gewijzigd.
+
+Alle drie de fixes draaien met groene backend- (683+) en browsersuites (74)
+en behouden de golden-parity (`python main.py --test`).
+
+## 8. Conclusie
+
+Alle geautomatiseerde controles slagen, de rekenkern is aantoonbaar ongewijzigd
+(byte-identieke export, groene parity-smoke), de persistentie- en isolatie-
+garanties zijn met echte procesherstarts bewezen, en de 92-check handmatige
+ronde bevestigt de functionaliteit end-to-end met drie onderweg gevonden en
+gefixte defecten. Op basis hiervan kan de oplevering met garantie worden
+aangeboden, met de expliciete begrenzingen uit §6.
