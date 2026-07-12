@@ -1371,37 +1371,12 @@
         <div id="config-tab" class="tab-content hidden">
           <div class="max-w-2xl mx-auto space-y-6">
 
-            <!-- Masterdata in de app (master-config vervanging) -->
-            <div class="card rounded-xl p-6">
-              <div class="flex items-center justify-between mb-1">
-                <h3 class="flex items-center font-semibold text-slate-200">
-                  Masterdata (in app)
-                  <span class="cfg-info">i<span class="cfg-tooltip">De app beheert de masterdata (materialen, machines/OEE, FTE, veiligheidsvoorraad, inkoop, kosten, valuatie). Eenmalig importeren uit een master-.xlsm; daarna heeft de maandelijkse berekening alleen de 4 SAP-extracts nodig en bewerk je masterdata hier. Wijzigingen gelden bij de eerstvolgende berekening.</span></span>
-                </h3>
-                <label class="btn-primary px-3 py-1 rounded text-xs font-semibold cursor-pointer text-white">
-                  Importeer masterbestand
-                  <input type="file" accept=".xlsm,.xlsx" class="hidden" id="masterImportInput" onchange="importMasterData(event)">
-                </label>
-              </div>
-              <p class="text-slate-500 text-xs mb-3">Na de import is geen basis-.xlsm meer nodig: de multi-upload gebruikt automatisch deze masterdata. De app is de bron van waarheid — een nieuwe import vraagt bevestiging.</p>
-              <div id="masterDataStatus" class="mb-3 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
-              <div id="masterDatasetButtons" class="flex flex-wrap gap-2"></div>
+            <!-- ===== Sectie: instellingen van de actieve instantie ===== -->
+            <div class="flex items-baseline gap-2 border-l-4 border-blue-500 pl-3">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-blue-300">Deze instantie</h2>
+              <span id="cfgInstanceName" class="text-xs text-slate-400 truncate"></span>
             </div>
-
-            <!-- Master Data File (legacy basisbestand / importbron) -->
-            <div class="card rounded-xl p-6">
-              <h3 class="font-semibold text-slate-200 mb-1">Master Data File</h3>
-              <p class="text-slate-500 text-xs mb-4">Het .xlsm bestand met Material master, Safety stock, OEE/Machines, FTE, Purchase sheet en financiele data. Dient als importbron voor de app-masterdata hierboven, en als terugvaloptie zolang er nog geen masterdata in de app staat.</p>
-              <div id="cfgMasterStatus" class="mb-4 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
-              <div class="flex items-center gap-3">
-                <label class="btn-primary px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer text-white">
-                  Nieuw bestand uploaden
-                  <input type="file" accept=".xlsm,.xlsx" class="hidden" id="cfgMasterFileInput" onchange="uploadMasterFile(event)">
-                </label>
-                <span id="cfgMasterUploading" class="text-xs text-slate-400 hidden">Uploading...</span>
-                <button onclick="importMasterDataFromConfigured()" class="px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600" title="Parseer het geconfigureerde masterbestand één keer en beheer de data voortaan in de app">→ Importeer naar app</button>
-              </div>
-            </div>
+            <p class="text-xs text-slate-500 -mt-4">Onderstaande instellingen horen bij de actieve instantie en reizen ermee mee. Andere instanties merken er niets van.</p>
 
             <!-- Planning Configuration -->
             <div class="card rounded-xl p-6">
@@ -1542,6 +1517,45 @@
                     <tr><td colspan="6" class="text-center text-slate-500 p-4">Laden...</td></tr>
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            <!-- ===== Sectie: app-brede instellingen (alle instanties) ===== -->
+            <div class="flex items-baseline gap-2 border-l-4 border-amber-500 pl-3 pt-4">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-amber-300">App-breed</h2>
+              <span class="text-xs text-amber-200/70">geldt voor álle instanties</span>
+            </div>
+            <p class="text-xs text-slate-500 -mt-4">Masterdata en mappen zijn gedeeld: een wijziging hier werkt door in elke instantie bij de eerstvolgende berekening. Wil je iets alleen in deze instantie proberen, gebruik dan de instellingen hierboven.</p>
+
+            <!-- Masterdata in de app (master-config vervanging) -->
+            <div class="card rounded-xl p-6">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="flex items-center font-semibold text-slate-200">
+                  Masterdata (in app)
+                  <span class="cfg-info">i<span class="cfg-tooltip">De app beheert de masterdata (materialen, machines/OEE, FTE, veiligheidsvoorraad, inkoop, kosten, valuatie). Eenmalig importeren uit een master-.xlsm; daarna heeft de maandelijkse berekening alleen de 4 SAP-extracts nodig en bewerk je masterdata hier. Wijzigingen gelden bij de eerstvolgende berekening.</span></span>
+                </h3>
+                <label class="btn-primary px-3 py-1 rounded text-xs font-semibold cursor-pointer text-white">
+                  Importeer masterbestand
+                  <input type="file" accept=".xlsm,.xlsx" class="hidden" id="masterImportInput" onchange="importMasterData(event)">
+                </label>
+              </div>
+              <p class="text-slate-500 text-xs mb-3">Na de import is geen basis-.xlsm meer nodig: de multi-upload gebruikt automatisch deze masterdata. De app is de bron van waarheid — een nieuwe import vraagt bevestiging.</p>
+              <div id="masterDataStatus" class="mb-3 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
+              <div id="masterDatasetButtons" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- Master Data File (legacy basisbestand / importbron) -->
+            <div class="card rounded-xl p-6">
+              <h3 class="font-semibold text-slate-200 mb-1">Master Data File</h3>
+              <p class="text-slate-500 text-xs mb-4">Het .xlsm bestand met Material master, Safety stock, OEE/Machines, FTE, Purchase sheet en financiele data. Dient als importbron voor de app-masterdata hierboven, en als terugvaloptie zolang er nog geen masterdata in de app staat.</p>
+              <div id="cfgMasterStatus" class="mb-4 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
+              <div class="flex items-center gap-3">
+                <label class="btn-primary px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer text-white">
+                  Nieuw bestand uploaden
+                  <input type="file" accept=".xlsm,.xlsx" class="hidden" id="cfgMasterFileInput" onchange="uploadMasterFile(event)">
+                </label>
+                <span id="cfgMasterUploading" class="text-xs text-slate-400 hidden">Uploading...</span>
+                <button onclick="importMasterDataFromConfigured()" class="px-3 py-2 rounded-lg text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600" title="Parseer het geconfigureerde masterbestand één keer en beheer de data voortaan in de app">→ Importeer naar app</button>
               </div>
             </div>
 
@@ -11998,6 +12012,12 @@ function _cfgSetField(id, overrideVal, fileDefault, formatter) {
 }
 
 async function loadConfigTab() {
+    const nameEl = document.getElementById('cfgInstanceName');
+    if (nameEl) {
+        const src = document.getElementById('fileName');
+        const nm = src ? src.textContent.trim() : '';
+        nameEl.textContent = (nm && nm !== '-') ? '— ' + nm : '— nog geen actieve instantie';
+    }
     try {
         const res = await fetch('/api/config');
         const cfg = await res.json();
