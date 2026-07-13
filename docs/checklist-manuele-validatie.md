@@ -194,8 +194,8 @@ startvoorraad- en bulk-edits zijn weg.
 *Verwacht:* de undo keert terug naar de oorspronkelijke waarde (niet de tussenwaarde).
 ☐ OK — Screenshot — Opmerkingen: ______________
 
-**C12 — Inkoopontvangst-edit (L06 inkoop).** Wijzig de inkoopontvangst van een ingekocht materiaal.
-*Verwacht:* de voorraad (L04) en het inkoopplan (L07) bewegen consistent mee.
+**C12 — Purchase receipt-edit (L06 inkoop).** Wijzig de purchase receipt (inkoopontvangst) van een ingekocht materiaal.
+*Verwacht:* de voorraad (L04) en het purchase plan (L07) bewegen consistent mee.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
 
