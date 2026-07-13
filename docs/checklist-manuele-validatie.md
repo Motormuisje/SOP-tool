@@ -64,6 +64,23 @@ Zet de vlag weer aan + herbereken: het materiaal is terug met dezelfde
 cijfers als vóór de deactivering.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**A9 — Machinegegevens bewerken.** Wijzig de OEE van een machine in de masterdata-grid en herbereken.
+*Verwacht:* de bezetting/capaciteit beweegt mee bij de eerstvolgende berekening.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**A10 — Veiligheidsvoorraad bewerken.** Verhoog de veiligheidsvoorraad van een materiaal en herbereken.
+*Verwacht:* de voorraadplanning (L04/L05) schuift mee omhoog.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**A11 — Valuatieparameters bewerken.** Wijzig een valuatieparameter (bv. directe FTE-kost) en herbereken.
+*Verwacht:* EBIT/ROCE op het dashboard bewegen mee.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**A12 — Grondstofkosten bewerken.** Wijzig de grondstofkost van een materiaal en herbereken.
+*Verwacht:* de bijdragemarge/kosten van dat materiaal bewegen mee.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 ## B. Sessies & persistentie
 
 **B1 — Nieuwe instantie.** Maak een tweede instantie aan, upload het
@@ -99,6 +116,23 @@ tweede instantie en open de Config-tab.
 *Verwacht:* de config-velden tonen de waarden van déze instantie, niet die
 van de eerst geladen instantie.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**B7 — Derde instantie.** Maak een derde instantie aan naast de twee bestaande.
+*Verwacht:* alle drie staan los in de Files-lijst met eigen cijfers.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**B8 — Instantie verwijderen.** Verwijder één instantie.
+*Verwacht:* de instantie is weg; de overige instanties en hun data blijven intact.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**B9 — Scenario opslaan en laden.** Sla een scenario op binnen een instantie, doe een edit, laad het scenario terug.
+*Verwacht:* de instantie keert terug naar de opgeslagen staat.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**B10 — Config-isolatie bij edit.** Doe een config-wijziging in instantie A; controleer instantie B.
+*Verwacht:* instantie B is onaangeroerd (geen lekkage van config tussen instanties).
+☐ OK — Screenshot — Opmerkingen: ______________
+
 
 ## C. Bewerkingen & cascade
 
@@ -148,6 +182,23 @@ startvoorraad- en bulk-edits zijn weg.
 *Verwacht:* commentaar-indicator zichtbaar en de tekst blijft bewaard.
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**C9 — Redo na undo.** Doe een edit, undo, dan redo.
+*Verwacht:* redo herstelt exact de bewerkte waarde en de cascade.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C10 — Minimum-doelvoorraad-edit (L05).** Wijzig de minimum-doelvoorraad van een materiaal.
+*Verwacht:* de productie-/inkoopplanning reageert waar de voorraad onder het doel zou zakken.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C11 — Herhaalde edit op dezelfde cel.** Wijzig dezelfde cel twee keer achter elkaar, dan undo.
+*Verwacht:* de undo keert terug naar de oorspronkelijke waarde (niet de tussenwaarde).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**C12 — Inkoopontvangst-edit (L06 inkoop).** Wijzig de inkoopontvangst van een ingekocht materiaal.
+*Verwacht:* de voorraad (L04) en het inkoopplan (L07) bewegen consistent mee.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 
 ## D. Dynamische producten
 
@@ -190,6 +241,23 @@ startvoorraad- en bulk-edits zijn weg.
 **D10 — Verwijderen + sessiewissel.** Wissel naar de andere instantie en terug; verwijder daarna één testproduct.
 *Verwacht:* producten blijven bij hun eigen instantie; na verwijderen is het product overal weg en klopt de planning zonder het product.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**D11 — Mix-grenswaarden (0 en 1).** Voeg mix-producten toe met productiefractie 0 en 1.
+*Verwacht:* fractie 0 = volledig inkoop, fractie 1 = volledig productie; geen dode velden.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D12 — Startvoorraad + veiligheidsvoorraad.** Voeg een product toe met een startvoorraad en een veiligheidsvoorraad.
+*Verwacht:* de voorraadlijn start op de startvoorraad en blijft boven de veiligheidsvoorraad.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D13 — Component-product verwijderen.** Verwijder een toegevoegd product dat als component van een ander toegevoegd product is gebruikt.
+*Verwacht:* nette afhandeling (waarschuwing/geen crash); de afhankelijke planning herberekent.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**D14 — Edge: BOM-cyclus geweigerd.** Probeer twee producten te maken die elkaar als component gebruiken (A→B→A).
+*Verwacht:* de cyclus wordt geweigerd met een duidelijke Nederlandse melding.
+☐ OK — Screenshot — Opmerkingen: ______________
+
 
 
 
@@ -250,6 +318,23 @@ startvoorraad- en bulk-edits zijn weg.
 **E14 — Meerdere grafieken achter elkaar.** Analyseer 3 verschillende grafieken na elkaar zonder te herladen.
 *Verwacht:* elke analyse is correct en onafhankelijk; geen restanten van de vorige.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**E15 — ROCE-grafiek-analyse.** Open de analyse op de ROCE-grafiek.
+*Verwacht:* werkende analyse; de beweging wordt logisch verklaard (ratio-metric).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E16 — Export bevat alle bijdragers.** Exporteer een analyse met meerdere bijdragers en open het bestand.
+*Verwacht:* alle bijdragers uit het paneel staan in het Excel-bestand met de juiste delta's.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E17 — Bewaar als groep vanuit analyse.** Klik 'Bewaar als groep' op de top-movers van een analyse.
+*Verwacht:* er ontstaat een materiaalgroep met precies die producten.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**E18 — Analyse-drill en terug.** Klik in de analyse door op een product en weer terug.
+*Verwacht:* de drill toont het productdetail; 'terug' keert netjes naar de grafiekanalyse.
+☐ OK — Screenshot — Opmerkingen: ______________
+
 
 
 
@@ -327,6 +412,23 @@ startvoorraad- en bulk-edits zijn weg.
 *Verwacht:* het exportbestand bevat de volledige fabriek (groepen scopen alleen de weergave).
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**F19 — Groep = hele fabriek.** Maak een groep met alle materialen en activeer.
+*Verwacht:* de gescoopte cijfers zijn gelijk aan de fabrieksbrede cijfers.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F20 — Groep hernoemen.** Hernoem een opgeslagen groep.
+*Verwacht:* de nieuwe naam staat in de dropdown en blijft na herstart.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F21 — Edge: lege groepsnaam geweigerd.** Probeer een groep met een lege naam op te slaan.
+*Verwacht:* nette foutmelding; er wordt geen groep aangemaakt.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**F22 — Groep met één materiaal.** Maak een groep met exact één materiaal en activeer.
+*Verwacht:* de scoping werkt correct op dat ene materiaal (geen deling-door-nul in de marge).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 
 
 ## G. Machines & capaciteit
@@ -370,6 +472,23 @@ startvoorraad- en bulk-edits zijn weg.
 **G10 — Machine × groep-scoping.** Bekijk de machine-uren onder een actieve materiaalgroep.
 *Verwacht:* de machinegrafiek toont de uren van de groepsmaterialen.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**G11 — Beschikbaarheid aanpassen.** Wijzig de beschikbaarheid (%) van een machine.
+*Verwacht:* de capaciteit per periode schaalt mee; bezetting herberekend.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G12 — Shift-uren aanpassen.** Wijzig de shift-uren per maand van een machine.
+*Verwacht:* de beschikbare uren en de bezetting bewegen consistent mee.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G13 — Machine-redo na undo.** Wijzig OEE, undo, dan redo.
+*Verwacht:* redo herstelt de OEE-wijziging en de bezetting exact.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**G14 — Meerdere machine-edits + reset.** Doe drie machine-edits en klik reset.
+*Verwacht:* alle machines staan exact terug op de baseline.
+☐ OK — Screenshot — Opmerkingen: ______________
+
 
 
 
@@ -415,6 +534,23 @@ startvoorraad- en bulk-edits zijn weg.
 *Verwacht:* elk exportbestand hoort bij de juiste instantie (cijfers/perioden kloppen per instantie).
 ☐ OK — Screenshot — Opmerkingen: ______________
 
+**H11 — FTE-sheet in de export.** Open de FTE requirements-sheet in de export.
+*Verwacht:* de FTE-totalen per periode kloppen met het dashboard.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H12 — Voorraadkwaliteit-sheet.** Open de Inventory quality-sheet in de export.
+*Verwacht:* de categorieën/waarden kloppen met de UI-grafiek.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H13 — Values-planning-sheet.** Steekproef 3 cellen uit de Values_Planning-sheet.
+*Verwacht:* de financiële waarden komen exact overeen met de UI.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**H14 — DB-export-kolomstructuur.** Bekijk de kolomkoppen van de DB-export.
+*Verwacht:* één rij per materiaal × lijn × periode met de verwachte kolommen (materiaal, lijn, periode, waarde, site).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+
 
 
 ## I. Afsluitend
@@ -450,6 +586,23 @@ startvoorraad- en bulk-edits zijn weg.
 **I8 — Golden-parity intact.** Bevestig dat de kern onaangeroerd is (python main.py --test).
 *Verwacht:* de pariteits-smoke slaagt; de single-file-flow is byte-identiek gebleven.
 ☐ OK — Screenshot — Opmerkingen: ______________
+
+**I9 — Voorraad lopend saldo.** Steekproef: voorraad einde periode = begin + ontvangsten − vraag.
+*Verwacht:* het lopende voorraadsaldo (L04) klopt over de periodeketen.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I10 — Alle linetypes aanwezig.** Controleer dat alle verwachte linetypes (L01–L12) in de resultaten zitten.
+*Verwacht:* geen ontbrekende lijnen; de EXPECTED_LINE_TYPES-set is compleet.
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I11 — Geen ongeldige cijfers.** Scan de resultaten op NaN/oneindig/None in numerieke velden.
+*Verwacht:* alle waarden zijn geldige getallen (geen NaN/inf/None waar een getal hoort).
+☐ OK — Screenshot — Opmerkingen: ______________
+
+**I12 — Golden vs live steekproef.** Vergelijk een steekproef live-cijfers met de golden-baseline.
+*Verwacht:* de kern is byte-identiek aan de golden-referentie (rekenkern onaangeroerd).
+☐ OK — Screenshot — Opmerkingen: ______________
+
 
 ---
 

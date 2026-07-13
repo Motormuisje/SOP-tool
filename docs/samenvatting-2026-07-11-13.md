@@ -136,20 +136,32 @@ de aangezette onvolledige fix is teruggedraaid.
 
 ---
 
-## 6. Handmatige validatieronde (92 checks)
-Volledige app tegen de live-server gevalideerd via 92 controles in 9 domeinen
-(A masterdata, B sessies, C bewerkingen/cascade, D producten, E analyse,
-F groepen, G machines, H exports, I afsluiting), elk met API-verificatie náást
-een screenshot. **Resultaat: 91/92 OK, 1 afwijking** (de getalparser-bug,
-tijdens de ronde gefixt en als bewijs bewaard).
+## 6. Handmatige validatieronde (128 checks)
+Volledige app tegen de live-server gevalideerd via een checklist die is
+uitgebreid naar **128 controles in 9 domeinen** (A masterdata 12, B sessies 10,
+C bewerkingen 12, D producten 14, E analyse 18, F groepen 22, G machines 14,
+H exports 14, I afsluiting 12), elk met API-verificatie náást een screenshot.
+De edit-checks tonen een **VOOR/NA-beeld** (grote, leesbare composities in het
+werkboek). **Resultaat: 128/128 OK** (de eerder gevonden parser-afwijking is
+gefixt en zit nu als geslaagde regressie in de suite).
 
 Diepere verificaties o.a.: totale vraag = forecast + afhankelijke vraag
-(360/360 cellen), bijdragemarge = omzet − grondstof − machinekost (exact),
-omzet = prijs × volume per product (exact), undo herstelt het actieve BOM-kind
-exact, effectieve doorzet schaalt lineair met OEE, KPI's byte-identiek na
-herstart. Ook gevalideerd: commentaarvelden (C8, H9), scenario's, bulk-edits +
-sleep-selectie, L04-startvoorraad, capaciteits-overrides, MoM- en DB-export,
-machine-drill, voorraadkwaliteit, undo/redo/reset.
+(360/360 cellen), voorraad lopend saldo L04 (480/480 cellen), geen NaN/inf
+(0 op 23.772 waarden), alle 14 linetypes aanwezig, bijdragemarge = omzet −
+grondstof − machinekost (exact), omzet = prijs × volume per product (exact),
+masterdata-bewerkingen (naam/prijs/OEE/veiligheidsvoorraad/valuatie/kosten)
+werken door herberekening, materiaal deactiveren/reactiveren, undo/redo,
+herhaalde edits, BOM-cyclusdetectie, mix-grenswaarden 0/1, MOQ > vraag,
+effectieve doorzet ~ OEE, overbezetting >100%, unlimited-machine, groep = hele
+fabriek, groep hernoemen/1-materiaal/lege-naam, export FTE/kwaliteit/values-
+sheets, DB-kolomstructuur, scenario opslaan/laden, derde instantie
+aanmaken/verwijderen, KPI's byte-identiek na herstart. Ook gevalideerd:
+commentaarvelden, bulk-edits + sleep-selectie, L04-startvoorraad, capaciteits-
+overrides (persistent na herstart), MoM- en DB-export, machine-drill.
+
+De checklist zelf staat in `docs/checklist-manuele-validatie.md`; het ingevulde
+werkboek met VOOR/NA-screenshots in
+`exports/Checklist_manuele_validatie_Apex_Rainier_VOLLEDIG.xlsx`.
 
 ---
 
