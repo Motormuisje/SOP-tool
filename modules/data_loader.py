@@ -143,6 +143,7 @@ class DataLoader:
             forecast_actuals_months = 12
             site = "NLX1"
             unlimited_machine = ["PBA99"]
+            align_to_month = True  # Line 01 carries the forecast of its own month
 
             for col in df.columns:
                 if isinstance(col, datetime):
@@ -160,6 +161,8 @@ class DataLoader:
                     site = str(value)
                 elif param == "MachineUnlimitedCapacity" and value:
                     unlimited_machine = [m.strip() for m in str(value).split(',') if m.strip()]
+                elif param == "ForecastAlignToMonth" and value is not None:
+                    align_to_month = str(value).strip().lower() in ('1', 'true', 'yes', 'ja', 'x')
                 elif param == "PurchasedAndProducedMaterials" and value:
                     for entry in str(value).split(','):
                         parts = entry.strip().split(':')
@@ -168,7 +171,8 @@ class DataLoader:
 
             self.config = PlanningConfig(
                 initial_date=initial_date, forecast_months=forecast_months,
-                site=site, unlimited_capacity_machine=unlimited_machine
+                site=site, unlimited_capacity_machine=unlimited_machine,
+                forecast_align_to_month=align_to_month,
             )
             self.forecast_actuals_months = forecast_actuals_months
             self.periods = self.config.get_periods()
@@ -195,6 +199,8 @@ class DataLoader:
             machines = [m.strip() for m in str(ov['unlimited_machines']).split(',') if m.strip()]
             if machines:
                 self.config.unlimited_capacity_machine = machines
+        if ov.get('forecast_align_to_month') is not None:
+            self.config.forecast_align_to_month = bool(ov['forecast_align_to_month'])
         if ov.get('purchased_and_produced'):
             for entry in str(ov['purchased_and_produced']).split(','):
                 parts = entry.strip().split(':')
