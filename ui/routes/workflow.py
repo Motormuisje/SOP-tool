@@ -4,7 +4,6 @@ import contextlib
 import io
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Callable
 
 from flask import Blueprint, jsonify, render_template, request
@@ -15,7 +14,11 @@ from modules.planning_engine import PlanningEngine
 # other full-rebuild paths (product CRUD, structural config changes, session
 # switch restore) on sess['engine']; one shared lock serializes them all.
 from ui.locks import engine_rebuild_lock as _calculate_lock
-from ui import master_store
+from ui.master_source import (
+    NO_MASTER_ERROR,
+    resolve_for_new_session,
+    resolve_for_session,
+)
 
 
 def create_workflow_blueprint(
@@ -127,21 +130,21 @@ def create_workflow_blueprint(
                     # App-masterdata (indien aanwezig) geldt bij ELKE
                     # berekening: werkboek-vrije sessies rekenen er volledig
                     # uit, werkboek-sessies krijgen de overlay (app = bron
-                    # van waarheid — bewerkingen gelden bij herberekening).
-                    record = master_store.get_current_master_record()
-                    master_data = record['master'] if record else None
-                    if not sess.get('file_path') and master_data is None:
-                        return jsonify({'error': 'Geen masterdata in de app. Importeer masterdata in de Config-tab.'}), 400
+                    # van waarheid). Bronkeuze centraal in ui/master_source.py.
+                    src = resolve_for_session(sess)
+                    if src is None:
+                        return jsonify({'error': NO_MASTER_ERROR}), 400
                     engine = PlanningEngine(
-                        sess.get('file_path') or None,
+                        src.file_path,
                         planning_month=planning_month,
                         months_actuals=months_actuals,
                         months_forecast=months_forecast,
                         extract_files=sess.get('extract_files'),
                         config_overrides=get_config_overrides(),
-                        master_data=master_data,
+                        master_data=src.master_data,
                     )
                     engine.run()
+                    src.apply_to_session(sess)
                     install_clean_engine_baseline(sess, engine)
                     with app_context():
                         replay_pending_edits(sess, engine)
@@ -240,23 +243,13 @@ def _upload_multi_file(
     get_config_overrides,
     save_sessions_to_disk,
 ):
-    if 'base_file' in request.files and request.files['base_file'].filename != '':
-        base_file = request.files['base_file']
-        safe_base_name = secure_filename(base_file.filename)
-        if not safe_base_name:
-            return jsonify({'error': f'Invalid filename for base file: "{base_file.filename}"'}), 400
-        base_file_path = out_upload_dir / safe_base_name
-        try:
-            base_file.save(str(base_file_path))
-        except Exception as exc:
-            return jsonify(classify_upload_exception(exc, 'opslaan base-file')), 400
-    elif master_store.get_current_master_record() is not None:
-        # App-beheerde masterdata: geen basiswerkboek nodig.
-        base_file_path = None
-    elif global_config.get('master_file') and Path(global_config['master_file']).exists():
-        base_file_path = Path(global_config['master_file'])
-    else:
-        return jsonify({'error': 'Geen masterdata: importeer masterdata in de Config-tab (of upload een basisbestand).'}), 400
+    # Centrale bronkeuze (ui/master_source.py): app-masterstore, anders het
+    # legacy masterbestand. Het oude base_file-uploadveld is verwijderd — het
+    # was vanuit de UI onbereikbaar; het masterwerkboek (Fase 2b) vervangt
+    # die rol via de store-import.
+    src = resolve_for_new_session(global_config)
+    if src is None:
+        return jsonify({'error': NO_MASTER_ERROR}), 400
 
     filename_keywords = {
         'bom_file': ['bom'],
@@ -307,19 +300,16 @@ def _upload_multi_file(
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             from modules.data_loader import DataLoader
-            if base_file_path is None:
-                record = master_store.get_current_master_record()
-                loader = DataLoader(
-                    extract_files=saved_paths,
-                    config_overrides=get_config_overrides(),
-                    master_data=record['master'],
-                )
-            else:
-                loader = DataLoader(
-                    excel_file=str(base_file_path),
-                    extract_files=saved_paths,
-                    config_overrides=get_config_overrides(),
-                )
+            # Zelfde loadervorm als calculate/rebuild: basis + eventuele
+            # store-overlay. Voorheen ontbrak master_data op het werkboekpad,
+            # waardoor de upload-preview (sidebar-metadata) andere aantallen
+            # toonde dan de berekening erna.
+            loader = DataLoader(
+                excel_file=src.file_path,
+                extract_files=saved_paths,
+                config_overrides=get_config_overrides(),
+                master_data=src.master_data,
+            )
             loader.load_all()
     except Exception as exc:
         import traceback
@@ -344,13 +334,14 @@ def _upload_multi_file(
         session_id = str(uuid.uuid4())
         sessions[session_id] = _session_payload(
             session_id,
-            base_file_path,
+            src.file_path,
             bom_filename,
             requested_name,
             loader,
             planning_month,
             extract_files=saved_paths,
         )
+        src.apply_to_session(sessions[session_id])
         set_active_session_id(session_id)
         save_sessions_to_disk()
 

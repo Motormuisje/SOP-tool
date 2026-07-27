@@ -467,40 +467,31 @@ def _autorun_sessions():
     def _worker():
         with _sessions_lock:
             items = list(sessions.items())
+        # Candidate selection is deliberately loose: _build_and_install_
+        # session_engine (the same path as calculate, session switch and
+        # config changes) decides whether a usable data source exists —
+        # workbook, extracts, or the app master store. Building engines
+        # here without the master store made startup engines show workbook
+        # values that silently jumped to app master data on the next rebuild.
         candidates = [
             (sid, sess) for sid, sess in items
-            if sess.get('parameters') is not None and (
-                sess.get('extract_files') or Path(sess.get('file_path', '')).exists()
-            )
+            if sess.get('parameters') is not None
         ]
         if not candidates:
             return
         for sid, sess in candidates:
             label = sess.get('custom_name') or sess.get('filename', sid)
             try:
-                params = sess['parameters']
-                planning_month  = params.get('planning_month')
-                months_actuals  = int(params.get('months_actuals', 0) or 0)
-                months_forecast = int(params.get('months_forecast', 12) or 12)
-                engine = PlanningEngine(
-                    sess['file_path'],
-                    planning_month=planning_month,
-                    months_actuals=months_actuals,
-                    months_forecast=months_forecast,
-                    extract_files=sess.get('extract_files'),
-                    config_overrides=get_session_config_overrides(sess, _global_config),
-                )
                 if _VERBOSE_STARTUP:
-                    engine.run()
-                    _install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
-                    with app.app_context():
-                        _replay_pending_edits(sess, engine)
+                    engine = _build_and_install_session_engine(sess)
                 else:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        engine.run()
-                        _install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
-                        with app.app_context():
-                            _replay_pending_edits(sess, engine)
+                        engine = _build_and_install_session_engine(sess)
+                if engine is None:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f'autorun SKIP "{label}": geen bruikbare databron')
+                    continue
                 # Engine build/run happens outside the lock; only the install
                 # into the shared session dict is locked.
                 with _sessions_lock:

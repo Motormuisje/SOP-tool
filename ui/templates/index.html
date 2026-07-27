@@ -1079,6 +1079,7 @@
                     <span id="bulkHint" class="text-xs text-slate-500 italic">Sleep over cellen om te selecteren, pas dan een uniforme wijziging toe.</span>
                 </div>
                 <div id="uomPlanBanner" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4)" class="mb-2 px-3 py-2 rounded text-sm text-amber-300"></div>
+                <div id="masterConsistencyBanner" style="display:none;background:rgba(59,130,246,0.10);border:1px solid rgba(59,130,246,0.35)" class="mb-2 px-3 py-2 rounded text-sm text-blue-300"></div>
                 <div id="planTableScroll" class="overflow-auto" style="max-height:62vh"><table class="data-table w-full"><thead id="planHead" style="position:sticky;top:0;z-index:10"></thead><tbody id="planBody"><tr><td colspan="20" class="text-center p-4 text-slate-500">Run calculations</td></tr></tbody></table></div>
                 <p class="mt-2 text-sm text-slate-400">Rows: <span id="rowCount">0</span></p>
             </div>
@@ -2742,6 +2743,25 @@ function _fmtUomRatio(r) {
     return r.toExponential(1);
 }
 
+// Banner: transactionele data (BOM/forecast/voorraad) die verwijst naar
+// materialen zonder (actief) masterrecord — half ingerichte materialen
+// veroorzaakten het juni-2026-incident.
+function _renderMasterConsistencyBanner() {
+    const banner = document.getElementById('masterConsistencyBanner');
+    if (!banner) return;
+    const warnings = state.masterConsistency || [];
+    if (!warnings.length) { banner.style.display = 'none'; return; }
+    const missing = warnings.filter(w => w.issue === 'missing');
+    const inactive = warnings.filter(w => w.issue === 'inactive');
+    const item = w => `${w.material}${w.material_name ? ' ' + w.material_name : ''} (${(w.referenced_in || []).join(', ')})`;
+    let msg = '&#128269; <b>Masterdata-check:</b> ';
+    const parts = [];
+    if (missing.length) parts.push(`<span title="${escapeHtml(missing.map(item).join('\n'))}">${missing.length} materiaal(en) in de extracts zonder masterrecord &#9432;</span>`);
+    if (inactive.length) parts.push(`<span title="${escapeHtml(inactive.map(item).join('\n'))}">${inactive.length} gedeactiveerd materiaal(en) nog in gebruik &#9432;</span>`);
+    banner.innerHTML = msg + parts.join(' &middot; ') + ' &mdash; controleer prijzen, dosering en inrichting.';
+    banner.style.display = '';
+}
+
 // Banner boven de planningstabel: hoeveel componenten wachten op een besluit.
 function _renderUomPlanBanner(uomSuspects) {
     const banner = document.getElementById('uomPlanBanner');
@@ -2763,7 +2783,10 @@ function _uomPreviewRow(item, uomSus, periods, esc) {
         return `<td class="text-right" style="color:#34d399;font-style:italic">${fmt(val)}</td>`;
     }).join('');
     const mat = esc(String(item.material_number));
-    return `<tr data-material="${mat}" data-linetype="uom-preview" data-search="${mat.toLowerCase()} uom preview" style="background:rgba(52,211,153,0.07);border-bottom:2px solid rgba(245,158,11,0.5)">`
+    // Bewust GEEN data-material/data-linetype: dat is het contract voor
+    // datarijen (sortering, filters, walkthrough, tests selecteren erop).
+    // Zichtbaarheid volgt de bronrij via _runPlanFilter.
+    return `<tr data-uom-preview="${mat}" style="background:rgba(52,211,153,0.07);border-bottom:2px solid rgba(245,158,11,0.5)">`
         + `<td class="font-mono text-xs" style="color:#f59e0b">&#9878;</td>`
         + `<td class="text-xs" style="color:#34d399;font-style:italic;white-space:nowrap">na conversie kg &rarr; ton</td>`
         + `<td colspan="3" style="white-space:nowrap">`
@@ -2957,6 +2980,9 @@ async function loadResults() {
     // planningstabel markeringen en voor/na-previews kan tekenen (ook na
     // sessieherstel of instance-switch).
     try { state.uomGuard = await (await fetch('/api/uom/suspects')).json(); } catch (e) { state.uomGuard = null; }
+    // Master-consistency: transactionele data die naar onbekende of
+    // gedeactiveerde materialen verwijst (de juni-2026-fout-klasse).
+    state.masterConsistency = data.master_consistency || [];
     _syncCellEditsFromResults(state.results);
     // Pre-populate previousValues with pre-edit baseline so cascade highlights
     // are visible immediately after a session/instance (re)load.
@@ -7739,6 +7765,7 @@ function renderPlanningTable(results, periods) {
         .filter(s => !s.dismissed)
         .map(s => [String(s.component_material), s]));
     _renderUomPlanBanner(uomSuspects);
+    _renderMasterConsistencyBanner();
     let html = items.map(item => {
         const uomSus = uomSuspects.get(String(item.material_number));
         let isEdit = PLAN_EDITABLE.has(item.line_type);
@@ -9926,6 +9953,13 @@ function _runPlanFilter() {
     });
     const rowCountEl = document.getElementById('rowCount');
     if (rowCountEl) rowCountEl.textContent = visibleCount;
+    // UoM-previewrijen zijn geen datarijen (geen data-material) en volgen de
+    // zichtbaarheid van hun bronrij ('03. Total demand' van hetzelfde materiaal).
+    document.querySelectorAll('#planBody tr[data-uom-preview]').forEach(pr => {
+        const src = document.querySelector(
+            `#planBody tr[data-material="${CSS.escape(pr.dataset.uomPreview)}"][data-linetype="03. Total demand"]`);
+        pr.style.display = (src && src.style.display !== 'none') ? '' : 'none';
+    });
     _updatePlanEmptyHint(visibleCount, rows.length);
     _saveUiPrefs();
 }
@@ -11944,7 +11978,10 @@ function renderSessionList(groups, activeId) {
             const displayName = sess.custom_name || sess.filename;
             const pm = (sess.planning_month && sess.planning_month !== 'Unknown') ? sess.planning_month : '';
             const uploadedStr = fmtDate(sess.uploaded_at);
-            const meta2 = [pm, mats + ' mat', uploadedStr].filter(Boolean).join(' \u00b7 ');
+            // Bronmarkering: uit welke masterbron deze sessie gerekend heeft
+            // (gezet door ui/master_source.py bij upload/calculate/rebuild).
+            const masterSrc = (sess.metadata && sess.metadata.master_source) || '';
+            const meta2 = [pm, mats + ' mat', uploadedStr, masterSrc].filter(Boolean).join(' \u00b7 ');
             html += `<div class="session-item${isActive ? ' active' : ''}" onclick="switchSession('${sess.id}')">`
                   + `<div style="flex:1;min-width:0;overflow:hidden">`
                   + `<span contenteditable="true" class="session-name-edit" data-session-id="${escA(sess.id)}"`
@@ -12276,20 +12313,7 @@ async function loadConfigTab() {
         }
 
         // Update multi-upload badge
-        const badge = document.getElementById('multiMasterBadge');
-        if (badge) {
-            if (cfg.master_file_exists) {
-                badge.style.background = 'rgba(34,197,94,0.1)';
-                badge.style.borderColor = 'rgba(34,197,94,0.3)';
-                badge.style.color = '#86efac';
-                badge.innerHTML = '&#10003; Master data: ' + (cfg.master_filename || 'geladen');
-            } else {
-                badge.style.background = 'rgba(239,68,68,0.1)';
-                badge.style.borderColor = 'rgba(239,68,68,0.3)';
-                badge.style.color = '#fca5a5';
-                badge.innerHTML = '&#9888; Geen master data - upload eerst in Config tab';
-            }
-        }
+        _renderMasterBadge(cfg);
         // Load folder paths
         loadFolderConfig();
         // Dynamische producten (Fase 3)
@@ -12529,19 +12553,31 @@ async function resetVpParamsToDefaults() {
     } catch(e) { alert('Reset failed: ' + e); }
 }
 
-// Load config badge on page load
-fetch('/api/config').then(r => r.json()).then(cfg => {
+// Badge toont de masterbron die de server bij een multi-upload werkelijk
+// kiest: app-masterstore eerst, dan het legacy master-bestand.
+function _renderMasterBadge(cfg) {
     const badge = document.getElementById('multiMasterBadge');
     if (!badge) return;
-    if (cfg.master_file_exists) {
-        badge.innerHTML = '&#10003; Master data: ' + (cfg.master_filename || 'geladen');
+    const ok = (msg) => {
+        badge.style.background = 'rgba(34,197,94,0.1)';
+        badge.style.borderColor = 'rgba(34,197,94,0.3)';
+        badge.style.color = '#86efac';
+        badge.innerHTML = msg;
+    };
+    if (cfg.master_store_exists) {
+        ok('&#10003; Masterdata: app-beheerd (v' + (cfg.master_store_version ?? '?') + ')');
+    } else if (cfg.master_file_exists) {
+        ok('&#10003; Master data: ' + (cfg.master_filename || 'geladen') + ' (legacy bestand)');
     } else {
         badge.style.background = 'rgba(239,68,68,0.1)';
         badge.style.borderColor = 'rgba(239,68,68,0.3)';
         badge.style.color = '#fca5a5';
-        badge.innerHTML = '&#9888; Geen master data - upload eerst in Config tab';
+        badge.innerHTML = '&#9888; Geen masterdata - importeer in de Config-tab';
     }
-}).catch(() => {});
+}
+
+// Load config badge on page load
+fetch('/api/config').then(r => r.json()).then(_renderMasterBadge).catch(() => {});
 </script>
 
 </body>

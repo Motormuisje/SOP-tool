@@ -111,6 +111,11 @@ def create_config_blueprint(
     @bp.route('/api/config', methods=['GET'])
     def get_global_config():
         fd = global_config.get('file_defaults', {})
+        # App master store presence: the store outranks the legacy
+        # master_file everywhere (upload/calculate/rebuild), so the UI must
+        # be able to reflect the source that will actually be used.
+        from ui.master_store import get_current_master_record
+        store_record = get_current_master_record()
         return jsonify({
             'master_filename': global_config.get('master_filename'),
             'master_uploaded_at': global_config.get('master_uploaded_at'),
@@ -118,6 +123,8 @@ def create_config_blueprint(
                 global_config.get('master_file') and
                 Path(global_config['master_file']).exists()
             ),
+            'master_store_exists': store_record is not None,
+            'master_store_version': (store_record or {}).get('version'),
             'site': global_config.get('site', ''),
             'forecast_months': global_config.get('forecast_months', ''),
             'unlimited_machines': global_config.get('unlimited_machines', ''),

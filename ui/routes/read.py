@@ -58,6 +58,10 @@ def create_read_blueprint(
         if baseline_results:
             response['baseline_results'] = baseline_results
         response.update(moq_warnings_payload(current_engine))
+        # Master-consistency: transactionele verwijzingen naar materialen
+        # zonder (actief) masterrecord — de juni-2026-fout-klasse.
+        response['master_consistency'] = list(
+            getattr(current_engine.data, 'master_consistency_warnings', None) or [])
         return jsonify(response)
 
     @bp.route('/api/value_results')

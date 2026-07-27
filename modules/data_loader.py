@@ -73,6 +73,10 @@ class DataLoader:
         self.uom_suspects: list = []
         self.uom_recipe_warnings: list = []
         self.uom_overrides_applied: List[Tuple[str, float, int]] = []
+        # Master-consistency: transactional references (BOM/forecast/stock)
+        # to materials the master does not (actively) know. Populated by
+        # _check_master_consistency() on every load.
+        self.master_consistency_warnings: List[dict] = []
         
         # Financial data (NEW)
         self.sales_prices: Dict[str, SalesPriceItem] = {}
@@ -144,6 +148,7 @@ class DataLoader:
 
         self._calculate_bom_levels()
         self._warn_on_bom_cycles()
+        self._check_master_consistency()
 
         if self.excel_file is not None:
             self._load_avg_sales_price()
@@ -394,6 +399,56 @@ class DataLoader:
         for w in self.uom_recipe_warnings:
             print(f"  [uom] WARNING: recipe {w.parent_material} (PV {w.production_version}) "
                   f"mass balance {w.total_ratio:.2f} stays implausible after reclassification")
+
+    def _check_master_consistency(self):
+        """Flag transactional references to materials the master does not
+        (actively) know.
+
+        This is the June-2026 failure class: a component appears in the BOM
+        extract while its master record is missing or deactivated, and every
+        downstream number silently degrades (no product family, no price, no
+        safety stock). Detection only — nothing is mutated; the warnings ride
+        along to the UI next to the UoM guard.
+        """
+        if not self.materials:
+            return
+        refs: Dict[str, set] = {}
+
+        def ref(material, where):
+            m = str(material).strip()
+            if m and m.lower() != 'nan':
+                refs.setdefault(m, set()).add(where)
+
+        # Only BOM and forecast references create planning numbers; the stock
+        # sheet is a full SAP dump (spares, consignment, packaging variants)
+        # that legitimately exceeds the planning master — judging it would
+        # bury the real signal in hundreds of stock-only rows.
+        for b in self.bom:
+            ref(b.parent_material, 'BOM')
+            ref(b.component_material, 'BOM')
+        for m in self.forecasts:
+            ref(m, 'forecast')
+
+        self.master_consistency_warnings = []
+        for m, wheres in sorted(refs.items()):
+            mat = self.materials.get(m)
+            if mat is None:
+                issue = 'missing'
+            elif not mat.is_active:
+                issue = 'inactive'
+            else:
+                continue
+            self.master_consistency_warnings.append({
+                'material': m,
+                'material_name': getattr(mat, 'name', '') if mat else '',
+                'issue': issue,
+                'referenced_in': sorted(wheres),
+            })
+        if self.master_consistency_warnings:
+            missing = sum(1 for w in self.master_consistency_warnings if w['issue'] == 'missing')
+            inactive = len(self.master_consistency_warnings) - missing
+            print(f"  [master] WARNING: {missing} material(s) referenced in transactional "
+                  f"data without master record, {inactive} deactivated but still referenced")
 
     def _warn_if_double_converted(self, component: str):
         """Warn when an applied override leaves doses below 0.1 g per ton.

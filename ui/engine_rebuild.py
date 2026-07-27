@@ -127,22 +127,29 @@ def build_clean_engine_for_session(
         months_forecast = int(global_config.get('forecast_months') or months_forecast)
     # App-masterdata (indien aanwezig) geldt bij ELKE rebuild: werkboek-vrije
     # sessies rekenen er volledig uit, werkboek-sessies krijgen de overlay
-    # (app = bron van waarheid).
-    from ui.master_store import get_current_master_record
-    record = get_current_master_record()
-    master_data = record['master'] if record else None
-    if not sess.get('file_path') and master_data is None:
+    # (app = bron van waarheid). De bronkeuze ligt centraal in
+    # ui/master_source.py — dezelfde beslisser als upload en calculate.
+    from ui.master_source import resolve_for_session
+    src = resolve_for_session(sess)
+    if src is None:
+        return None
+    # A store-backed session still needs the monthly extracts: the store
+    # holds master data only, and DataLoader.load_all would fall through to
+    # the workbook loaders (pd.read_excel(None) crash) for BOM/routing/
+    # forecast/stock. Mirrors the /api/calculate guard.
+    if src.file_path is None and not sess.get('extract_files'):
         return None
     engine = PlanningEngine(
-        sess.get('file_path') or None,
+        src.file_path,
         planning_month=params.get('planning_month'),
         months_actuals=int(params.get('months_actuals', 0) or 0),
         months_forecast=months_forecast,
         extract_files=sess.get('extract_files'),
         config_overrides=get_session_config_overrides(sess, global_config),
-        master_data=master_data,
+        master_data=src.master_data,
     )
     engine.run()
+    src.apply_to_session(sess)
     return engine
 
 

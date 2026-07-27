@@ -721,7 +721,10 @@ def test_multi_upload_uses_global_config_master_file(workflow_multi_app, monkeyp
 
 
 @pytest.mark.no_fixture
-def test_multi_upload_with_base_file_saves_and_uses_it(workflow_multi_app, monkeypatch):
+def test_multi_upload_ignores_legacy_base_file_field(workflow_multi_app, monkeypatch):
+    # The base_file upload branch was removed (it was unreachable from the
+    # UI); a stray field is simply ignored and the master source resolves
+    # via ui/master_source.py — here the fixture's legacy master_file.
     monkeypatch.setattr(data_loader_module, "DataLoader", _make_good_loader())
 
     response = workflow_multi_app.client.post(
@@ -737,7 +740,13 @@ def test_multi_upload_with_base_file_saves_and_uses_it(workflow_multi_app, monke
     )
 
     assert response.status_code == 200
-    assert response.get_json()["success"] is True
+    body = response.get_json()
+    assert body["success"] is True
+    # De sessie draagt de bronmarkering van de resolver.
+    session_id = body["session_id"]
+    meta = workflow_multi_app.sessions[session_id]["metadata"]
+    assert meta["master_source_kind"] == "legacy_file"
+    assert "master.xlsm" in meta["master_source"]
 
 
 @pytest.mark.no_fixture
@@ -974,20 +983,19 @@ def test_multi_upload_extract_file_save_exception_returns_400(
 
 
 @pytest.mark.no_fixture
-def test_multi_upload_base_file_save_exception_returns_400(
+def test_multi_upload_extract_save_exception_returns_400(
     workflow_multi_app, monkeypatch
 ):
     from werkzeug.datastructures import FileStorage
 
     def _raise_save(self, dst, buffer_size=16384):
-        raise OSError("disk full base")
+        raise OSError("disk full extract")
 
     monkeypatch.setattr(FileStorage, "save", _raise_save)
 
     response = workflow_multi_app.client.post(
         "/api/upload",
         data={
-            "base_file": (io.BytesIO(b"base"), "base.xlsm"),
             "bom_file": (io.BytesIO(b"bom"), "bom.xlsx"),
             "routing_file": (io.BytesIO(b"routing"), "routing.xlsx"),
             "stock_file": (io.BytesIO(b"stock"), "stock.xlsx"),
@@ -997,7 +1005,7 @@ def test_multi_upload_base_file_save_exception_returns_400(
     )
 
     assert response.status_code == 400
-    assert "disk full base" in response.get_json()["error"]
+    assert "disk full extract" in response.get_json()["error"]
 
 
 # ---------------------------------------------------------------------------
