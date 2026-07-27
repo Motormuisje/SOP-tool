@@ -241,6 +241,12 @@ def create_master_data_blueprint(
         incoming['purchase']['actuals'] = dict(
             (previous.get('purchase') or {}).get('actuals') or {})
 
+        # Excel-precisieverlies ('' vs None, 15-cijferige floats) terugzetten
+        # naar de exacte store-waarde: een ongewijzigde round-trip geeft een
+        # lege diff en muteert de store niet.
+        from modules.master_workbook import absorb_equivalents
+        absorb_equivalents(previous, incoming)
+
         deactivated = _deactivate_missing_materials(previous, incoming)
 
         try:

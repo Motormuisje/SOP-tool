@@ -18,6 +18,7 @@ workbook from another site and detect edits based on a stale export.
 """
 
 import dataclasses
+import math
 import typing
 from datetime import datetime
 from pathlib import Path
@@ -404,6 +405,54 @@ def _parse_purchase(ws) -> dict:
         # importroute behoudt de actuals van de huidige store.
         'actuals': {},
     }
+
+
+# ------------------------------------------------------------ equivalents
+
+
+_IDENTITY_KEYS = ('material_number', 'machine_code')
+
+
+def _identity(item):
+    if isinstance(item, dict):
+        for key in _IDENTITY_KEYS:
+            if key in item:
+                return item.get(key)
+    return None
+
+
+def absorb_equivalents(previous, incoming):
+    """Replace semantically-equal values in `incoming` by the exact value
+    from `previous` (mutates and returns `incoming`).
+
+    Excel stores floats at 15 significant digits and renders '' and None
+    identically, so a pure export->parse round trip drifts in the 16th
+    digit and in empty-string-vs-None. Without this step every import diff
+    would flag those as changes and a confirmed no-op import would churn
+    the store. Genuine edits pass through untouched."""
+    if isinstance(incoming, dict) and isinstance(previous, dict):
+        for key, value in incoming.items():
+            if key in previous:
+                incoming[key] = absorb_equivalents(previous[key], value)
+        return incoming
+    if isinstance(incoming, list) and isinstance(previous, list):
+        prev_by_id = {ident: p for p in previous
+                      if (ident := _identity(p)) is not None}
+        for i, item in enumerate(incoming):
+            ident = _identity(item)
+            if ident is not None and ident in prev_by_id:
+                incoming[i] = absorb_equivalents(prev_by_id[ident], item)
+        return incoming
+    if incoming == previous:
+        return incoming
+    if incoming in (None, '') and previous in (None, ''):
+        return previous
+    if (isinstance(incoming, (int, float)) and isinstance(previous, (int, float))
+            and not isinstance(incoming, bool) and not isinstance(previous, bool)
+            and math.isclose(float(incoming), float(previous),
+                             rel_tol=1e-9, abs_tol=1e-12)):
+        return previous
+    return incoming
 
 
 def _parse_valuation(raw: dict) -> Optional[dict]:

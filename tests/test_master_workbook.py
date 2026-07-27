@@ -108,3 +108,27 @@ def test_parsed_master_hydrates(tmp_path):
         hydrate_loader(probe, parsed)
     assert set(probe.materials) == {'M1', 'M2'}
     assert probe.machines['PBA01'].oee == 0.8
+
+
+def test_absorb_equivalents_kills_excel_drift_but_keeps_real_edits():
+    from modules.master_workbook import absorb_equivalents
+    previous = {
+        'materials': [
+            {'material_number': 'M1', 'name': 'A', 'spc_product': '', 'fte_requirements': 1175.3867293132146},
+            {'material_number': 'M2', 'name': 'B', 'spc_product': None, 'fte_requirements': 2.0},
+        ],
+        'safety_stock': {'M1': {'safety_stock': 0.010184287099903006}},
+    }
+    incoming = {
+        'materials': [
+            {'material_number': 'M1', 'name': 'A', 'spc_product': None, 'fte_requirements': 1175.386729313215},
+            {'material_number': 'M2', 'name': 'ECHT GEWIJZIGD', 'spc_product': '', 'fte_requirements': 3.5},
+        ],
+        'safety_stock': {'M1': {'safety_stock': 0.01018428709990301}},
+    }
+    absorb_equivalents(previous, incoming)
+    m1, m2 = incoming['materials']
+    assert m1 == previous['materials'][0]                      # pure drift → exact terug
+    assert m2['name'] == 'ECHT GEWIJZIGD' and m2['fte_requirements'] == 3.5  # echte edits blijven
+    assert m2['spc_product'] == previous['materials'][1]['spc_product']      # leeg-equivalent
+    assert incoming['safety_stock']['M1'] == previous['safety_stock']['M1']
