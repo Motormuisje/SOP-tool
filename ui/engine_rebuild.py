@@ -8,6 +8,14 @@ from ui.state_snapshot import snapshot_engine_state
 def get_config_overrides(global_config: dict) -> dict:
     """Build config_overrides dict from global config for use in PlanningEngine."""
     ov = {}
+    # Confirmed UoM conversion factors are site-installation state (a
+    # property of the material's SAP base unit, not of a session): read
+    # fresh from the store on EVERY rebuild path so calculate, session
+    # switch, restart warmup and reset all apply the same factors.
+    from ui.uom_store import get_confirmed_overrides
+    uom_overrides = get_confirmed_overrides()
+    if uom_overrides:
+        ov['uom_overrides'] = uom_overrides
     if global_config.get('site'):
         ov['site'] = global_config['site']
     if global_config.get('forecast_months'):

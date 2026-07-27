@@ -132,6 +132,10 @@ SESSIONS_STORE = APP_DATA_ROOT / 'sessions_store.json'
 # App-beheerde masterdata (master-config vervanging).
 from ui.master_store import MASTER_STORE_FILENAME, set_store_path
 set_store_path(APP_DATA_ROOT / MASTER_STORE_FILENAME)
+# Bevestigde UoM-conversies (kg-in-ton BOM-regels): installatiebreed,
+# gelezen door elke engine-rebuild via engine_rebuild.get_config_overrides.
+from ui import uom_store
+uom_store.set_store_path(APP_DATA_ROOT / uom_store.UOM_STORE_FILENAME)
 SCENARIOS_STORE = APP_DATA_ROOT / 'scenarios_store.json'
 GLOBAL_CONFIG_FILE = APP_DATA_ROOT / 'global_config.json'
 

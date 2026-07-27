@@ -114,6 +114,17 @@ class BOMItem:
     bom_header_quantity: float = 1.0
     is_coproduct: bool = False
     production_version: Optional[str] = None
+    # Component base unit when the extract carries a UoM column (absent in
+    # today's SAP export). When set, the unit is authoritative: mass units
+    # are converted at load time and the UoM guard treats the row as
+    # trusted instead of applying heuristics (modules/uom_guard.py).
+    component_uom: Optional[str] = None
+    # SAP recipe identity. A parent can carry several alternative BOMs whose
+    # lines all share one production version; the UoM guard's mass balance
+    # must judge each alternative on its own or three 1.0-recipes read as
+    # one 3.0-recipe (false positive).
+    bill_of_material: Optional[str] = None
+    alternative_bom: Optional[str] = None
 
 
 @dataclass

@@ -311,4 +311,57 @@ def create_config_blueprint(
         payload.update(value_results_payload(current_engine))
         return jsonify(payload)
 
+    @bp.route('/api/uom/suspects', methods=['GET'])
+    def get_uom_suspects():
+        from ui.serializers import uom_suspects_payload
+        _sess, current_engine = get_active()
+        return jsonify(uom_suspects_payload(current_engine))
+
+    @bp.route('/api/uom/decisions', methods=['POST'])
+    def save_uom_decisions():
+        """Persist UoM decisions and rebuild the active session when the
+        effective conversion factors changed.
+
+        Decisions: [{'component', 'action': 'convert'|'dismiss'|'clear',
+        'factor'?}]. Factors are installation-wide state (ui/uom_store.py);
+        the rebuild is the same full structural rebuild as a site/config
+        change, so baseline, replay and downstream values stay consistent.
+        """
+        from ui import uom_store
+        data = request.get_json() or {}
+        decisions = data.get('decisions') or []
+        if not isinstance(decisions, list):
+            return jsonify({'error': 'decisions must be a list'}), 400
+
+        before = uom_store.get_confirmed_overrides()
+        uom_store.record_decisions(decisions)
+        after = uom_store.get_confirmed_overrides()
+        factors_changed = before != after
+
+        sess, current_engine = get_active()
+        payload = {'success': True, 'rebuilt': False}
+        if factors_changed and current_engine is not None:
+            from ui.locks import engine_rebuild_lock
+            with engine_rebuild_lock:
+                rebuilt = build_clean_engine_for_session(sess)
+                if rebuilt is None:
+                    return jsonify({'error': 'Kon de actieve sessie niet herbouwen met de nieuwe conversiefactoren. Voer eerst een berekening uit.'}), 400
+                install_clean_engine_baseline(sess, rebuilt, clear_machine_overrides=False)
+                with current_app.app_context():
+                    replay_pending_edits(sess, rebuilt)
+                sess['engine'] = rebuilt
+            current_engine = rebuilt
+            payload['rebuilt'] = True
+            payload['periods'] = list(getattr(current_engine.data, 'periods', []) or [])
+            payload['results'] = {
+                lt: [row.to_dict() for row in rows]
+                for lt, rows in (getattr(current_engine, 'results', {}) or {}).items()
+            }
+            payload.update(moq_warnings_payload(current_engine))
+            payload.update(value_results_payload(current_engine))
+
+        from ui.serializers import uom_suspects_payload
+        payload['uom'] = uom_suspects_payload(current_engine)
+        return jsonify(payload)
+
     return bp

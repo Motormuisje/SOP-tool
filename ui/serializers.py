@@ -12,6 +12,35 @@ def moq_warnings_payload(engine) -> dict:
     return {'moq_raw_needs': getattr(engine, 'all_purch_raw_needs', {}) or {}}
 
 
+def uom_suspects_payload(engine) -> dict:
+    """UoM-guard state for the frontend confirmation dialog.
+
+    Suspects/warnings come from the engine's loaded data (modules/uom_guard),
+    annotated with the stored installation-wide decisions (ui/uom_store):
+    confirmed factors, and dismissals so the dialog never re-asks an
+    answered question.
+    """
+    from ui import uom_store
+    data = getattr(engine, 'data', None) if engine is not None else None
+    dismissed = uom_store.get_dismissed()
+    suspects = []
+    for s in (getattr(data, 'uom_suspects', None) or []):
+        entry = s.to_dict()
+        entry['dismissed'] = bool(dismissed.get(s.component_material))
+        suspects.append(entry)
+    return {
+        'suspects': suspects,
+        'open_suspects': sum(1 for s in suspects if not s['dismissed']),
+        'recipe_warnings': [w.to_dict() for w in (getattr(data, 'uom_recipe_warnings', None) or [])],
+        'applied': [
+            {'component': component, 'factor': factor, 'rows': rows}
+            for component, factor, rows in (getattr(data, 'uom_overrides_applied', None) or [])
+        ],
+        'overrides': uom_store.get_confirmed_overrides(),
+        'dismissed': sorted(dismissed),
+    }
+
+
 def value_results_payload(engine) -> dict:
     value_results = {
         lt: [row_payload(row) for row in rows]

@@ -167,10 +167,14 @@ def create_workflow_blueprint(
                 import traceback
                 return jsonify({'error': str(exc), 'trace': traceback.format_exc()}), 500
 
+            from ui.serializers import uom_suspects_payload
             return jsonify({
                 'success': True,
                 'summary': engine.get_summary(),
                 'log': log_buf.getvalue(),
+                # UoM guard: open suspects make the frontend raise the
+                # blocking confirmation dialog right after calculating.
+                'uom': uom_suspects_payload(engine),
                 'parameters': {
                     'planning_month': planning_month,
                     'months_actuals': months_actuals,

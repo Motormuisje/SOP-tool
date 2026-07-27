@@ -1043,6 +1043,7 @@
                         <button onclick="openCompareModal()" class="px-3 py-1 rounded text-sm bg-teal-700 hover:bg-teal-600 text-white" title="Compare two scenarios" style="display:none">&#9654;&#9654; Compare</button>
                         <button onclick="openSaveInstanceModal()" class="px-3 py-1 rounded text-sm bg-emerald-700 hover:bg-emerald-600 text-white" title="Sla huidige staat op als nieuwe instantie in de sidebar">&#128190; Opslaan als instantie</button>
                         <button onclick="openPapModal()" class="px-3 py-1 rounded text-sm bg-violet-700 hover:bg-violet-600 text-white" title="Manage production/purchase split fractions">&#9881; Prod/Purch Split</button>
+                        <button onclick="openUomGuardModalFromServer()" class="px-3 py-1 rounded text-sm bg-slate-600 hover:bg-slate-700 text-white" title="Controleer BOM-eenheden (kg vs ton) en beheer bevestigde conversies">&#9878; UoM-check</button>
                         <button onclick="toggleEditMode()" class="edit-mode-btn px-3 py-1 rounded text-sm bg-slate-600 text-slate-300 hover:bg-slate-500" title="Activeer bewerkingsmodus om planningwaarden en Value Aux-factors te wijzigen">&#9998; Bewerken</button>
                         <button id="tooltipsBtn" onclick="toggleTooltipsMode()" class="tooltips-btn px-3 py-1 rounded text-sm bg-slate-600 text-slate-300 hover:bg-slate-500" title="Hover over cellen voor formule-uitleg en klik om afhankelijke rijen te markeren">&#128712; Tooltips</button>
                         <button onclick="toggleDepHighlightMode()" class="dep-highlight-btn px-3 py-1 rounded text-sm bg-slate-600 text-slate-300 hover:bg-slate-500" title="Zet handmatige celmarkering en sleepselectie aan of uit">&#9679; Markering</button>
@@ -1077,6 +1078,7 @@
                     <button type="button" onclick="applyBulkEdit()" class="px-3 py-1 rounded text-sm bg-emerald-700 hover:bg-emerald-600 text-white">Toepassen op selectie</button>
                     <span id="bulkHint" class="text-xs text-slate-500 italic">Sleep over cellen om te selecteren, pas dan een uniforme wijziging toe.</span>
                 </div>
+                <div id="uomPlanBanner" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4)" class="mb-2 px-3 py-2 rounded text-sm text-amber-300"></div>
                 <div id="planTableScroll" class="overflow-auto" style="max-height:62vh"><table class="data-table w-full"><thead id="planHead" style="position:sticky;top:0;z-index:10"></thead><tbody id="planBody"><tr><td colspan="20" class="text-center p-4 text-slate-500">Run calculations</td></tr></tbody></table></div>
                 <p class="mt-2 text-sm text-slate-400">Rows: <span id="rowCount">0</span></p>
             </div>
@@ -1642,6 +1644,28 @@
                 <button type="button" onclick="closeMachineDrilldown()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Sluiten (Esc)">&#10005; Sluiten</button>
             </div>
             <div id="machineDrillBody" class="overflow-auto" style="flex:1"></div>
+        </div>
+    </div>
+
+    <!-- UoM-guard modal: kg-in-ton verdachten in de BOM. Bewust GEEN
+         klik-buiten-sluiten op besluitregels: de gebruiker kiest expliciet
+         per component (converteren / laten staan / later beslissen). -->
+    <div id="uomGuardModal" style="display:none;position:fixed;inset:0;z-index:9200;background:rgba(2,6,23,0.82);align-items:center;justify-content:center;padding:24px">
+        <div class="card rounded-xl" style="width:min(1150px,96vw);max-height:86vh;display:flex;flex-direction:column;padding:16px 18px;overflow:hidden">
+            <div class="flex items-center justify-between mb-1">
+                <h3 class="font-semibold text-base">&#9888;&#65039; Eenheidscontrole BOM — bevestiging nodig</h3>
+                <button type="button" onclick="closeUomGuardModal()" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded" title="Later beslissen (melding komt terug bij de volgende berekening)">Later beslissen</button>
+            </div>
+            <div class="text-xs text-slate-500 mb-3">
+                De massabalans van onderstaande recepten klopt niet: deze componenten lijken in <b>kg</b> ingevoerd
+                terwijl het recept in <b>ton</b> rekent (SAP-export bevat geen eenheidkolom). Kies per component.
+                Bevestigde conversies worden onthouden en automatisch toegepast bij elke volgende import.
+            </div>
+            <div id="uomGuardBody" class="overflow-auto" style="flex:1"></div>
+            <div class="flex items-center justify-between mt-3">
+                <div id="uomGuardHint" class="text-xs text-slate-500"></div>
+                <button type="button" id="uomApplyBtn" onclick="applyUomDecisions()" class="px-4 py-1.5 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded font-semibold">Besluiten toepassen</button>
+            </div>
         </div>
     </div>
 
@@ -2690,9 +2714,193 @@ async function runCalc() {
         notify(`Calculation complete: ${data.summary.total_rows} rows.`, 'success');
         await loadSessions();
         setUploadPanelCollapsed(true);
+        // UoM guard: onbesliste kg-in-ton verdachten worden in de
+        // planningstabel gemarkeerd met een voor/na-preview en goedkeuren/
+        // afwijzen ter plekke (de UoM-check-knop opent het beheeroverzicht).
+        state.uomGuard = data.uom || null;
+        if (data.uom && data.uom.open_suspects > 0) {
+            notify(`⚖ ${data.uom.open_suspects} component(en) met eenheidsverdenking (kg vs ton) — beoordeel de amber gemarkeerde rijen in de Planning-tab.`, 'error', 9000);
+            showTab('planning');
+        }
     } catch (err) {
         notify('Calculation failed: ' + err, 'error', 4800);
         status('Error');
+    } finally {
+        setBusy(false);
+    }
+}
+
+// ===== UoM guard (kg-in-ton BOM verdachten) ======================================
+// De detectie draait server-side bij elke load (modules/uom_guard.py); hier
+// alleen presentatie + expliciete besluiten. Besluiten zijn installatiebreed
+// en worden onthouden (uom_overrides.json), dus dezelfde extract volgende
+// maand plakt zonder nieuwe vragen.
+
+function _fmtUomRatio(r) {
+    if (r === null || r === undefined) return '-';
+    if (r >= 0.01) return r.toFixed(3).replace(/\.?0+$/, '');
+    return r.toExponential(1);
+}
+
+// Banner boven de planningstabel: hoeveel componenten wachten op een besluit.
+function _renderUomPlanBanner(uomSuspects) {
+    const banner = document.getElementById('uomPlanBanner');
+    if (!banner) return;
+    if (!uomSuspects || uomSuspects.size === 0) { banner.style.display = 'none'; return; }
+    const names = [...uomSuspects.values()].map(s => s.component_material).join(', ');
+    banner.innerHTML = `&#9878; <b>${uomSuspects.size} component(en) met eenheidsverdenking</b> (kg vs ton): ${names}. `
+        + `De rijen zijn amber gemarkeerd; beoordeel het voorstel onder de regel '03. Total demand'. `
+        + `<button onclick="openUomGuardModalFromServer()" class="ml-2 px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">Overzicht &amp; beheer</button>`;
+    banner.style.display = '';
+}
+
+// Voor/na-previewrij direct onder '03. Total demand' van een verdachte
+// component: huidige waarden ernaast in ton na conversie, plus de beslissing.
+function _uomPreviewRow(item, uomSus, periods, esc) {
+    const factor = uomSus.proposed_factor || 0.001;
+    const cells = periods.map(p => {
+        const val = (item.values[p] || 0) * factor;
+        return `<td class="text-right" style="color:#34d399;font-style:italic">${fmt(val)}</td>`;
+    }).join('');
+    const mat = esc(String(item.material_number));
+    return `<tr data-material="${mat}" data-linetype="uom-preview" data-search="${mat.toLowerCase()} uom preview" style="background:rgba(52,211,153,0.07);border-bottom:2px solid rgba(245,158,11,0.5)">`
+        + `<td class="font-mono text-xs" style="color:#f59e0b">&#9878;</td>`
+        + `<td class="text-xs" style="color:#34d399;font-style:italic;white-space:nowrap">na conversie kg &rarr; ton</td>`
+        + `<td colspan="3" style="white-space:nowrap">`
+        + `<button onclick="uomDecideFromTable('${mat}','convert')" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white" title="Bevestig: dit component staat in kg. Hoeveelheden worden gedeeld door 1.000 en de planning wordt herberekend.">&#10003; Goedkeuren</button> `
+        + `<button onclick="uomDecideFromTable('${mat}','dismiss')" class="px-2 py-0.5 rounded text-xs bg-slate-600 hover:bg-slate-700 text-white" title="Afwijzen: de eenheden kloppen zoals ze zijn. Dit wordt onthouden; de cijfers blijven ongewijzigd.">&#10005; Afwijzen</button>`
+        + `</td>`
+        + `<td class="text-right">-</td>`
+        + cells + `</tr>`;
+}
+
+async function uomDecideFromTable(component, action) {
+    const decision = { component, action };
+    if (action === 'convert') decision.factor = 0.001;
+    await _postUomDecisions([decision]);
+}
+
+function openUomGuardModal(uom) {
+    state.uomGuard = uom;
+    renderUomGuardBody();
+    document.getElementById('uomGuardModal').style.display = 'flex';
+}
+
+async function openUomGuardModalFromServer() {
+    try {
+        const res = await fetch('/api/uom/suspects');
+        openUomGuardModal(await res.json());
+    } catch (err) {
+        notify('UoM-status ophalen mislukt: ' + err, 'error');
+    }
+}
+
+function closeUomGuardModal() {
+    document.getElementById('uomGuardModal').style.display = 'none';
+}
+
+function _uomRecipeTitle(s) {
+    return s.recipes.map(r =>
+        `${r.parent_material} ${r.parent_name || ''} (PV ${r.production_version || '-'}): ` +
+        `${_fmtUomRatio(r.ratio)} → ${_fmtUomRatio(r.converted_ratio)} t/t`
+    ).join('\n');
+}
+
+function renderUomGuardBody() {
+    const uom = state.uomGuard || {};
+    const suspects = uom.suspects || [];
+    const open = suspects.filter(s => !s.dismissed);
+    const dismissed = suspects.filter(s => s.dismissed);
+    const overrides = uom.overrides || {};
+    let html = '';
+
+    if (open.length) {
+        html += `<table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-400 border-b border-slate-700">
+            <th class="py-1 pr-3">Component</th><th class="py-1 pr-3">Nu (per ton product)</th>
+            <th class="py-1 pr-3">Na conversie</th><th class="py-1 pr-3">Recepten</th><th class="py-1">Besluit</th></tr></thead><tbody>`;
+        for (const s of open) {
+            const kgAfter = s.max_ratio; // t/t gelezen als kg/t na ÷1000
+            html += `<tr class="border-b border-slate-800 align-top">
+                <td class="py-2 pr-3"><b>${escapeHtml(s.component_material)}</b><div class="text-xs text-slate-400">${escapeHtml(s.component_name || '')}</div></td>
+                <td class="py-2 pr-3 text-amber-400 font-mono">${_fmtUomRatio(s.max_ratio)} ton</td>
+                <td class="py-2 pr-3 text-emerald-400 font-mono">${_fmtUomRatio(kgAfter)} kg</td>
+                <td class="py-2 pr-3"><span class="text-xs" title="${escapeHtml(_uomRecipeTitle(s))}">${s.recipes.length} recept(en) &#9432;</span></td>
+                <td class="py-2">
+                    <select data-uom-component="${escapeHtml(s.component_material)}" class="bg-slate-700 text-white text-xs rounded px-2 py-1">
+                        <option value="later" selected>Later beslissen</option>
+                        <option value="convert">Converteren (kg &rarr; ton)</option>
+                        <option value="dismiss">Laten staan (eenheden kloppen)</option>
+                    </select>
+                </td></tr>`;
+        }
+        html += '</tbody></table>';
+    } else {
+        html += '<div class="text-sm text-emerald-400 py-2">&#10003; Geen onbesliste eenheidsverdachten in de huidige BOM.</div>';
+    }
+
+    if (Object.keys(overrides).length) {
+        html += `<div class="mt-4 text-xs text-slate-400 font-semibold">Actieve conversies (worden bij elke import toegepast)</div>`;
+        for (const [component, factor] of Object.entries(overrides)) {
+            html += `<div class="text-xs text-slate-300 py-0.5">${escapeHtml(component)} &times; ${factor}
+                <button onclick="clearUomOverride('${escapeHtml(component)}')" class="ml-2 px-2 py-0.5 rounded bg-slate-700 hover:bg-red-700 text-slate-300" title="Conversie verwijderen en opnieuw beoordelen bij volgende berekening">verwijderen</button></div>`;
+        }
+    }
+    if (dismissed.length) {
+        html += `<div class="mt-4 text-xs text-slate-400 font-semibold">Eerder beoordeeld als correct</div>`;
+        for (const s of dismissed) {
+            html += `<div class="text-xs text-slate-500 py-0.5">${escapeHtml(s.component_material)} ${escapeHtml(s.component_name || '')} (${_fmtUomRatio(s.max_ratio)} t/t)
+                <button onclick="clearUomOverride('${escapeHtml(s.component_material)}')" class="ml-2 px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300">opnieuw beoordelen</button></div>`;
+        }
+    }
+    if ((uom.recipe_warnings || []).length) {
+        html += `<div class="mt-4 text-xs text-amber-400 font-semibold">&#9888; Recepten met onwaarschijnlijke massabalans (handmatig controleren)</div>`;
+        for (const w of uom.recipe_warnings) {
+            html += `<div class="text-xs text-slate-400 py-0.5">${escapeHtml(w.parent_material)} ${escapeHtml(w.parent_name || '')} (PV ${escapeHtml(String(w.production_version || '-'))}): som ratio's ${_fmtUomRatio(w.total_ratio)}</div>`;
+        }
+    }
+    document.getElementById('uomGuardBody').innerHTML = html;
+    document.getElementById('uomGuardHint').textContent = open.length
+        ? `${open.length} component(en) wachten op een besluit. 'Later beslissen' laat de cijfers ongewijzigd; de melding komt terug bij de volgende berekening.`
+        : '';
+}
+
+async function clearUomOverride(component) {
+    await _postUomDecisions([{ component, action: 'clear' }]);
+}
+
+async function applyUomDecisions() {
+    const decisions = [];
+    document.querySelectorAll('#uomGuardBody select[data-uom-component]').forEach(sel => {
+        if (sel.value === 'convert') decisions.push({ component: sel.dataset.uomComponent, action: 'convert', factor: 0.001 });
+        else if (sel.value === 'dismiss') decisions.push({ component: sel.dataset.uomComponent, action: 'dismiss' });
+    });
+    if (!decisions.length) { closeUomGuardModal(); return; }
+    await _postUomDecisions(decisions);
+}
+
+async function _postUomDecisions(decisions) {
+    setBusy(true, 'Conversies toepassen en herberekenen...');
+    try {
+        const res = await fetch('/api/uom/decisions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decisions })
+        });
+        const data = await res.json();
+        if (data.error) { notify(data.error, 'error', 4800); return; }
+        if (data.rebuilt) {
+            await loadResults();
+            await loadValueResults();
+            await _renderDashboardOrDefer();
+            notify('Conversies toegepast; planning is herberekend.', 'success');
+        } else {
+            notify('Besluiten opgeslagen.', 'success');
+        }
+        state.uomGuard = data.uom || null;
+        if (data.uom && data.uom.open_suspects > 0) renderUomGuardBody();
+        else closeUomGuardModal();
+    } catch (err) {
+        notify('UoM-besluiten opslaan mislukt: ' + err, 'error', 4800);
     } finally {
         setBusy(false);
     }
@@ -2745,6 +2953,10 @@ async function loadResults() {
     const res = await fetch('/api/results'); const data = await res.json();
     state.results = data.results; state.periods = data.periods; state.lineTypes = Object.keys(data.results).sort();
     state.moqRawNeeds = data.moq_raw_needs || {};
+    // UoM guard: verdachten horen bij de geladen data; vers ophalen zodat de
+    // planningstabel markeringen en voor/na-previews kan tekenen (ook na
+    // sessieherstel of instance-switch).
+    try { state.uomGuard = await (await fetch('/api/uom/suspects')).json(); } catch (e) { state.uomGuard = null; }
     _syncCellEditsFromResults(state.results);
     // Pre-populate previousValues with pre-edit baseline so cascade highlights
     // are visible immediately after a session/instance (re)load.
@@ -7521,7 +7733,14 @@ function renderPlanningTable(results, periods) {
     document.getElementById('rowCount').textContent = items.length;
     const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
     _computeDemandTurnoverDeltas();
+    // UoM guard: open verdachten markeren we in de tabel, met een voor/na-
+    // preview + goedkeuren/afwijzen onder de totaalvraag-regel.
+    const uomSuspects = new Map(((state.uomGuard || {}).suspects || [])
+        .filter(s => !s.dismissed)
+        .map(s => [String(s.component_material), s]));
+    _renderUomPlanBanner(uomSuspects);
     let html = items.map(item => {
+        const uomSus = uomSuspects.get(String(item.material_number));
         let isEdit = PLAN_EDITABLE.has(item.line_type);
         if (item.line_type === '07. Capacity utilization' && item.product_type !== 'Machine Group') {
             isEdit = false;
@@ -7605,9 +7824,13 @@ function renderPlanningTable(results, periods) {
             return `<td class="${cls} locked-cell" data-tt="val" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}" data-aux="${auxAttr}" data-key="${esc(key)}" data-period="${esc(p)}" data-raw="${esc(raw)}"${titleAttr}${ttAttrs}${moqWarnAttr}>${disp}${indicator}</td>`;
         }).join('');
         const searchHaystack = `${item.material_number || ''} ${item.material_name || ''} ${item.line_type || ''}`.toLowerCase();
-        return `<tr data-material="${esc(item.material_number)}" data-linetype="${esc(item.line_type)}" data-aux="${esc(item.aux_column || '')}" data-aux2="${esc(item.aux_2_column || '')}" data-has-edits="${rowHasEdits ? '1' : '0'}" data-search="${esc(searchHaystack)}">`
+        const uomRowStyle = uomSus ? ' style="background:rgba(245,158,11,0.08)"' : '';
+        const uomBadge = uomSus
+            ? ` <span title="Eenheidsverdenking: lijkt in kg ingevoerd terwijl het recept in ton rekent. Beoordeel bij de regel '03. Total demand'.">&#9878;</span>`
+            : '';
+        let rowHtml = `<tr data-material="${esc(item.material_number)}" data-linetype="${esc(item.line_type)}" data-aux="${esc(item.aux_column || '')}" data-aux2="${esc(item.aux_2_column || '')}" data-has-edits="${rowHasEdits ? '1' : '0'}" data-search="${esc(searchHaystack)}"${uomRowStyle}>`
             + `<td class="font-mono text-xs">${esc(item.material_number)}</td>`
-            + `<td>${esc((item.material_name||'').substring(0,20))}</td>`
+            + `<td>${esc((item.material_name||'').substring(0,20))}${uomBadge}</td>`
             + `<td class="text-xs" style="white-space:nowrap" data-tt="lt" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(item.line_type)}</td>`
             + `<td class="text-yellow-400" data-tt="aux1" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${esc(_formatPlanningAux1(item))}</td>`
             + `<td class="text-blue-400" data-tt="aux2" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}"${a2style}>${esc(a2disp)}</td>`
@@ -7636,6 +7859,10 @@ function renderPlanningTable(results, periods) {
                 return `<td class="${ssCls}" data-tt="start" data-lt="${esc(item.line_type)}" data-mat="${esc(item.material_number)}">${ssDisp}</td>`;
             })()
             + `${periodCells}</tr>`;
+        if (uomSus && item.line_type === '03. Total demand') {
+            rowHtml += _uomPreviewRow(item, uomSus, periods, esc);
+        }
+        return rowHtml;
     }).join('');
     document.getElementById('planBody').innerHTML = html || '<tr><td colspan="20" class="text-center p-4 text-slate-500">No data</td></tr>';
     // Cells become editable on-demand when clicked (no mass contenteditable needed)

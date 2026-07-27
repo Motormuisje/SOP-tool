@@ -66,6 +66,13 @@ class DataLoader:
         # BOM cycles found in the workbook (BUGS.md M6): detected and warned
         # about, never auto-fixed — cascade numbers stay untouched.
         self.bom_cycle_warnings: List[List[str]] = []
+        # UoM guard (modules/uom_guard.py): kg-in-ton suspects found in the
+        # loaded BOM, the confirmed conversion factors that were applied, and
+        # recipes whose mass balance stays implausible. Populated by
+        # _apply_uom_guard() on every load, after the BOM is parsed.
+        self.uom_suspects: list = []
+        self.uom_recipe_warnings: list = []
+        self.uom_overrides_applied: List[Tuple[str, float, int]] = []
         
         # Financial data (NEW)
         self.sales_prices: Dict[str, SalesPriceItem] = {}
@@ -107,6 +114,7 @@ class DataLoader:
             self._load_bom_from_extract()
         else:
             self._load_bom()
+        self._apply_uom_guard()
 
         if self.excel_file is not None:
             self._load_machines()
@@ -321,9 +329,89 @@ class DataLoader:
             )
         print(f"  Materials: {len(self.materials)}")
 
+    # Recognized names for an optional component-UoM column in the BOM
+    # sheet/extract. Today's SAP export lacks the column; when it appears,
+    # units become authoritative and the heuristic guard steps back.
+    _BOM_UOM_COLUMNS = {'component uom', 'component unit', 'component base unit', 'meins'}
+
+    @classmethod
+    def _find_bom_uom_column(cls, df) -> Optional[str]:
+        for col in df.columns:
+            if str(col).strip().lower() in cls._BOM_UOM_COLUMNS:
+                return col
+        return None
+
+    @staticmethod
+    def _component_uom_and_factor(row, uom_col) -> Tuple[Optional[str], float]:
+        """Read the component unit (if any) and the mass factor to tons.
+
+        Non-mass units (PC, ST, PAL, ...) return factor 1.0: piece goods are
+        not converted, only marked so the UoM guard excludes them from the
+        mass balance.
+        """
+        from modules.uom_guard import MASS_UNIT_FACTORS
+        if uom_col is None:
+            return None, 1.0
+        unit = str(row.get(uom_col, '') or '').strip().upper()
+        if not unit or unit == 'NAN':
+            return None, 1.0
+        return unit, MASS_UNIT_FACTORS.get(unit, 1.0)
+
+    def _apply_uom_guard(self):
+        """Apply confirmed UoM conversions, then scan the BOM for suspects.
+
+        Runs on every load, directly after the BOM is parsed and before any
+        engine consumes it. Overrides arrive via config_overrides
+        ('uom_overrides': {component -> factor}) so every rebuild path applies
+        them identically. Detection runs AFTER application, which makes the
+        pass idempotent: converted components have plausible ratios and are
+        not re-flagged. Detection never mutates anything — suspects are
+        surfaced for the user to confirm, and only confirmed factors are
+        ever applied.
+        """
+        from modules.uom_guard import analyze_bom, apply_uom_overrides
+
+        overrides = self.config_overrides.get('uom_overrides') or {}
+        self.uom_overrides_applied = apply_uom_overrides(self.bom, overrides)
+        for component, factor, rows in self.uom_overrides_applied:
+            if rows:
+                print(f"  [uom] conversion applied to {component}: x{factor} ({rows} BOM rows)")
+                self._warn_if_double_converted(component)
+
+        # Packaging goods (big bags, pallets) legitimately ride along at 1-2
+        # pieces per ton: the material master knows their type, so they stay
+        # outside the mass balance instead of tripping it.
+        piece_components = {
+            num for num, mat in self.materials.items()
+            if mat.product_type == ProductType.PACKAGING_GOODS
+        }
+        self.uom_suspects, self.uom_recipe_warnings = analyze_bom(
+            self.bom, piece_components=piece_components)
+        if self.uom_suspects:
+            names = ', '.join(s.component_material for s in self.uom_suspects)
+            print(f"  [uom] WARNING: {len(self.uom_suspects)} component(s) look kg-entered "
+                  f"in ton recipes: {names} — user confirmation required")
+        for w in self.uom_recipe_warnings:
+            print(f"  [uom] WARNING: recipe {w.parent_material} (PV {w.production_version}) "
+                  f"mass balance {w.total_ratio:.2f} stays implausible after reclassification")
+
+    def _warn_if_double_converted(self, component: str):
+        """Warn when an applied override leaves doses below 0.1 g per ton.
+
+        That signals the source BOM was meanwhile fixed at the origin (SAP or
+        a hand-edited workbook) while the stored factor still applies — the
+        dose got converted twice and is now silently ~1000x too small.
+        """
+        ratios = [i.quantity_per for i in self.bom
+                  if i.component_material == component and i.quantity_per > 0]
+        if ratios and max(ratios) < 1e-4:
+            print(f"  [uom] WARNING: {component} ends up below 0.1 g/ton after conversion — "
+                  f"source data may already be converted; review the stored factor")
+
     def _load_bom(self):
         df = pd.read_excel(self.excel_file, sheet_name='BOM')
         print(f"  BOM columns: {list(df.columns)}")
+        uom_col = self._find_bom_uom_column(df)
         for _, row in df.iterrows():
             parent = str(row.get('Material', '')).strip()
             component = str(row.get('Component', '')).strip()
@@ -338,7 +426,8 @@ class DataLoader:
             header_qty = row.get('BOM Header Quantity in Base UoM', 1)
             if pd.isna(header_qty) or header_qty == 0:
                 header_qty = 1
-            qty_per = float(qty) / float(header_qty)
+            component_uom, uom_factor = self._component_uom_and_factor(row, uom_col)
+            qty_per = float(qty) / float(header_qty) * uom_factor
             is_coproduct = row.get('Co-product', '') == 'X' or float(qty) < 0
             self.bom.append(BOMItem(
                 plant=str(row.get('Plant', '')),
@@ -346,7 +435,10 @@ class DataLoader:
                 component_material=component, component_name=str(row.get('Component Description', '')),
                 quantity_per=qty_per, bom_header_quantity=float(header_qty),
                 is_coproduct=is_coproduct,
-                production_version=str(row.get('PV', '')) if pd.notna(row.get('PV')) else None
+                production_version=str(row.get('PV', '')) if pd.notna(row.get('PV')) else None,
+                component_uom=component_uom,
+                bill_of_material=str(row.get('Bill of Material', '')) if pd.notna(row.get('Bill of Material')) else None,
+                alternative_bom=str(row.get('Alternative BOM', '')) if pd.notna(row.get('Alternative BOM')) else None
             ))
         print(f"  BOM: {len(self.bom)} items")
 
@@ -554,6 +646,7 @@ class DataLoader:
         df['Component'] = df['Component'].astype(str)
         df['Bill of Material'] = df['Bill of Material'].astype(str).str.zfill(8)
         print(f"  BOM (extract) columns: {list(df.columns)}")
+        uom_col = self._find_bom_uom_column(df)
         for _, row in df.iterrows():
             parent = str(row.get('Material', '')).strip()
             component = str(row.get('Component', '')).strip()
@@ -568,7 +661,8 @@ class DataLoader:
             header_qty = row.get('BOM Header Quantity in Base UoM', 1)
             if pd.isna(header_qty) or header_qty == 0:
                 header_qty = 1
-            qty_per = float(qty) / float(header_qty)
+            component_uom, uom_factor = self._component_uom_and_factor(row, uom_col)
+            qty_per = float(qty) / float(header_qty) * uom_factor
             is_coproduct = row.get('Co-product', '') == 'X' or float(qty) < 0
             self.bom.append(BOMItem(
                 plant=str(row.get('Plant', '')),
@@ -576,7 +670,10 @@ class DataLoader:
                 component_material=component, component_name=str(row.get('Component Description', '')),
                 quantity_per=qty_per, bom_header_quantity=float(header_qty),
                 is_coproduct=is_coproduct,
-                production_version=str(row.get('PV', '')) if pd.notna(row.get('PV')) else None
+                production_version=str(row.get('PV', '')) if pd.notna(row.get('PV')) else None,
+                component_uom=component_uom,
+                bill_of_material=str(row.get('Bill of Material', '')) if pd.notna(row.get('Bill of Material')) else None,
+                alternative_bom=str(row.get('Alternative BOM', '')) if pd.notna(row.get('Alternative BOM')) else None
             ))
         print(f"  BOM (extract): {len(self.bom)} items")
 
