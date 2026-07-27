@@ -5114,9 +5114,14 @@ function _renderMasterDataStatus(status) {
     }
     const counts = status.counts || {};
     const edited = status.edited_at ? ` &middot; bewerkt ${escapeHtml(String(status.edited_at).slice(0, 16).replace('T', ' '))}` : '';
+    // Purchase actuals zijn maanddata, bevroren op de importmaand — expliciet
+    // tonen zodat niemand ze voor actueel aanziet.
+    const actualsNote = status.actuals_materials
+        ? `<br><span class="text-amber-300 text-xs">&#9888; Purchase actuals: ${status.actuals_materials} materialen, bevroren op importmaand ${escapeHtml(status.anchor_month || '?')} — verversen kan alleen via een nieuwe import.</span>`
+        : '';
     el.innerHTML = `<span class="text-emerald-300">&#10003; Masterdata in de app</span> — versie ${status.version}, `
         + `geïmporteerd uit ${escapeHtml(status.source_filename || '?')} op ${escapeHtml(String(status.imported_at || '').slice(0, 16).replace('T', ' '))}${edited}.<br>`
-        + `<span class="text-slate-500 text-xs">${counts.materials || 0} materialen &middot; ${counts.machines || 0} machines &middot; ${counts.safety_stock || 0} veiligheidsvoorraden &middot; ${counts.purchase || 0} inkoopregels &middot; ${counts.sales_prices || 0} prijzen</span>`;
+        + `<span class="text-slate-500 text-xs">${counts.materials || 0} materialen &middot; ${counts.machines || 0} machines &middot; ${counts.safety_stock || 0} veiligheidsvoorraden &middot; ${counts.purchase || 0} inkoopregels &middot; ${counts.sales_prices || 0} prijzen</span>${actualsNote}`;
     if (btns) {
         btns.innerHTML = Object.entries(_MASTER_DATASETS).map(([ds, spec]) =>
             `<button onclick="openMasterDatasetModal('${ds}')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">${escapeHtml(spec.label)}${spec.kind === 'view' ? ' &#128065;' : ' &#9998;'}</button>`

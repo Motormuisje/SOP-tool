@@ -59,6 +59,10 @@ def serialize_master(loader) -> dict:
             'site': config.site if config else 'NLX1',
             'unlimited_capacity_machine': list(config.unlimited_capacity_machine) if config else [],
             'forecast_actuals_months': getattr(loader, 'forecast_actuals_months', 12),
+            # Feature-detected: the calendar-vs-positional forecast flag ships
+            # with the parallel-run work; serialize it whenever the config
+            # carries it so the validation mode survives the workbook-free path.
+            'forecast_align_to_month': bool(getattr(config, 'forecast_align_to_month', True)) if config else True,
             'purchased_and_produced': dict(loader.purchased_and_produced or {}),
         },
         'fte': {
@@ -99,6 +103,10 @@ def hydrate_loader(loader, master: dict) -> None:
         unlimited_capacity_machine=list(cfg.get('unlimited_capacity_machine') or []),
     )
     loader.forecast_actuals_months = int(cfg.get('forecast_actuals_months') or 12)
+    if 'forecast_align_to_month' in cfg:
+        # setattr, not a constructor kwarg: the field only exists once the
+        # parallel-run work lands; older PlanningConfig simply ignores it.
+        loader.config.forecast_align_to_month = bool(cfg['forecast_align_to_month'])
     loader.purchased_and_produced = {
         str(mat): float(val) for mat, val in (cfg.get('purchased_and_produced') or {}).items()
     }
@@ -194,6 +202,14 @@ def overlay_master_data(loader, master: dict) -> None:
         fields = dict(item)
         fields['shift_system'] = ShiftSystem(fields['shift_system'])
         machine = Machine(**fields)
+        existing = loader.machines.get(machine.machine_code)
+        if existing is not None:
+            # Per-field merge: master attributes come from the app, but
+            # availability_by_period is MONTH data — the fresh workbook's
+            # planned downtime must win over the store's frozen import-month
+            # snapshot. Replacing whole Machine objects here silently wiped
+            # planned downtime on every workbook session.
+            machine.availability_by_period = dict(existing.availability_by_period)
         loader.machines[machine.machine_code] = machine
     _rebuild_machine_groups(loader)
     finalize_shift_systems(loader)

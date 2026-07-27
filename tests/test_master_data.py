@@ -199,3 +199,61 @@ def test_workbook_session_rebuild_picks_up_store_edit(golden_fixture_path, tmp_p
         engine = build_clean_engine_for_session(sess, {})
     assert engine is not None
     assert engine.data.materials[first_mn].name == 'HERNOEMD VIA STORE'
+
+
+# ------------------------------------------------- F2: storezuivering (maanddata)
+
+
+@pytest.mark.no_fixture
+def test_overlay_keeps_workbook_machine_availability():
+    """De overlay verving hele Machine-objecten, waardoor geplande stilstand
+    uit het VERSE werkboek werd overschreven door de bevroren importmaand-
+    snapshot uit de store. Mastervelden (naam, OEE) komen uit de app;
+    availability_by_period blijft maanddata van het werkboek."""
+    from modules.master_data import overlay_master_data
+
+    base = fake_master_loader()
+    master = json.loads(json.dumps(serialize_master(base), default=str))
+
+    # "Werkboek"-toestand: hydrate + verse geplande stilstand voor jan/feb.
+    loader = DataLoader(master_data=master)
+    with contextlib.redirect_stdout(io.StringIO()):
+        hydrate_loader(loader, master)
+    loader.machines['PBA01'].availability_by_period = {'2026-01': 0.5, '2026-02': 0.7}
+
+    # Store-toestand: naam gewijzigd in de app, beschikbaarheid bevroren op 1.0,
+    # plus een app-only machine.
+    store = json.loads(json.dumps(master))
+    store['machines'][0]['name'] = 'Press HERNOEMD'
+    store['machines'].append({**store['machines'][0],
+                              'machine_id': 'PBA02', 'machine_code': 'PBA02',
+                              'name': 'App-only pers',
+                              'availability_by_period': {'2026-01': 0.9}})
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        overlay_master_data(loader, store)
+
+    merged = loader.machines['PBA01']
+    assert merged.name == 'Press HERNOEMD'          # masterveld: app wint
+    assert merged.availability_by_period['2026-01'] == 0.5  # maanddata: werkboek wint
+    assert merged.availability_by_period['2026-02'] == 0.7
+    # App-only machine komt binnen mét zijn store-beschikbaarheid.
+    assert loader.machines['PBA02'].availability_by_period['2026-01'] == 0.9
+
+
+@pytest.mark.no_fixture
+def test_forecast_align_flag_survives_store_round_trip():
+    """forecast_align_to_month ontbrak in de serialisatie: werkboek-vrij viel
+    de vlag altijd terug op de default en was de parallelle-run-validatie
+    (positionele modus) onbereikbaar. Feature-gedetecteerd: werkt ook als
+    PlanningConfig het veld (nog) niet als dataclass-veld heeft."""
+    base = fake_master_loader()
+    base.config.forecast_align_to_month = False
+
+    master = json.loads(json.dumps(serialize_master(base), default=str))
+    assert master['config']['forecast_align_to_month'] is False
+
+    loader = DataLoader(master_data=master)
+    with contextlib.redirect_stdout(io.StringIO()):
+        hydrate_loader(loader, master)
+    assert loader.config.forecast_align_to_month is False

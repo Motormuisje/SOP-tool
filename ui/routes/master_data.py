@@ -36,13 +36,20 @@ _DATASETS = {
 def _status_payload(record) -> dict:
     if record is None:
         return {'exists': False}
+    master = record.get('master') or {}
+    cfg = master.get('config') or {}
+    actuals = (master.get('purchase') or {}).get('actuals') or {}
     return {
         'exists': True,
         'version': record.get('version'),
         'imported_at': record.get('imported_at'),
         'edited_at': record.get('edited_at'),
         'source_filename': record.get('source_filename'),
-        'counts': master_store.master_counts(record.get('master') or {}),
+        'counts': master_store.master_counts(master),
+        # Purchase actuals are MONTH data frozen at import: surface how many
+        # and from which anchor month, so nobody mistakes them for current.
+        'actuals_materials': len(actuals),
+        'anchor_month': str(cfg.get('initial_date') or '')[:7],
     }
 
 

@@ -22,6 +22,11 @@ def get_config_overrides(global_config: dict) -> dict:
         ov['forecast_months'] = int(global_config['forecast_months'])
     if global_config.get('unlimited_machines'):
         ov['unlimited_machines'] = global_config['unlimited_machines']
+    if global_config.get('forecast_align_to_month') is not None:
+        # Parallel-run validation mode (positional forecast copy). No UI
+        # toggle yet — settable via global_config.json; rides the normal
+        # override chain so it also works workbook-free.
+        ov['forecast_align_to_month'] = bool(global_config['forecast_align_to_month'])
     if global_config.get('purchased_and_produced'):
         ov['purchased_and_produced'] = global_config['purchased_and_produced']
     vp = global_config.get('valuation_params')
