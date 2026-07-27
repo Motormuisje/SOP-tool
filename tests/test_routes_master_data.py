@@ -146,3 +146,162 @@ def test_workbook_free_session_rebuild_uses_latest_store(store_env, tmp_path):
     assert engine is not None
     assert engine.data.periods == ['2026-01', '2026-02', '2026-03']
     assert 'M1' in engine.data.materials
+
+
+# ------------------------------------------------------- masterwerkboek-routes
+
+
+def _export_workbook(md_app):
+    res = md_app.client.get('/api/master_workbook/export')
+    assert res.status_code == 200
+    path = md_app.store.tmp / 'export.xlsx'
+    path.write_bytes(res.data)
+    return path
+
+
+def test_workbook_export_then_import_is_a_noop_diff(md_app):
+    _seed_store(md_app.store)
+    path = _export_workbook(md_app)
+
+    with open(path, 'rb') as f:
+        res = md_app.client.post('/api/master_workbook/import',
+                                 data={'file': (f, 'SOP_Masterdata_NLX1.xlsx')},
+                                 content_type='multipart/form-data')
+    body = res.get_json()
+    assert body['needs_confirm'] is True
+    assert body['stale_export'] is None  # zelfde versie
+    d = body['diff']
+    assert d['materials_added'] == [] and d['materials_removed'] == []
+    assert d['materials_changed'] == [] and d['datasets_changed'] == []
+
+
+def test_workbook_import_applies_edits_and_deactivates_missing(md_app):
+    _seed_store(md_app.store)
+    path = _export_workbook(md_app)
+
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path))
+    ws = wb['Materialen']
+    headers = [c.value for c in ws[1]]
+    # M1 hernoemen, M2-rij verwijderen (→ moet gedeactiveerd worden, niet weg)
+    ws.cell(row=2, column=headers.index('name') + 1, value='HERNOEMD')
+    assert ws.cell(row=3, column=headers.index('material_number') + 1).value == 'M2'
+    ws.delete_rows(3)
+    wb.save(str(path))
+
+    with open(path, 'rb') as f:
+        res = md_app.client.post('/api/master_workbook/import',
+                                 data={'file': (f, 'wb.xlsx'), 'confirm': 'true'},
+                                 content_type='multipart/form-data')
+    body = res.get_json()
+    assert body['success'] is True
+    assert body['deactivated'] == ['M2']
+
+    stored = master_store.get_current_master_record()['master']
+    by_num = {m['material_number']: m for m in stored['materials']}
+    assert by_num['M1']['name'] == 'HERNOEMD'
+    assert by_num['M2']['is_active'] is False        # gedeactiveerd, niet verwijderd
+    assert by_num['M2']['name'] == 'Child'           # overige velden behouden
+
+
+def test_workbook_import_refuses_other_site(md_app):
+    _seed_store(md_app.store)  # site NLX1
+    path = _export_workbook(md_app)
+
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path))
+    ws = wb['_Meta']
+    for row in ws.iter_rows():
+        if row[0].value == 'site':
+            row[1].value = 'NLK1'
+    wb.save(str(path))
+
+    with open(path, 'rb') as f:
+        res = md_app.client.post('/api/master_workbook/import',
+                                 data={'file': (f, 'wb.xlsx'), 'confirm': 'true'},
+                                 content_type='multipart/form-data')
+    assert res.status_code == 400
+    assert 'NLK1' in res.get_json()['error']
+
+
+def test_workbook_import_flags_stale_export(md_app):
+    _seed_store(md_app.store)
+    path = _export_workbook(md_app)
+    # Store muteren ná de export: versie loopt op.
+    record = master_store.get_current_master_record()
+    master_store.save_master_store(md_app.store.path, record['master'],
+                                   previous=record, edited=True)
+
+    with open(path, 'rb') as f:
+        res = md_app.client.post('/api/master_workbook/import',
+                                 data={'file': (f, 'wb.xlsx')},
+                                 content_type='multipart/form-data')
+    body = res.get_json()
+    assert body['needs_confirm'] is True
+    assert body['stale_export'] == {'exported_from_version': 1, 'store_version': 2}
+
+
+def test_workbook_import_preserves_store_actuals(md_app):
+    master = _seed_store(md_app.store)
+    master['purchase']['actuals'] = {'M2': {'2026-01': 7.0}}
+    record = master_store.get_current_master_record()
+    master_store.save_master_store(md_app.store.path, master, previous=record)
+    path = _export_workbook(md_app)
+
+    with open(path, 'rb') as f:
+        res = md_app.client.post('/api/master_workbook/import',
+                                 data={'file': (f, 'wb.xlsx'), 'confirm': 'true'},
+                                 content_type='multipart/form-data')
+    assert res.get_json()['success'] is True
+    stored = master_store.get_current_master_record()['master']
+    assert stored['purchase']['actuals'] == {'M2': {'2026-01': 7.0}}
+
+
+def test_workbook_export_without_store_is_400(md_app):
+    assert md_app.client.get('/api/master_workbook/export').status_code == 400
+
+
+def test_patch_refreshes_mirror(md_app, tmp_path):
+    from ui import master_mirror
+    _seed_store(md_app.store)
+    body = md_app.client.get('/api/master_data/materials').get_json()
+    value = body['value']
+    value[0]['name'] = 'VIA GRID'
+    res = md_app.client.patch('/api/master_data/materials', json={'value': value})
+    assert res.get_json()['success'] is True
+    status = master_mirror.mirror_status()
+    assert status['stale'] is False
+    assert status['path'].endswith('SOP_Masterdata_NLX1.xlsx')
+    import openpyxl
+    wb = openpyxl.load_workbook(status['path'], read_only=True)
+    ws = wb['Materialen']
+    rows = list(ws.iter_rows(values_only=True))
+    wb.close()
+    assert any('VIA GRID' in [str(v) for v in row] for row in rows[1:])
+
+
+def test_add_missing_material_and_reactivate(md_app):
+    master = _seed_store(md_app.store)
+
+    # Nieuw materiaal (consistentiebanner-actie)
+    res = md_app.client.post('/api/master_data/materials/add',
+                             json={'material': 'M9', 'name': 'Uit extract'})
+    body = res.get_json()
+    assert body['success'] and body['action'] == 'added'
+    stored = master_store.get_current_master_record()['master']
+    by_num = {m['material_number']: m for m in stored['materials']}
+    assert by_num['M9']['is_active'] is True
+    assert by_num['M9']['product_type'] == 'Other'
+
+    # Gedeactiveerd exemplaar wordt geheractiveerd, niet gedupliceerd
+    value = [dict(m) for m in stored['materials']]
+    next(m for m in value if m['material_number'] == 'M2')['is_active'] = False
+    md_app.client.patch('/api/master_data/materials', json={'value': value})
+    res = md_app.client.post('/api/master_data/materials/add', json={'material': 'M2'})
+    assert res.get_json()['action'] == 'reactivated'
+    stored = master_store.get_current_master_record()['master']
+    assert sum(1 for m in stored['materials'] if m['material_number'] == 'M2') == 1
+
+    # Al actief → nette fout
+    res = md_app.client.post('/api/master_data/materials/add', json={'material': 'M1'})
+    assert res.status_code == 400

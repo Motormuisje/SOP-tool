@@ -136,6 +136,10 @@ set_store_path(APP_DATA_ROOT / MASTER_STORE_FILENAME)
 # gelezen door elke engine-rebuild via engine_rebuild.get_config_overrides.
 from ui import uom_store
 uom_store.set_store_path(APP_DATA_ROOT / uom_store.UOM_STORE_FILENAME)
+# Masterwerkboek-spiegel (SOP_Masterdata_<site>.xlsx): altijd-actuele
+# Excel-weergave van de master store, ververst na elke store-mutatie.
+from ui import master_mirror
+master_mirror.set_mirror_dir(APP_DATA_ROOT)
 SCENARIOS_STORE = APP_DATA_ROOT / 'scenarios_store.json'
 GLOBAL_CONFIG_FILE = APP_DATA_ROOT / 'global_config.json'
 

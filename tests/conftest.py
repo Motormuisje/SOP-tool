@@ -444,11 +444,14 @@ def _isolate_master_store(tmp_path):
     """Tests mogen nooit de echte app-masterdata van deze machine oppikken:
     de store-overlay geldt bij elke berekening zodra een store bestaat, dus
     elke test krijgt standaard een leeg (niet-bestaand) store-pad. Tests die
-    de store zelf nodig hebben (store_env) overschrijven dit expliciet."""
-    from ui import master_store
+    de store zelf nodig hebben (store_env) overschrijven dit expliciet.
+    Zelfde isolatie voor de masterwerkboek-spiegel: die schrijft na elke
+    store-mutatie een xlsx en mag nooit in de echte datamap belanden."""
+    from ui import master_mirror, master_store
 
     previous = master_store.get_store_path()
     master_store.set_store_path(tmp_path / "isolated_master_store.json")
+    master_mirror.set_mirror_dir(tmp_path / "mirror")
     yield
     if previous is not None:
         master_store.set_store_path(previous)
