@@ -115,8 +115,10 @@ def create_config_blueprint(
         # master_file everywhere (upload/calculate/rebuild), so the UI must
         # be able to reflect the source that will actually be used.
         from ui.master_store import get_current_master_record
+        from ui.settings_registry import settings_meta
         store_record = get_current_master_record()
         return jsonify({
+            'settings_meta': settings_meta(global_config),
             'master_filename': global_config.get('master_filename'),
             'master_uploaded_at': global_config.get('master_uploaded_at'),
             'master_file_exists': bool(
@@ -233,11 +235,21 @@ def create_config_blueprint(
             if sess is not None:
                 sess['forecast_defaults'] = dict(global_config['forecast_defaults'])
 
+        # Registry-gedreven velden (handler='generic'): coercion, opslag en
+        # effectbepaling komen uit ui/settings_registry.py — een nieuw veld
+        # toevoegen raakt deze route niet meer.
+        from ui.settings_registry import apply_generic_settings
+        try:
+            generic_effects = apply_generic_settings(data, global_config)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+
         structural_config_changed = (
             str(global_config.get('site', '') or '') != old_config['site']
             or int(global_config.get('forecast_months', 0) or 0) != old_config['forecast_months']
             or str(global_config.get('unlimited_machines', '') or '') != old_config['unlimited_machines']
             or json.dumps(global_config.get('forecast_defaults', {}), sort_keys=True) != old_fc_defaults
+            or 'rebuild' in generic_effects
         )
 
         if 'purchased_and_produced' in data:
@@ -269,6 +281,13 @@ def create_config_blueprint(
                 )
                 recalculate_value_results(current_engine, sess)
                 value_recalculated = True
+
+        # Generieke velden met effect 'value' (registry): financiële
+        # herberekening zonder structurele rebuild.
+        if ('value' in generic_effects and current_engine is not None
+                and not structural_config_changed and not value_recalculated):
+            recalculate_value_results(current_engine, sess)
+            value_recalculated = True
 
         if current_engine is not None and structural_config_changed:
             from ui.locks import engine_rebuild_lock
