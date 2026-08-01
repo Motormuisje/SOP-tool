@@ -1383,7 +1383,10 @@
 
             <!-- Planning Configuration -->
             <div class="card rounded-xl p-6">
-              <h3 class="font-semibold text-slate-200 mb-1">Planning Configuratie</h3>
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="font-semibold text-slate-200">Planning Configuratie</h3>
+                <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24" title="Site, horizon, machines en standaardvolumes bepalen de structuur van de planning: opslaan herbouwt de volledige berekening van deze instantie.">wijziging &rarr; volledige herberekening</span>
+              </div>
               <p class="text-slate-500 text-xs mb-4">Overschrijft de waarden uit de Config sheet van het xlsm. Laat leeg om de waarden uit het bestand te gebruiken.</p>
               <div class="grid grid-cols-1 gap-4">
                 <div>
@@ -1443,7 +1446,10 @@
             <div class="card rounded-xl p-6">
               <div class="flex items-center justify-between mb-1">
                 <h3 class="font-semibold text-slate-200">Valuation Parameters</h3>
-                <button id="btnResetVpParams" onclick="resetVpParamsToDefaults()" class="px-3 py-1 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 transition-colors" title="Reset to Excel default values">Reset to Excel defaults</button>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(52,211,153,0.12);color:#34d399" title="Waarderingsparameters raken alleen de financiële cijfers (Values Planning): opslaan herrekent de financiën, niet de volumeplanning.">wijziging &rarr; alleen financiën</span>
+                  <button id="btnResetVpParams" onclick="resetVpParamsToDefaults()" class="px-3 py-1 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 transition-colors" title="Reset to Excel default values">Reset to Excel defaults</button>
+                </div>
               </div>
               <p class="text-slate-500 text-xs mb-4">Overschrijft de Valuation parameters sheet. Laat leeg om de waarden uit het xlsm te gebruiken.</p>
               <div class="grid grid-cols-2 gap-3">
@@ -1490,10 +1496,18 @@
               </div>
             </div>
 
-            <!-- Save button -->
-            <div class="flex items-center gap-3">
-              <button onclick="saveConfigSettings()" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan</button>
-              <span id="cfgSaveStatus" class="text-xs text-slate-400"></span>
+            <!-- Dirty-state opslagbalk: verschijnt zodra er onopgeslagen
+                 wijzigingen zijn en benoemt het zwaarste effect, zodat een
+                 lange herberekening nooit als verrassing komt. -->
+            <div id="cfgSaveBar" style="display:none;position:sticky;bottom:12px;z-index:60;border:1px solid rgba(59,130,246,0.55)" class="card rounded-xl p-3 shadow-xl">
+              <div class="flex items-center justify-between gap-3">
+                <span id="cfgSaveBarText" class="text-xs text-slate-300"></span>
+                <div class="flex items-center gap-2">
+                  <button onclick="discardConfigChanges()" class="px-3 py-1.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300" title="Onopgeslagen wijzigingen terugdraaien naar de laatst opgeslagen stand">Verwerpen</button>
+                  <button onclick="saveConfigFromBar()" class="btn-primary px-5 py-1.5 rounded text-sm font-semibold text-white">Opslaan</button>
+                  <span id="cfgSaveStatus" class="text-xs text-slate-400"></span>
+                </div>
+              </div>
             </div>
 
             <!-- Dynamische producten (Fase 3) -->
@@ -1502,6 +1516,7 @@
                 <h3 class="flex items-center font-semibold text-slate-200">
                   Dynamische producten
                   <span class="cfg-info">i<span class="cfg-tooltip">Producten die (nog) niet in het bronbestand staan. Ze worden per sessie bewaard en volledig doorgerekend: forecast, voorraad, productie/inkoop, capaciteit, waarde en export. Toevoegen, wijzigen of verwijderen herberekent de volledige planning.</span></span>
+                  <span class="ml-2 text-xs px-2 py-0.5 rounded font-normal" style="background:rgba(139,92,246,0.15);color:#a78bfa" title="Dit is scenario-inhoud van deze instantie, geen configuratie: wat-als-producten die alleen in deze instantie meerekenen.">scenario-inhoud</span>
                 </h3>
                 <button id="btnAddProduct" onclick="openProductModal()" class="btn-primary px-3 py-1 rounded text-xs font-semibold text-white">+ Product toevoegen</button>
               </div>
@@ -1561,7 +1576,10 @@
 
             <!-- Master Data File (legacy basisbestand / importbron) -->
             <div class="card rounded-xl p-6">
-              <h3 class="font-semibold text-slate-200 mb-1">Master Data File</h3>
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="font-semibold text-slate-200">Master Data File</h3>
+                <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(100,116,139,0.2);color:#94a3b8" title="Dit pad verdwijnt zodra iedereen op de app-masterdata zit; gebruik het alleen als importbron of zolang er nog geen masterdata in de app staat.">legacy</span>
+              </div>
               <p class="text-slate-500 text-xs mb-4">Het .xlsm bestand met Material master, Safety stock, OEE/Machines, FTE, Purchase sheet en financiele data. Dient als importbron voor de app-masterdata hierboven, en als terugvaloptie zolang er nog geen masterdata in de app staat.</p>
               <div id="cfgMasterStatus" class="mb-4 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
               <div class="flex items-center gap-3">
@@ -12406,7 +12424,75 @@ function _cfgSetField(id, overrideVal, fileDefault, formatter) {
     }
 }
 
+// ===== Config dirty-state (C1) ===================================================
+// Eén opslagbalk voor de instantie-instellingen; per veld is bekend welk
+// effect opslaan heeft, en de balk benoemt het zwaarste effect.
+const _CFG_FIELD_EFFECTS = {
+    cfgSite: ['Site', 'rebuild'],
+    cfgForecastMonths: ['Forecast horizon', 'rebuild'],
+    cfgUnlimitedMachines: ['Unlimited machines', 'rebuild'],
+    cfgFcDefMode: ['Forecast-standaardvolumes', 'rebuild'],
+    cfgFcDefDefault: ['Forecast-standaardvolumes', 'rebuild'],
+    cfgFcDefPerMat: ['Forecast-standaardvolumes', 'rebuild'],
+    cfgPurchProd: ['Purchased & produced', 'recalc'],
+    vp1: ['Valuation', 'value'], vp2: ['Valuation', 'value'], vp3: ['Valuation', 'value'],
+    vp4: ['Valuation', 'value'], vp5: ['Valuation', 'value'], vp6: ['Valuation', 'value'],
+    vp7: ['Valuation', 'value'], vp8: ['Valuation', 'value'],
+};
+const _CFG_EFFECT_LABELS = {
+    rebuild: 'volledige herberekening van deze instantie',
+    recalc: 'gerichte herberekening (PAP-materialen)',
+    value: 'alleen financiële herberekening',
+};
+let _cfgDirty = new Set();
+let _cfgDirtyInit = false;
+
+function _cfgInitDirtyTracking() {
+    if (_cfgDirtyInit) return;
+    _cfgDirtyInit = true;
+    for (const id of Object.keys(_CFG_FIELD_EFFECTS)) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const evt = el.tagName === 'SELECT' ? 'change' : 'input';
+        el.addEventListener(evt, () => { _cfgDirty.add(id); _renderCfgSaveBar(); });
+    }
+}
+
+function _renderCfgSaveBar() {
+    const bar = document.getElementById('cfgSaveBar');
+    if (!bar) return;
+    if (!_cfgDirty.size) { bar.style.display = 'none'; return; }
+    const groups = new Set(), rank = { value: 1, recalc: 2, rebuild: 3 };
+    let heaviest = 'value';
+    for (const id of _cfgDirty) {
+        const [group, effect] = _CFG_FIELD_EFFECTS[id];
+        groups.add(group);
+        if (rank[effect] > rank[heaviest]) heaviest = effect;
+    }
+    document.getElementById('cfgSaveBarText').innerHTML =
+        `<b>${groups.size} instelling(en) gewijzigd</b> (${[...groups].join(', ')}) &middot; opslaan &rarr; ${_CFG_EFFECT_LABELS[heaviest]}`;
+    bar.style.display = '';
+}
+
+function _cfgClearDirty() {
+    _cfgDirty.clear();
+    _renderCfgSaveBar();
+}
+
+async function saveConfigFromBar() {
+    await saveConfigSettings();
+    _cfgClearDirty();
+}
+
+function discardConfigChanges() {
+    _cfgClearDirty();
+    loadConfigTab();
+    notify('Onopgeslagen wijzigingen verworpen.', 'info');
+}
+
 async function loadConfigTab() {
+    _cfgInitDirtyTracking();
+    _cfgClearDirty();
     const nameEl = document.getElementById('cfgInstanceName');
     if (nameEl) {
         const src = document.getElementById('fileName');
@@ -12672,6 +12758,7 @@ async function resetVpParamsToDefaults() {
             const el = document.getElementById('vp' + i);
             if (el) el.value = data.valuation_params[String(i)] ?? '';
         }
+        _cfgClearDirty();
         await _applyServerPayload(data, {
             prevValueSnapshot,
             deltaSource: 'config',
