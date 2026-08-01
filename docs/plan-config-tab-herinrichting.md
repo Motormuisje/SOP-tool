@@ -148,10 +148,21 @@ model liet vallen).
 
 | Fase | Inhoud | Karakter |
 |---|---|---|
-| C1 | Herindeling in drie lagen, scopebadges, effectlabels, dirty-state-opslagbalk | puur UI, geen gedragswijziging; grootste zichtbare winst |
-| C2 | Settings-registry backend + frontend; bestaande velden migreren; `/api/config` generiek (backward compatible); `forecast_align_to_month`-toggle als bewijs | de structurele investering |
-| C3 | Master-kaarten samenvoegen (F3), PAP-ontdubbeling, UoM-kaart, producten verhuizen | opruiming, deels afhankelijk van C2 |
-| C4 | Per-veld override-reset, zoek/filterveld, inline validatiefouten | polijst |
+| C1 | Herindeling in drie lagen, scopebadges, effectlabels, dirty-state-opslagbalk | ✅ af (a73c1f3) |
+| C2 | Settings-registry backend + frontend; `forecast_align_to_month`-toggle als bewijs | ✅ af (83a3a0b) |
+| C3 | PAP-ontdubbeling, legacy-kaart ingevouwen, UoM-kaart | ✅ af |
+| C4a | Éénpagina-layout: sticky submenu met scrollspy + zoekveld; secties = ankers | goedgekeurde eindvorm |
+| C4b | Masterdata-datasets inline op de pagina (lazy per sectie, zoekbaar, bestaande PATCH-flow); dataset-modals verdwijnen | vervangt de modals |
+| C4c | Productwizard (identificatie → vraag → maken/kopen → bevestigen) met twee uitgangen: scenario én masterdata (= scenario-promotie) | vervangt de productmodal |
+
+### Eindvorm (goedgekeurd 2026-07-28)
+
+Eén doorlopende Config-pagina met links een sticky submenu (scrollspy,
+zoekveld dat secties én tabelrijen filtert), gegroepeerd op de drie lagen.
+De data zelf staat inline: masterdata-tabellen zijn secties, geen modals.
+Lazy rendering per sectie is een harde eis (Maastricht: 2000+ prijsregels).
+Per-veld override-reset en inline validatie liften mee met de
+registry-rendering.
 
 Volgorde-rationale: C1 kan vandaag en maakt de tab direct leesbaar; C2 is de
 investering die elke volgende instelling goedkoop maakt; C3 wacht bewust op

@@ -1372,7 +1372,18 @@
 
         <!-- Config Tab -->
         <div id="config-tab" class="tab-content hidden">
-          <div class="max-w-2xl mx-auto space-y-6">
+          <div class="flex gap-6 max-w-5xl mx-auto items-start">
+
+            <!-- C4a: sticky submenu met scrollspy + zoekveld. Links worden
+                 gegenereerd uit de [data-cfg-section]-kaarten hiernaast. -->
+            <nav id="cfgNav" style="position:sticky;top:12px;width:200px;flex:none">
+              <input id="cfgSearch" type="text" placeholder="&#128269; Zoeken in instellingen..."
+                     oninput="filterConfigSections(this.value)"
+                     class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-blue-500 focus:outline-none">
+              <div id="cfgNavLinks" class="mt-3"></div>
+            </nav>
+
+            <div id="cfgSections" class="flex-1 min-w-0 space-y-6">
 
             <!-- ===== Sectie: instellingen van de actieve instantie ===== -->
             <div class="flex items-baseline gap-2 border-l-4 border-blue-500 pl-3">
@@ -1382,7 +1393,7 @@
             <p class="text-xs text-slate-500 -mt-4">Onderstaande instellingen horen bij de actieve instantie en reizen ermee mee. Andere instanties merken er niets van.</p>
 
             <!-- Planning Configuration -->
-            <div class="card rounded-xl p-6">
+            <div class="card rounded-xl p-6" id="cfgsec-planning" data-cfg-section="Planning" data-cfg-group="Deze instantie">
               <div class="flex items-center justify-between mb-1">
                 <h3 class="font-semibold text-slate-200">Planning Configuratie</h3>
                 <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24" title="Site, horizon, machines en standaardvolumes bepalen de structuur van de planning: opslaan herbouwt de volledige berekening van deze instantie.">wijziging &rarr; volledige herberekening</span>
@@ -1448,7 +1459,7 @@
             </div>
 
             <!-- Valuation Parameters -->
-            <div class="card rounded-xl p-6">
+            <div class="card rounded-xl p-6" id="cfgsec-financieel" data-cfg-section="Financieel" data-cfg-group="Deze instantie">
               <div class="flex items-center justify-between mb-1">
                 <h3 class="font-semibold text-slate-200">Valuation Parameters</h3>
                 <div class="flex items-center gap-2">
@@ -1516,7 +1527,7 @@
             </div>
 
             <!-- Dynamische producten (Fase 3) -->
-            <div class="card rounded-xl p-6">
+            <div class="card rounded-xl p-6" id="cfgsec-producten" data-cfg-section="Scenario-producten" data-cfg-group="Deze instantie">
               <div class="flex items-center justify-between mb-1">
                 <h3 class="flex items-center font-semibold text-slate-200">
                   Dynamische producten
@@ -1551,7 +1562,7 @@
             <p class="text-xs text-slate-500 -mt-4">Masterdata en mappen zijn gedeeld: een wijziging hier werkt door in elke instantie bij de eerstvolgende berekening. Wil je iets alleen in deze instantie proberen, gebruik dan de instellingen hierboven.</p>
 
             <!-- Masterdata in de app (master-config vervanging) -->
-            <div class="card rounded-xl p-6">
+            <div class="card rounded-xl p-6" id="cfgsec-masterdata" data-cfg-section="Status & werkboek" data-cfg-group="Masterdata">
               <div class="flex items-center justify-between mb-1">
                 <h3 class="flex items-center font-semibold text-slate-200">
                   Masterdata (in app)
@@ -1564,7 +1575,6 @@
               </div>
               <p class="text-slate-500 text-xs mb-3">Na de import is geen basis-.xlsm meer nodig: de multi-upload gebruikt automatisch deze masterdata. De app is de bron van waarheid — een nieuwe import vraagt bevestiging.</p>
               <div id="masterDataStatus" class="mb-3 p-3 rounded-lg bg-slate-800 text-sm text-slate-400">Laden...</div>
-              <div id="masterDatasetButtons" class="flex flex-wrap gap-2"></div>
               <!-- Masterwerkboek: Excel als bewerkingsmedium; de spiegel op
                    schijf wordt na elke wijziging herschreven. -->
               <div class="mt-3 pt-3" style="border-top:1px solid #334155">
@@ -1595,9 +1605,35 @@
               </details>
             </div>
 
+            <!-- C4b: masterdata-tabellen inline. Eén bewerkgebied (zelfde
+                 machinerie als de vroegere modal: #masterDatasetBody +
+                 collect/save), dataset gekozen via pills. -->
+            <div class="card rounded-xl p-6" id="cfgsec-tabellen" data-cfg-section="Tabellen" data-cfg-group="Masterdata">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="flex items-center font-semibold text-slate-200">
+                  Masterdata-tabellen
+                  <span class="cfg-info">i<span class="cfg-tooltip">Bekijk en bewerk de masterdata direct op deze pagina. Kies een tabel; wijzigingen gelden voor álle instanties bij de eerstvolgende berekening. Voor bulk-onderhoud is het masterwerkboek (export/import hierboven) vaak handiger.</span></span>
+                </h3>
+                <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24">geldt bij volgende berekening</span>
+              </div>
+              <div id="masterDatasetButtons" class="flex flex-wrap gap-2 mb-3"></div>
+              <div id="masterDatasetInline" style="display:none">
+                <div class="flex items-center justify-between mb-2">
+                  <h4 id="masterDatasetTitle" class="text-sm font-semibold text-slate-300"></h4>
+                  <input id="masterDatasetFilter" type="text" placeholder="Filter rijen..." oninput="filterMasterDatasetRows(this.value)"
+                         class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 focus:border-blue-500 focus:outline-none w-48">
+                </div>
+                <div id="masterDatasetBody" class="rounded-lg bg-slate-900 p-2" style="max-height:55vh;overflow:auto"></div>
+                <div id="masterDatasetFooter" class="flex items-center gap-3 mt-3">
+                  <button id="btnSaveMasterDataset" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan</button>
+                  <span id="masterDatasetStatus" class="text-xs text-slate-400"></span>
+                </div>
+              </div>
+            </div>
+
             <!-- Datakwaliteit: UoM-conversies (installatie-breed, zelfde
                  data als de UoM-check-knop in de Planning-toolbar) -->
-            <div class="card rounded-xl p-6">
+            <div class="card rounded-xl p-6" id="cfgsec-uom" data-cfg-section="Datakwaliteit" data-cfg-group="Systeem">
               <div class="flex items-center justify-between mb-1">
                 <h3 class="flex items-center font-semibold text-slate-200">
                   Datakwaliteit — UoM-conversies
@@ -1609,7 +1645,7 @@
             </div>
 
             <!-- Folder Settings -->
-            <div class="card rounded-xl p-6">
+            <div class="card rounded-xl p-6" id="cfgsec-mappen" data-cfg-section="Mappen" data-cfg-group="Systeem">
               <h3 class="font-semibold text-slate-200 mb-1">Mappen</h3>
               <p class="text-slate-500 text-xs mb-4">Kies waar uploads, exports en sessies worden opgeslagen. Handig als je data op een netwerkschijf wilt bewaren. Wijzigingen gaan direct in.</p>
               <div class="space-y-4" id="folderConfigRows">
@@ -1646,6 +1682,7 @@
               <p class="text-slate-600 text-xs mt-3">Na het wijzigen van de sessies-map herstart de applicatie om de nieuwe locatie te gebruiken.</p>
             </div>
 
+            </div><!-- /cfgSections -->
           </div>
         </div>
     </main>
@@ -5213,7 +5250,7 @@ function _renderMasterDataStatus(status) {
         + `<span class="text-slate-500 text-xs">${counts.materials || 0} materialen &middot; ${counts.machines || 0} machines &middot; ${counts.safety_stock || 0} veiligheidsvoorraden &middot; ${counts.purchase || 0} inkoopregels &middot; ${counts.sales_prices || 0} prijzen</span>${actualsNote}`;
     if (btns) {
         btns.innerHTML = Object.entries(_MASTER_DATASETS).map(([ds, spec]) =>
-            `<button onclick="openMasterDatasetModal('${ds}')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">${escapeHtml(spec.label)}${spec.kind === 'view' ? ' &#128065;' : ' &#9998;'}</button>`
+            `<button data-ds="${ds}" onclick="openMasterDatasetModal('${ds}')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">${escapeHtml(spec.label)}${spec.kind === 'view' ? ' &#128065;' : ' &#9998;'}</button>`
         ).join('');
     }
     // Spiegelstatus: is het werkboek op schijf actueel?
@@ -5352,6 +5389,8 @@ async function importMasterWorkbook(event) {
 
 let _masterDatasetCache = null;  // { dataset, value, version }
 
+// C4b: dataset opent inline in de sectie "Masterdata-tabellen" (voorheen
+// een modal — zelfde render/collect/save-machinerie, andere container).
 async function openMasterDatasetModal(dataset) {
     const spec = _MASTER_DATASETS[dataset];
     if (!spec) return;
@@ -5359,32 +5398,36 @@ async function openMasterDatasetModal(dataset) {
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
     _masterDatasetCache = data;
+    _activeMasterDataset = dataset;
 
-    const existing = document.getElementById('masterDatasetModal');
-    if (existing) existing.remove();
-    const modal = document.createElement('div');
-    modal.id = 'masterDatasetModal';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.7);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px';
+    const host = document.getElementById('masterDatasetInline');
+    const body = document.getElementById('masterDatasetBody');
+    if (!host || !body) return;
     const editable = spec.kind !== 'view';
-    modal.innerHTML = `
-      <div style="background:#1e293b;border-radius:12px;padding:24px;width:100%;max-width:860px;color:#e2e8f0">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <h2 style="font-size:1.1rem;font-weight:600">Masterdata — ${escapeHtml(spec.label)}</h2>
-          <button onclick="document.getElementById('masterDatasetModal').remove()" style="background:#334155;border:none;color:#e2e8f0;padding:4px 10px;border-radius:6px;cursor:pointer">&#10005; Sluiten</button>
-        </div>
-        ${editable ? '<p class="text-xs text-slate-500 mb-3">Wijzigingen gelden bij de eerstvolgende berekening (herbereken bestaande sessies om ze toe te passen).</p>' : ''}
-        <div id="masterDatasetBody" style="max-height:60vh;overflow:auto">${_masterDatasetHtml(spec, data.value)}</div>
-        ${editable ? `
-        <div class="flex items-center gap-3 mt-4">
-          <button id="btnSaveMasterDataset" onclick="saveMasterDataset('${dataset}')" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan</button>
-          <span id="masterDatasetStatus" class="text-xs text-slate-400"></span>
-        </div>` : ''}
-      </div>`;
-    document.body.appendChild(modal);
-    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-    if (spec.kind === 'sales_prices') {
-        document.getElementById('masterDatasetBody').addEventListener('input', _salesPriceRowInput);
-    }
+    document.getElementById('masterDatasetTitle').textContent = spec.label;
+    const filterEl = document.getElementById('masterDatasetFilter');
+    if (filterEl) filterEl.value = '';
+    body.innerHTML = _masterDatasetHtml(spec, data.value);
+    document.getElementById('masterDatasetFooter').style.display = editable ? '' : 'none';
+    const saveBtn = document.getElementById('btnSaveMasterDataset');
+    if (saveBtn) saveBtn.onclick = () => saveMasterDataset(dataset);
+    if (spec.kind === 'sales_prices') body.addEventListener('input', _salesPriceRowInput);
+    host.style.display = '';
+    // actieve pill markeren
+    document.querySelectorAll('#masterDatasetButtons button').forEach(b => {
+        b.style.outline = b.dataset.ds === dataset ? '2px solid #3b82f6' : '';
+    });
+    document.getElementById('cfgsec-tabellen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+let _activeMasterDataset = null;
+
+function filterMasterDatasetRows(query) {
+    const q = (query || '').trim().toLowerCase();
+    document.querySelectorAll('#masterDatasetBody tr[data-master-key], #masterDatasetBody tr[data-master-field]').forEach(row => {
+        row.style.display = (!q || row.textContent.toLowerCase().includes(q)
+            || [...row.querySelectorAll('input')].some(i => String(i.value).toLowerCase().includes(q))) ? '' : 'none';
+    });
 }
 
 function _masterRound(value, decimals) {
@@ -5587,8 +5630,10 @@ async function saveMasterDataset(dataset) {
         return;
     }
     _renderMasterDataStatus(data);
-    const modal = document.getElementById('masterDatasetModal');
-    if (modal) modal.remove();
+    if (statusEl) statusEl.textContent = '';
+    // Inline: dataset opnieuw laden zodat defaultValues en afgeleide velden
+    // de opgeslagen stand tonen.
+    openMasterDatasetModal(dataset);
     notify(`Masterdata opgeslagen (versie ${data.version}). Herbereken sessies om de wijziging toe te passen.`, 'info', 4500);
 }
 
@@ -9640,6 +9685,18 @@ async function openProductModal(materialNumber) {
         <datalist id="prodMatDatalist">${matOptions}</datalist>
         <datalist id="prodMachineDatalist">${machineOptions}</datalist>
 
+        <!-- C4c: wizard-stappen -->
+        <div id="wizSteps" class="flex items-center gap-1 mb-4 text-xs flex-wrap">
+          <button data-wiz-tab="1" onclick="_wizGoto(1)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">1. Identificatie</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-wiz-tab="2" onclick="_wizGoto(2)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">2. Vraag &amp; voorraad</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-wiz-tab="3" onclick="_wizGoto(3)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">3. Maken/kopen &amp; prijzen</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-wiz-tab="4" onclick="_wizGoto(4)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">4. Overzicht</button>
+        </div>
+
+        <div data-wiz-step="1">
         <div class="mb-4">
           <label class="text-xs text-slate-400 font-semibold block mb-1">Hoe wordt dit product verkregen? *</label>
           <select id="prodSourcing" onchange="_prodApplySourcing()" class="${_PROD_INPUT_CLS} w-full">
@@ -9660,7 +9717,9 @@ async function openProductModal(materialNumber) {
           <div><label class="text-xs text-slate-400 font-semibold block mb-1">Productfamilie</label>
             <input id="prodFamily" type="text" value="${val(p.product_family)}" class="${_PROD_INPUT_CLS} w-full"></div>
         </div>
+        </div><!-- /stap 1 -->
 
+        <div data-wiz-step="2" style="display:none">
         <div class="grid grid-cols-3 gap-3 mb-2">
           <div><label class="text-xs text-slate-400 font-semibold block mb-1">Vast volume per maand</label>
             <input id="prodFlatVolume" type="text" value="${val(p.flat_volume)}" placeholder="bijv. 1200" class="${_PROD_INPUT_CLS} w-full text-right"></div>
@@ -9672,7 +9731,9 @@ async function openProductModal(materialNumber) {
         <details class="mb-4"><summary class="text-xs text-slate-400 cursor-pointer">Volumes per periode (optioneel, overschrijft het vaste volume)</summary>
           <div id="prodPeriodVolumes" class="grid grid-cols-3 gap-2 mt-2">${periodInputs}</div>
         </details>
+        </div><!-- /stap 2 -->
 
+        <div data-wiz-step="3" style="display:none">
         <div class="mb-4" id="prodSectionBomParent"><div class="flex items-center justify-between">
             <label class="text-xs text-slate-400 font-semibold">Stuklijst &mdash; dit product gebruikt componenten <span class="text-slate-600 font-normal">(vereist bij productie)</span></label>
             <button onclick="addProductLinkRow('prodBomParentTbody','parent')" class="px-2 py-1 rounded text-xs bg-slate-700 hover:bg-slate-600">+ rij</button></div>
@@ -9706,15 +9767,79 @@ async function openProductModal(materialNumber) {
             <input id="prodInvValue" type="text" value="${val(p.default_inventory_value)}" class="${_PROD_INPUT_CLS} w-full text-right"></div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <button id="btnSaveProduct" onclick="saveAddedProduct()" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan &amp; doorrekenen</button>
-          <span id="prodSaveStatus" class="text-xs text-slate-400"></span>
+        </div><!-- /stap 3 -->
+
+        <div data-wiz-step="4" style="display:none">
+          <div id="wizSummary" class="mb-4 p-3 rounded-lg bg-slate-900 text-sm text-slate-300"></div>
+          <label class="flex items-center gap-2 text-xs text-slate-400 mb-4 cursor-pointer">
+            <input type="checkbox" id="prodPromoteToMaster" class="accent-blue-500">
+            Ook opnemen in de site-masterdata
+            <span class="cfg-info">i<span class="cfg-tooltip">Zet het product na het doorrekenen &oacute;&oacute;k in de app-masterdata (en dus in het masterwerkboek), zodat het geen scenario-product blijft maar echt assortiment wordt. Vul prijzen en inrichting daarna aan in de masterdata-tabellen.</span></span>
+          </label>
+          <div class="flex items-center gap-3">
+            <button id="btnSaveProduct" onclick="saveAddedProduct()" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Opslaan &amp; doorrekenen</button>
+            <span id="prodSaveStatus" class="text-xs text-slate-400"></span>
+          </div>
+        </div><!-- /stap 4 -->
+
+        <div class="flex items-center justify-between mt-4 pt-3" style="border-top:1px solid #334155">
+          <button id="wizBack" onclick="_wizGoto(_wizStep - 1)" class="px-4 py-1.5 rounded text-sm bg-slate-700 hover:bg-slate-600 text-slate-300">&larr; Terug</button>
+          <button id="wizNext" onclick="_wizGoto(_wizStep + 1)" class="btn-primary px-5 py-1.5 rounded text-sm font-semibold text-white">Volgende &rarr;</button>
         </div>
       </div>`;
     document.body.appendChild(modal);
     modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
     document.getElementById('prodSourcing').value = _prodInferSourcing(p);
     _prodApplySourcing();
+    _wizGoto(1);
+}
+
+// ===== C4c: wizard-navigatie =====================================================
+let _wizStep = 1;
+
+function _wizGoto(step) {
+    step = Math.max(1, Math.min(4, step));
+    // Vooruit vanaf stap 1: identificatie moet kloppen voor we verder gaan.
+    if (step > 1 && _wizStep === 1) {
+        const nr = (document.getElementById('prodNumber').value || '').trim();
+        const nm = (document.getElementById('prodName').value || '').trim();
+        if (!nr || !nm) { notify('Vul eerst materiaalnummer en naam in.', 'error'); return; }
+    }
+    _wizStep = step;
+    document.querySelectorAll('[data-wiz-step]').forEach(el => {
+        el.style.display = Number(el.dataset.wizStep) === step ? '' : 'none';
+    });
+    document.querySelectorAll('[data-wiz-tab]').forEach(btn => {
+        const active = Number(btn.dataset.wizTab) === step;
+        btn.style.background = active ? '#3b82f6' : '';
+        btn.style.color = active ? '#fff' : '';
+    });
+    const back = document.getElementById('wizBack');
+    const next = document.getElementById('wizNext');
+    if (back) back.style.visibility = step === 1 ? 'hidden' : '';
+    if (next) next.style.display = step === 4 ? 'none' : '';
+    if (step === 4) _wizRenderSummary();
+}
+
+function _wizRenderSummary() {
+    const el = document.getElementById('wizSummary');
+    if (!el) return;
+    const v = id => (document.getElementById(id)?.value || '').trim();
+    const sourcing = { purchased: 'aangekocht', produced: 'geproduceerd', mix: 'mix inkoop/productie' }[v('prodSourcing')] || v('prodSourcing');
+    const bomRows = document.querySelectorAll('#prodBomParentTbody tr').length;
+    const routingRows = document.querySelectorAll('#prodRoutingTbody tr').length;
+    const rows = [
+        ['Product', v('prodNumber') + ' \u2014 ' + v('prodName')],
+        ['Type / familie', _productTypeLabel(v('prodType')) + ' / ' + (v('prodFamily') || '\u2014')],
+        ['Verkrijging', sourcing],
+        ['Volume per maand', v('prodFlatVolume') || '\u2014 (of per periode)'],
+        ['Start- / veiligheidsvoorraad', (v('prodStartingStock') || '0') + ' / ' + (v('prodSafetyStock') || '0')],
+        ['Stuklijst / routing', bomRows + ' component(en), ' + routingRows + ' routing-regel(s)'],
+        ['Verkoopprijs', v('prodSalesPrice') || '\u2014'],
+    ];
+    el.innerHTML = rows.map(([k, val]) =>
+        '<div class="flex justify-between gap-4 py-0.5"><span class="text-slate-500">' + escapeHtml(k)
+        + '</span><span class="text-right">' + escapeHtml(val) + '</span></div>').join('');
 }
 
 function _prodInferSourcing(p) {
@@ -9857,6 +9982,29 @@ async function saveAddedProduct() {
         _addedProductsData.added_products = data.added_products || [];
         await _applyPapResult(data);
         renderAddedProductsTable();
+        // C4c: masterdata-uitgang — het scenario-product wordt óók echt
+        // assortiment (scenario-promotie via de bestaande add-route).
+        const promote = document.getElementById('prodPromoteToMaster');
+        if (promote && promote.checked) {
+            const typeMap = { bulk: 'Bulk Product', packaged: 'Packaged Product',
+                              raw: 'Raw Material', packaging: 'Packaging Goods', other: 'Other' };
+            try {
+                const pres = await fetch('/api/master_data/materials/add', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        material: product.material_number,
+                        name: product.name,
+                        product_type: typeMap[product.product_type] || 'Other',
+                        product_family: product.product_family || '',
+                    }),
+                });
+                const pdata = await pres.json();
+                if (!pres.ok || pdata.error) notify('Opnemen in masterdata mislukt: ' + (pdata.error || '?'), 'error', 6000);
+                else notify(`${product.material_number} opgenomen in de masterdata (versie ${pdata.version}); het masterwerkboek is bijgewerkt.`, 'success', 6000);
+            } catch (e) {
+                notify('Opnemen in masterdata mislukt: ' + e, 'error', 6000);
+            }
+        }
         const modal = document.getElementById('productModal');
         if (modal) modal.remove();
         log(`Dynamisch product opgeslagen: ${product.material_number}`);
@@ -12564,9 +12712,93 @@ function _collectGenericSettings(payload) {
     return payload;
 }
 
+// ===== C4a: submenu, scrollspy en zoeken =========================================
+let _cfgNavBuilt = false;
+let _cfgSpy = null;
+
+// position:sticky bindt aan de dichtstbijzijnde overflow-voorouder
+// (#main-content, overflow-y:auto) terwijl het echte scrollen op het venster
+// gebeurt — sticky grijpt dus nooit. Fallback: fixeren zodra de nav uit
+// beeld zou schuiven, met gemeten left/width zodat de layout niet springt.
+function _cfgNavSticky() {
+    const nav = document.getElementById('cfgNav');
+    const tab = document.getElementById('config-tab');
+    if (!nav || !tab || tab.classList.contains('hidden')) return;
+    const parent = nav.parentElement;
+    const parentTop = parent.getBoundingClientRect().top;
+    if (parentTop < 12) {
+        if (nav.style.position !== 'fixed') {
+            const r = nav.getBoundingClientRect();
+            nav.style.left = r.left + 'px';
+            nav.style.width = r.width + 'px';
+            nav.style.position = 'fixed';
+            nav.style.top = '12px';
+        }
+    } else if (nav.style.position === 'fixed') {
+        nav.style.position = 'sticky';
+        nav.style.left = '';
+        nav.style.width = '200px';
+        nav.style.top = '12px';
+    }
+}
+
+function _buildConfigNav() {
+    window.addEventListener('scroll', _cfgNavSticky, { passive: true });
+    document.getElementById('main-content')?.addEventListener('scroll', _cfgNavSticky, { passive: true });
+    window.addEventListener('resize', () => {
+        const nav = document.getElementById('cfgNav');
+        if (nav && nav.style.position === 'fixed') { nav.style.position = 'sticky'; nav.style.left = ''; nav.style.width = '200px'; }
+        _cfgNavSticky();
+    });
+    const host = document.getElementById('cfgNavLinks');
+    if (!host) return;
+    const sections = [...document.querySelectorAll('#cfgSections [data-cfg-section]')];
+    let html = '', lastGroup = null;
+    for (const sec of sections) {
+        const group = sec.dataset.cfgGroup || '';
+        if (group !== lastGroup) {
+            html += `<div class="text-xs font-bold uppercase tracking-wider text-slate-500 mt-3 mb-1">${escapeHtml(group)}</div>`;
+            lastGroup = group;
+        }
+        html += `<a href="#${sec.id}" data-cfg-nav="${sec.id}" onclick="event.preventDefault();document.getElementById('${sec.id}').scrollIntoView({behavior:'smooth',block:'start'})"
+            class="block px-2 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800">${escapeHtml(sec.dataset.cfgSection)}</a>`;
+    }
+    host.innerHTML = html;
+    // Scrollspy: de sectie in beeld licht op in het submenu.
+    if (_cfgSpy) _cfgSpy.disconnect();
+    _cfgSpy = new IntersectionObserver(entries => {
+        for (const e of entries) {
+            const link = document.querySelector(`[data-cfg-nav="${e.target.id}"]`);
+            if (!link) continue;
+            if (e.isIntersecting) {
+                document.querySelectorAll('[data-cfg-nav]').forEach(l => { l.style.color = ''; l.style.background = ''; });
+                link.style.color = '#93c5fd';
+                link.style.background = 'rgba(59,130,246,0.12)';
+            }
+        }
+    }, { rootMargin: '-10% 0px -70% 0px' });
+    sections.forEach(sec => _cfgSpy.observe(sec));
+}
+
+function filterConfigSections(query) {
+    const q = (query || '').trim().toLowerCase();
+    document.querySelectorAll('#cfgSections [data-cfg-section]').forEach(sec => {
+        const hit = !q || sec.textContent.toLowerCase().includes(q)
+            || (sec.dataset.cfgSection || '').toLowerCase().includes(q);
+        sec.style.display = hit ? '' : 'none';
+        const link = document.querySelector(`[data-cfg-nav="${sec.id}"]`);
+        if (link) link.style.opacity = hit ? '' : '0.35';
+    });
+    // Sectiekoppen ("Deze instantie"/"App-breed") verbergen bij actief filter.
+    document.querySelectorAll('#cfgSections > .flex.items-baseline, #cfgSections > p.text-xs').forEach(el => {
+        el.style.display = q ? 'none' : '';
+    });
+}
+
 async function loadConfigTab() {
     _cfgInitDirtyTracking();
     _cfgClearDirty();
+    if (!_cfgNavBuilt) { _cfgNavBuilt = true; _buildConfigNav(); }
     const nameEl = document.getElementById('cfgInstanceName');
     if (nameEl) {
         const src = document.getElementById('fileName');
