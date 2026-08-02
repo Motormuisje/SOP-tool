@@ -212,6 +212,27 @@ def overlay_master_data(loader, master: dict) -> None:
             machine.availability_by_period = dict(existing.availability_by_period)
         loader.machines[machine.machine_code] = machine
     _rebuild_machine_groups(loader)
+    # Structurele configuratie volgt de app (masterdata-tabellen = enige
+    # bron van waarheid): unlimited-machines en forecast-uitlijning gelden
+    # ook op werkboeksessies. Kalenderankers (initial_date, actuals) en
+    # site blijven van het werkboek: die sturen de LOAD zelf (periodes,
+    # plantfilter) en zijn op dit punt al verwerkt.
+    cfg = master.get('config') or {}
+    if loader.config is not None:
+        if 'unlimited_capacity_machine' in cfg:
+            loader.config.unlimited_capacity_machine = list(cfg.get('unlimited_capacity_machine') or [])
+        if 'forecast_align_to_month' in cfg:
+            loader.config.forecast_align_to_month = bool(cfg['forecast_align_to_month'])
+    if 'purchased_and_produced' in cfg:
+        # Masterdefault vervangt de werkboekbasis. De overlay draait NÁ
+        # _apply_config_overrides in load_all, dus de sessie-PAP-override
+        # (wat-als) moet hier expliciet opnieuw gemerged worden — anders
+        # clobbert de store de override bij elke rebuild.
+        loader.purchased_and_produced = {
+            str(mat): float(val)
+            for mat, val in (cfg.get('purchased_and_produced') or {}).items()
+        }
+        loader._apply_pap_override()
     finalize_shift_systems(loader)
     loader._extend_machine_availability_to_periods()
 

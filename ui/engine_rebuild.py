@@ -16,17 +16,31 @@ def get_config_overrides(global_config: dict) -> dict:
     uom_overrides = get_confirmed_overrides()
     if uom_overrides:
         ov['uom_overrides'] = uom_overrides
-    if global_config.get('site'):
-        ov['site'] = global_config['site']
-    if global_config.get('forecast_months'):
-        ov['forecast_months'] = int(global_config['forecast_months'])
-    if global_config.get('unlimited_machines'):
-        ov['unlimited_machines'] = global_config['unlimited_machines']
-    if global_config.get('forecast_align_to_month') is not None:
-        # Parallel-run validation mode (positional forecast copy). No UI
-        # toggle yet — settable via global_config.json; rides the normal
-        # override chain so it also works workbook-free.
-        ov['forecast_align_to_month'] = bool(global_config['forecast_align_to_month'])
+    # Met een app-masterstore zijn de masterdata-tabellen de enige bron van
+    # waarheid voor structurele config; legacy-globals (uit de oude
+    # Config-kaart of global_config.json) gelden alleen nog ZONDER store,
+    # anders zouden oude overschrijvingen de tabel stil overrulen.
+    from ui.master_store import get_current_master_record
+    _record = get_current_master_record()
+    if _record is None:
+        if global_config.get('site'):
+            ov['site'] = global_config['site']
+        if global_config.get('unlimited_machines'):
+            ov['unlimited_machines'] = global_config['unlimited_machines']
+        if global_config.get('forecast_align_to_month') is not None:
+            ov['forecast_align_to_month'] = bool(global_config['forecast_align_to_month'])
+        # Horizon idem: het oude invoerveld is weg, dus een achtergebleven
+        # global zou de masterdata-Config-tabel permanent overschaduwen.
+        if global_config.get('forecast_months'):
+            ov['forecast_months'] = int(global_config['forecast_months'])
+    else:
+        # De masterdata-Config-tabel neemt de rol van de oude global over:
+        # de horizon uit de store stuurt de load (periodes/forecast-inlezen),
+        # zodat loader- en enginehorizon gelijk blijven (zie
+        # resolve_months_forecast voor de enginekant).
+        _months = ((_record.get('master') or {}).get('config') or {}).get('forecast_months')
+        if _months:
+            ov['forecast_months'] = int(_months)
     if global_config.get('purchased_and_produced'):
         ov['purchased_and_produced'] = global_config['purchased_and_produced']
     vp = global_config.get('valuation_params')
@@ -119,6 +133,22 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
     return ov
 
 
+def resolve_months_forecast(params: dict | None, global_config: dict) -> int:
+    """Horizon voor een herbouw: masterdata-Config wint mét store, de legacy
+    global alleen storeless (het oude Config-kaartveld is weg), anders de
+    sessieparameter waarmee oorspronkelijk gerekend is."""
+    months = int((params or {}).get('months_forecast', 12) or 12)
+    from ui.master_store import get_current_master_record
+    record = get_current_master_record()
+    if record is not None:
+        store_months = ((record.get('master') or {}).get('config') or {}).get('forecast_months')
+        if store_months:
+            return int(store_months)
+    elif global_config.get('forecast_months'):
+        return int(global_config['forecast_months'])
+    return months
+
+
 def build_clean_engine_for_session(
     sess: dict,
     global_config: dict,
@@ -127,9 +157,7 @@ def build_clean_engine_for_session(
     params = params or sess.get('parameters') or {}
     if not params:
         return None
-    months_forecast = int(params.get('months_forecast', 12) or 12)
-    if global_config.get('forecast_months'):
-        months_forecast = int(global_config.get('forecast_months') or months_forecast)
+    months_forecast = resolve_months_forecast(params, global_config)
     # App-masterdata (indien aanwezig) geldt bij ELKE rebuild: werkboek-vrije
     # sessies rekenen er volledig uit, werkboek-sessies krijgen de overlay
     # (app = bron van waarheid). De bronkeuze ligt centraal in

@@ -89,22 +89,26 @@ def test_generic_setting_flows_into_override_chain(setting):
 
 
 def test_apply_generic_settings_is_noop_for_unchanged_value():
-    s = get_setting('forecast_align_to_month')
-    gc = {'forecast_align_to_month': True}
-    effects = apply_generic_settings({'forecast_align_to_month': True}, gc)
-    assert effects == []
-    effects = apply_generic_settings({'forecast_align_to_month': False}, gc)
-    assert effects == [s.effect]
-    assert gc['forecast_align_to_month'] is False
+    """Registry-machinerie blijft werken voor toekomstige generieke velden;
+    getest met een tijdelijk injectieveld (forecast_align_to_month is
+    verhuisd naar de masterdata-Config-tabel)."""
+    from ui.settings_registry import REGISTRY, Setting
+    dummy = Setting('test_flag', 'planning', 'installation', 'bool',
+                    'Testvlag', 'alleen voor deze test',
+                    effect='rebuild', handler='generic', default=True)
+    REGISTRY.append(dummy)
+    try:
+        gc = {'test_flag': True}
+        assert apply_generic_settings({'test_flag': True}, gc) == []
+        assert apply_generic_settings({'test_flag': False}, gc) == ['rebuild']
+        assert gc['test_flag'] is False
+    finally:
+        REGISTRY.remove(dummy)
 
 
-def test_forecast_align_toggle_triggers_structural_flag(config_route_app):
-    """Het bewijsveld van C2: de toggle bestaat end-to-end en een wijziging
-    telt als structurele config-wijziging (rebuild-pad)."""
-    gc = config_route_app.global_config
-    res = config_route_app.client.post('/api/config/settings',
-                                       json={'forecast_align_to_month': False})
-    assert res.status_code == 200
-    assert gc['forecast_align_to_month'] is False
-    # Zonder actieve engine geen rebuild, maar de waarde staat klaar voor de
-    # eerstvolgende berekening via get_config_overrides (zie chain-test).
+def test_forecast_align_moved_to_master_config():
+    """forecast_align_to_month is géén registry-veld meer: de masterdata-
+    Config-tabel is de enige bron van waarheid; serialize/hydrate en de
+    store-overlay dragen hem (zie test_master_data)."""
+    assert get_setting('forecast_align_to_month') is None
+    assert all(s.key != 'forecast_align_to_month' for s in generic_settings())

@@ -237,3 +237,78 @@ def test_locale_parser_rejects_malformed_numbers(browser_page, golden_fixture_pa
                          timeout=60).json()["value"]
     assert after == original
     assert page.js_errors == []
+
+
+def test_master_config_and_fte_forms_round_trip(browser_page, golden_fixture_path):
+    """Masterdata-tabellen zijn de enige bron van waarheid voor Config en FTE:
+    de formulieren bewerken de store rechtstreeks en de oude losse editors
+    (VP-kaart, structurele Config-velden) bestaan niet meer."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    page.reload(wait_until="networkidle")
+    _open_config(page)
+    _ensure_store(page, base_url, golden_fixture_path)
+
+    for gone in ("vp1", "cfgSite", "cfgForecastMonths", "cfgUnlimited",
+                 "cfgAlignForecast", "btnResetVpParams"):
+        assert page.locator(f"#{gone}").count() == 0, f"#{gone} had weg moeten zijn"
+    # Scenario-instellingenkaart bestaat nog (sessie-eigen wat-als).
+    assert page.locator("#cfgPapDisplay").count() == 1
+    assert page.locator("#cfgFcDefMode").count() == 1
+
+    original_cfg = requests.get(base_url + "/api/master_data/config",
+                                timeout=60).json()["value"]
+    original_fte = requests.get(base_url + "/api/master_data/fte",
+                                timeout=60).json()["value"]
+    try:
+        # Config-formulier: unlimited-machines + kalendermaand-toggle bewerken.
+        page.evaluate("() => openMasterDatasetModal('config')")
+        page.wait_for_selector(
+            '#masterDatasetBody tr[data-master-field="unlimited_capacity_machine"]',
+            timeout=30000)
+        page.evaluate("""() => {
+            const q = f => document.querySelector(
+                `#masterDatasetBody tr[data-master-field="${f}"] .master-edit`);
+            q('unlimited_capacity_machine').value = 'BTEST01, BTEST02';
+            q('forecast_align_to_month').checked = !q('forecast_align_to_month').checked;
+        }""")
+        with page.expect_response(
+                lambda r: "/api/master_data/config" in r.url
+                and r.request.method == "PATCH" and r.ok, timeout=60000):
+            page.evaluate("() => saveMasterDataset('config')")
+        after = requests.get(base_url + "/api/master_data/config",
+                             timeout=60).json()["value"]
+        assert after["unlimited_capacity_machine"] == ["BTEST01", "BTEST02"]
+        assert after["forecast_align_to_month"] is (
+            not original_cfg.get("forecast_align_to_month", True))
+        # Kalenderankers en site door de bewerking onaangetast.
+        assert after["initial_date"] == original_cfg["initial_date"]
+        assert after["forecast_actuals_months"] == original_cfg["forecast_actuals_months"]
+        assert after["site"] == original_cfg["site"]
+
+        # FTE-formulier: uren per jaar bewerken; ploegenuren blijven staan.
+        page.evaluate("() => openMasterDatasetModal('fte')")
+        page.wait_for_selector(
+            '#masterDatasetBody tr[data-master-field="fte_hours_per_year"]',
+            timeout=30000)
+        page.evaluate("""() => {
+            document.querySelector(
+                '#masterDatasetBody tr[data-master-field="fte_hours_per_year"] .master-edit'
+            ).value = '1600';
+        }""")
+        with page.expect_response(
+                lambda r: "/api/master_data/fte" in r.url
+                and r.request.method == "PATCH" and r.ok, timeout=60000):
+            page.evaluate("() => saveMasterDataset('fte')")
+        after_fte = requests.get(base_url + "/api/master_data/fte",
+                                 timeout=60).json()["value"]
+        assert float(after_fte["fte_hours_per_year"]) == 1600
+        assert after_fte["shift_hours"] == original_fte["shift_hours"]
+        assert after_fte["default_shift_name"] == original_fte["default_shift_name"]
+    finally:
+        requests.patch(base_url + "/api/master_data/config",
+                       json={"value": original_cfg}, timeout=120)
+        requests.patch(base_url + "/api/master_data/fte",
+                       json={"value": original_fte}, timeout=120)
+        page.evaluate("() => { const m = document.getElementById('masterDatasetInline'); if (m) m.style.display = 'none'; }")
+    assert page.js_errors == []

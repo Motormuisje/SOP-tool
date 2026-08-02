@@ -1392,58 +1392,31 @@
             </div>
             <p class="text-xs text-slate-500 -mt-4">Onderstaande instellingen horen bij de actieve instantie en reizen ermee mee. Andere instanties merken er niets van.</p>
 
-            <!-- Planning Configuration -->
-            <div class="card rounded-xl p-6" id="cfgsec-planning" data-cfg-section="Planning" data-cfg-group="Deze instantie">
+            <!-- Scenario-instellingen: uitsluitend sessie-eigen zaken.
+                 Structurele configuratie (site, horizon, machines, uitlijning)
+                 leeft in de masterdata-tabellen (Config) — de enige bron van
+                 waarheid. -->
+            <div class="card rounded-xl p-6" id="cfgsec-planning" data-cfg-section="Scenario-instellingen" data-cfg-group="Deze instantie">
               <div class="flex items-center justify-between mb-1">
-                <h3 class="font-semibold text-slate-200">Planning Configuratie</h3>
-                <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24" title="Site, horizon, machines en standaardvolumes bepalen de structuur van de planning: opslaan herbouwt de volledige berekening van deze instantie.">wijziging &rarr; volledige herberekening</span>
+                <h3 class="font-semibold text-slate-200">Scenario-instellingen</h3>
+                <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24" title="Deze instellingen horen bij deze instantie; opslaan herbouwt de berekening.">wijziging &rarr; volledige herberekening</span>
               </div>
-              <p class="text-slate-500 text-xs mb-4">Overschrijft de waarden uit de Config sheet van het xlsm. Laat leeg om de waarden uit het bestand te gebruiken.</p>
+              <p class="text-slate-500 text-xs mb-4">Wat-als-instellingen van deze instantie. Site, horizon en machines beheer je in de masterdata-tabellen (Config) hieronder.</p>
               <div class="grid grid-cols-1 gap-4">
                 <div>
                   <label class="flex items-center text-xs text-slate-400 mb-1 font-semibold">
-                    Site
-                    <span class="cfg-info">i<span class="cfg-tooltip">De plant-code waarmee financiele data wordt gefilterd (Average sales price, Cost raw material, Cost machine hour). Alleen rijen met deze PlantCode worden meegenomen.<br><br>Voorbeeld: <strong>NLX1</strong></span></span>
-                  </label>
-                  <input id="cfgSite" type="text" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="cfgSite_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1 font-semibold">
-                    Forecast horizon (maanden)
-                    <span class="cfg-info">i<span class="cfg-tooltip">Aantal maanden dat de planningshorizon omvat. Bepaalt hoeveel periodes er berekend worden in alle tabellen.<br><br>Standaard: <strong>12</strong></span></span>
-                  </label>
-                  <input id="cfgForecastMonths" type="number" min="1" max="36" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="cfgForecastMonths_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1 font-semibold">
-                    Unlimited capacity machines
-                    <span class="cfg-info">i<span class="cfg-tooltip">Machine-codes (komma-gescheiden) die nooit als bottleneck worden beschouwd. Capacity utilization wordt voor deze machines altijd als 100% beschikbaar gerekend.<br><br>Voorbeeld: <strong>PBA99</strong></span></span>
-                    <span class="text-slate-600 font-normal ml-1">(komma-gescheiden)</span>
-                  </label>
-                  <input id="cfgUnlimitedMachines" type="text" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="cfgUnlimitedMachines_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1 font-semibold">
                     Purchased &amp; produced materials
-                    <span class="cfg-info">i<span class="cfg-tooltip">Materialen die zowel ingekocht als zelf geproduceerd worden, met per materiaal de productiefractie. Beheer gebeurt in de Prod/Purch-editor — dezelfde als de knop in de Planning-toolbar; er is één plek waar dit wordt aangepast.</span></span>
+                    <span class="cfg-info">i<span class="cfg-tooltip">Materialen die zowel ingekocht als zelf geproduceerd worden. Beheer via de Prod/Purch-editor; de masterdata-Config levert de standaard.</span></span>
                   </label>
                   <div class="flex items-center gap-2">
-                    <span id="cfgPapDisplay" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-400 truncate" title="Huidige waarde (alleen-lezen)">—</span>
-                    <button onclick="openPapModal()" class="px-3 py-2 rounded-lg text-xs font-medium bg-violet-700 hover:bg-violet-600 text-white whitespace-nowrap" title="Open de Prod/Purch Split-editor (zelfde als in de Planning-toolbar)">&#9881; Openen editor</button>
+                    <span id="cfgPapDisplay" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-400 truncate" title="Huidige waarde (alleen-lezen)">&mdash;</span>
+                    <button onclick="openPapModal()" class="px-3 py-2 rounded-lg text-xs font-medium bg-violet-700 hover:bg-violet-600 text-white whitespace-nowrap" title="Open de Prod/Purch Split-editor">&#9881; Openen editor</button>
                   </div>
                 </div>
-                <!-- Registry-gedreven velden (C2): gerenderd uit
-                     /api/config settings_meta; nieuw veld = één regel in
-                     ui/settings_registry.py. -->
-                <div id="cfgGenericFields" class="col-span-2 space-y-4"></div>
-                <!-- Forecast default volumes (Fase 1.3) -->
                 <div class="col-span-2">
                   <label class="flex items-center text-xs text-slate-400 mb-1 font-semibold">
                     Forecast standaardvolumes
-                    <span class="cfg-info">i<span class="cfg-tooltip">Voegt standaard volumes toe aan de forecast (Line 01). <strong>Lege perioden vullen</strong>: zet perioden zonder forecast op de standaardwaarde. <strong>Optellen</strong>: telt de waarde bij elke periode op. Laat de standaardwaarde leeg om alleen per-materiaal regels toe te passen. Standaard uit — leeg = geen wijziging.</span></span>
+                    <span class="cfg-info">i<span class="cfg-tooltip">Voegt standaard volumes toe aan de forecast (Line 01). <strong>Lege perioden vullen</strong>: zet perioden zonder forecast op de standaardwaarde. <strong>Optellen</strong>: telt de waarde bij elke periode op. Laat de standaardwaarde leeg om alleen per-materiaal regels toe te passen. Standaard uit &mdash; leeg = geen wijziging.</span></span>
                     <span class="text-slate-600 font-normal ml-1">(opt-in)</span>
                   </label>
                   <div class="grid grid-cols-3 gap-2">
@@ -1454,60 +1427,6 @@
                     <input id="cfgFcDefDefault" type="number" step="any" placeholder="globaal (bijv. 7000)" class="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
                     <input id="cfgFcDefPerMat" type="text" placeholder="MAT:aantal, komma-gescheiden" class="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Valuation Parameters -->
-            <div class="card rounded-xl p-6" id="cfgsec-financieel" data-cfg-section="Financieel" data-cfg-group="Deze instantie">
-              <div class="flex items-center justify-between mb-1">
-                <h3 class="font-semibold text-slate-200">Valuation Parameters</h3>
-                <div class="flex items-center gap-2">
-                  <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(52,211,153,0.12);color:#34d399" title="Waarderingsparameters raken alleen de financiële cijfers (Values Planning): opslaan herrekent de financiën, niet de volumeplanning.">wijziging &rarr; alleen financiën</span>
-                  <button id="btnResetVpParams" onclick="resetVpParamsToDefaults()" class="px-3 py-1 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-300 border border-slate-600 transition-colors" title="Reset to Excel default values">Reset to Excel defaults</button>
-                </div>
-              </div>
-              <p class="text-slate-500 text-xs mb-4">Overschrijft de Valuation parameters sheet. Laat leeg om de waarden uit het xlsm te gebruiken.</p>
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Direct FTE cost / maand<span class="cfg-info">i<span class="cfg-tooltip">Totale loonkost van direct productiepersoneel per maand. Wordt gebruikt voor de P&amp;L berekening in Values Planning.</span></span></label>
-                  <input id="vp1" type="number" min="0" step="any" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp1_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Indirect FTE cost / maand<span class="cfg-info">i<span class="cfg-tooltip">Loonkost van indirect personeel (logistiek, techniek, planning) per maand.</span></span></label>
-                  <input id="vp2" type="number" min="0" step="any" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp2_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Overhead cost / maand<span class="cfg-info">i<span class="cfg-tooltip">Vaste overhead kosten per maand (gebouwen, nutsvoorzieningen, onderhoud, etc.) exclusief personeelskosten.</span></span></label>
-                  <input id="vp3" type="number" min="0" step="any" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp3_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">SGA cost / maand<span class="cfg-info">i<span class="cfg-tooltip">Selling, General &amp; Administrative kosten per maand. Bevat verkoop-, marketing- en administratiekosten die niet direct aan productie zijn toe te wijzen.</span></span></label>
-                  <input id="vp4" type="number" min="0" step="any" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp4_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Depreciation / jaar<span class="cfg-info">i<span class="cfg-tooltip">Jaarlijkse afschrijving op vaste activa (machines, gebouwen). Wordt maandelijks verdeeld in de EBIT berekening.</span></span></label>
-                  <input id="vp5" type="number" min="0" step="any" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp5_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Net book value<span class="cfg-info">i<span class="cfg-tooltip">Boekwaarde van alle vaste activa. Wordt gebruikt voor de ROCE berekening (Return on Capital Employed).</span></span></label>
-                  <input id="vp6" type="number" min="0" step="any" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp6_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Days Sales Outstanding (DSO)<span class="cfg-info">i<span class="cfg-tooltip">Gemiddeld aantal dagen tussen levering en ontvangst van betaling van klanten. Beinvloedt de werkkapitaalberekening (debiteuren).</span></span></label>
-                  <input id="vp7" type="number" min="0" step="1" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp7_hint" class="cfg-from-file"></div>
-                </div>
-                <div>
-                  <label class="flex items-center text-xs text-slate-400 mb-1">Days Payable Outstanding (DPO)<span class="cfg-info">i<span class="cfg-tooltip">Gemiddeld aantal dagen dat de betaling aan leveranciers wordt uitgesteld. Beinvloedt de werkkapitaalberekening (crediteuren).</span></span></label>
-                  <input id="vp8" type="number" min="0" step="1" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
-                  <div id="vp8_hint" class="cfg-from-file"></div>
                 </div>
               </div>
             </div>
@@ -5308,8 +5227,8 @@ const _MASTER_DATASETS = {
     machine_costs: { label: 'Machinekosten', kind: 'dict',
         cols: [['variable_cost_per_hour', 'Variabele kost per uur', 'number']] },
     valuation_params: { label: 'Valuatieparameters', kind: 'form' },
-    config: { label: 'Config', kind: 'view' },
-    fte: { label: 'FTE', kind: 'view' },
+    config: { label: 'Config', kind: 'config' },
+    fte: { label: 'FTE', kind: 'fte' },
 };
 
 // ===== Masterdata-productwizard ==================================================
@@ -5735,6 +5654,33 @@ function _masterDatasetHtml(spec, value) {
             <tr data-master-field="${field}"><td class="p-2 text-slate-300">${label}</td>
             <td class="p-2">${_masterInput('number', (value || {})[field])}</td></tr>`).join('') + '</tbody></table>';
     }
+    if (spec.kind === 'config') {
+        const v = value || {};
+        const row = (field, label, input, note) => `
+            <tr data-master-field="${field}"><td class="p-2 text-slate-300" style="width:40%">${label}${note ? `<div class=\"text-xs text-slate-500\">${note}</div>` : ''}</td>
+            <td class="p-2">${input}</td></tr>`;
+        const txt = (val, wide) => `<input type="text" value="${escapeHtml(val === null || val === undefined ? '' : String(val))}" class="master-edit bg-slate-700 rounded px-2 py-1 ${wide ? 'w-full' : 'w-40'}">`;
+        return '<p class="text-xs text-slate-500 mb-2">Structurele configuratie van deze installatie. Kalenderankers (startmaand, actuals) horen bij de importcyclus — wijzig die alleen bewust.</p>'
+            + '<table class="w-full text-sm"><tbody>'
+            + row('site', 'Site (plantcode)', txt(v.site))
+            + row('forecast_months', 'Forecast horizon (maanden)', txt(v.forecast_months), 'wint bij herberekeningen; een verse berekening kiest zijn horizon in het uploaddialoog')
+            + row('unlimited_capacity_machine', 'Unlimited capacity machines', txt((v.unlimited_capacity_machine || []).join(', '), true), 'komma-gescheiden; nooit bottleneck')
+            + row('forecast_align_to_month', 'Forecast op kalendermaand', `<input type="checkbox" class="master-edit accent-blue-500" ${v.forecast_align_to_month === false ? '' : 'checked'}>`, 'uit = positionele VBA-validatiemodus')
+            + row('purchased_and_produced', 'Purchased & produced', txt(Object.entries(v.purchased_and_produced || {}).map(([m, f]) => `${m}:${f}`).join(', '), true), 'MAT:productiefractie, komma-gescheiden')
+            + row('initial_date', 'Startmaand (anker)', txt(String(v.initial_date || '').slice(0, 10)), 'kalenderanker van de importcyclus')
+            + row('forecast_actuals_months', 'Actuals-maanden (anker)', txt(v.forecast_actuals_months), 'idem')
+            + '</tbody></table>';
+    }
+    if (spec.kind === 'fte') {
+        const v = value || {};
+        let html = '<table class="w-full text-sm"><tbody>'
+            + `<tr data-master-field="fte_hours_per_year"><td class="p-2 text-slate-300" style="width:40%">FTE-uren per jaar</td><td class="p-2">${_masterInput('number', v.fte_hours_per_year)}</td></tr>`
+            + `<tr data-master-field="default_shift_name"><td class="p-2 text-slate-300">Standaard ploegensysteem</td><td class="p-2">${_masterInput('text', v.default_shift_name)}</td></tr>`;
+        for (const [shift, hours] of Object.entries(v.shift_hours || {})) {
+            html += `<tr data-master-shift="${escapeHtml(shift)}"><td class="p-2 text-slate-400 pl-6">Uren/maand — ${escapeHtml(shift)}</td><td class="p-2">${_masterInput('number', hours)}</td></tr>`;
+        }
+        return html + '</tbody></table>';
+    }
     if (spec.kind === 'sales_prices') {
         // De bron (SAP-blad) kent geen prijs per eenheid: alleen historisch
         // volume + ExWorks-omzet. De engine rekent prijs = omzet / volume.
@@ -5807,6 +5753,60 @@ function collectMasterDataset(dataset) {
             const parsed = _masterCellValue(row.cells[1], 'number');
             if (parsed === null) return { error: 'Ongeldig getal in het formulier.' };
             out[row.dataset.masterField] = parsed;
+        }
+        return { value: out };
+    }
+    if (spec.kind === 'config') {
+        const out = { ...(original || {}) };
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-field]')) {
+            const field = row.dataset.masterField;
+            const input = row.querySelector('.master-edit');
+            if (!input) continue;
+            if (field === 'forecast_align_to_month') { out[field] = input.checked; continue; }
+            const raw = input.value.trim();
+            if (field === 'unlimited_capacity_machine') {
+                out[field] = raw ? raw.split(',').map(x => x.trim()).filter(Boolean) : [];
+            } else if (field === 'purchased_and_produced') {
+                const pap = {};
+                for (const pair of raw.split(',')) {
+                    const [m, f] = pair.split(':').map(x => (x || '').trim());
+                    if (m && f !== undefined && f !== '') {
+                        const n = parseLocaleNumber(f);
+                        if (Number.isNaN(n)) return { error: `Ongeldige fractie bij ${m}.` };
+                        pap[m] = n;
+                    }
+                }
+                out[field] = pap;
+            } else if (field === 'forecast_months' || field === 'forecast_actuals_months') {
+                const n = parseLocaleNumber(raw || '0');
+                if (Number.isNaN(n) || n < 1) return { error: `Ongeldig aantal maanden bij ${field}.` };
+                out[field] = Math.round(n);
+            } else if (field === 'initial_date') {
+                if (!/^\d{4}-\d{2}(-\d{2})?/.test(raw)) return { error: 'Startmaand moet JJJJ-MM(-DD) zijn.' };
+                const norm = raw.length === 7 ? raw + '-01' : raw;
+                // Ongewijzigde datum: exacte originele representatie behouden
+                // (weergave toont alleen JJJJ-MM-DD, opslag kan T00:00:00 dragen).
+                const origRaw = String((original || {}).initial_date || '');
+                out[field] = (norm === origRaw.slice(0, 10)) ? origRaw : norm;
+            } else {
+                out[field] = raw;
+            }
+        }
+        return { value: out };
+    }
+    if (spec.kind === 'fte') {
+        const out = { ...(original || {}), shift_hours: { ...((original || {}).shift_hours || {}) } };
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-field]')) {
+            const field = row.dataset.masterField;
+            const kind = field === 'default_shift_name' ? 'text' : 'number';
+            const parsed = _masterCellValue(row.cells[1], kind);
+            if (parsed === null) return { error: `Ongeldig getal bij ${field}.` };
+            out[field] = parsed;
+        }
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-shift]')) {
+            const parsed = _masterCellValue(row.cells[1], 'number');
+            if (parsed === null) return { error: `Ongeldig getal bij ploeg ${row.dataset.masterShift}.` };
+            out.shift_hours[row.dataset.masterShift] = parsed;
         }
         return { value: out };
     }
@@ -9262,13 +9262,6 @@ async function loadScenarioFromDrop(selectEl) {
             _syncCellEditsFromResults(state.results);
         }
         _loadValueAuxOverridesIntoState(data.value_aux_overrides || {});
-        // Sync valuation param inputs if the scenario had different settings.
-        if (data.restored_valuation_params) {
-            for (let i = 1; i <= 8; i++) {
-                const el = document.getElementById('vp' + i);
-                if (el) el.value = data.restored_valuation_params[String(i)] ?? '';
-            }
-        }
         // Pre-populate cascade baselines from pre-edit session state.
         _applyBaselineToSnapshots(data.baseline_results, data.baseline_value_results);
         await refreshAllTabs();
@@ -12659,13 +12652,6 @@ async function switchSession(sessionId) {
             }
             if (_activeTabName === 'config') loadConfigTab();
         }
-        // Sync valuation param inputs to the switched-to session's values.
-        if (data.valuation_params) {
-            for (let i = 1; i <= 8; i++) {
-                const el = document.getElementById('vp' + i);
-                if (el) el.value = data.valuation_params[String(i)] ?? '';
-            }
-        }
         // Seed cellEdits from the session's persistent store before loadResults() overrides with engine data
         _loadPendingEditsIntoState(data.pending_edits || {});
         _loadValueAuxOverridesIntoState(data.value_aux_overrides || {});
@@ -12889,15 +12875,9 @@ function _cfgSetField(id, overrideVal, fileDefault, formatter) {
 // Eén opslagbalk voor de instantie-instellingen; per veld is bekend welk
 // effect opslaan heeft, en de balk benoemt het zwaarste effect.
 const _CFG_FIELD_EFFECTS = {
-    cfgSite: ['Site', 'rebuild'],
-    cfgForecastMonths: ['Forecast horizon', 'rebuild'],
-    cfgUnlimitedMachines: ['Unlimited machines', 'rebuild'],
     cfgFcDefMode: ['Forecast-standaardvolumes', 'rebuild'],
     cfgFcDefDefault: ['Forecast-standaardvolumes', 'rebuild'],
     cfgFcDefPerMat: ['Forecast-standaardvolumes', 'rebuild'],
-    vp1: ['Valuation', 'value'], vp2: ['Valuation', 'value'], vp3: ['Valuation', 'value'],
-    vp4: ['Valuation', 'value'], vp5: ['Valuation', 'value'], vp6: ['Valuation', 'value'],
-    vp7: ['Valuation', 'value'], vp8: ['Valuation', 'value'],
 };
 const _CFG_EFFECT_LABELS = {
     rebuild: 'volledige herberekening van deze instantie',
@@ -13128,9 +13108,7 @@ async function loadConfigTab() {
         _renderGenericSettings(cfg.settings_meta || []);
         const fd = cfg.file_defaults || {};
 
-        if (!_skipDirty('cfgSite')) _cfgSetField('cfgSite', cfg.site, fd.site);
-        if (!_skipDirty('cfgForecastMonths')) _cfgSetField('cfgForecastMonths', cfg.forecast_months, fd.forecast_months);
-        if (!_skipDirty('cfgUnlimitedMachines')) _cfgSetField('cfgUnlimitedMachines', cfg.unlimited_machines, fd.unlimited_machines);
+
         const papEl = document.getElementById('cfgPapDisplay');
         if (papEl) papEl.textContent = cfg.purchased_and_produced || fd.purchased_and_produced || '— geen —';
 
@@ -13143,16 +13121,6 @@ async function loadConfigTab() {
         const fcPerEl = document.getElementById('cfgFcDefPerMat');
         if (fcPerEl && !_skipDirty('cfgFcDefPerMat')) fcPerEl.value = Object.entries(fcd.per_material || {}).map(([m, v]) => `${m}:${v}`).join(', ');
 
-        const vp = cfg.valuation_params || {};
-        const fdVp = fd.valuation_params || {};
-        for (let i = 1; i <= 8; i++) {
-            if (_skipDirty('vp' + i)) continue;
-            const key = String(i);
-            const override = vp[key];
-            const fileVal = fdVp[key];
-            _cfgSetField('vp' + i, override, fileVal,
-                v => v !== undefined && v !== null ? Number(v).toLocaleString() : '');
-        }
 
         // Update multi-upload badge
         _renderMasterBadge(cfg);
@@ -13310,12 +13278,6 @@ async function _maybeAdoptUploadConfig(prevCfg, fileDefaults) {
 async function saveConfigSettings({ skipDeltaRecording = false } = {}) {
     const prevValueSnapshot = _snapshotValueRows(state.valueResults || {});
     const beforeImpact = _snapshotMachineImpactState();
-    const vp = {};
-    for (let i = 1; i <= 8; i++) {
-        const el = document.getElementById('vp' + i);
-        const rawStr = el ? el.value.trim() : '';
-        vp[String(i)] = rawStr !== '' ? parseLocaleNumber(rawStr) : null;
-    }
     // Forecast default volumes (Fase 1.3): parse "MAT:aantal, ..." per-material field.
     const fcPerMat = {};
     (document.getElementById('cfgFcDefPerMat').value || '').split(',').forEach(pair => {
@@ -13331,13 +13293,9 @@ async function saveConfigSettings({ skipDeltaRecording = false } = {}) {
         default: fcDefaultRaw !== '' ? parseLocaleNumber(fcDefaultRaw) : null,
         per_material: fcPerMat,
     };
-    // PAP wordt uitsluitend via de Prod/Purch-editor beheerd (één plek);
-    // de config-save stuurt hem bewust niet meer mee.
+    // Alleen de sessie-eigen scenario-instellingen: structurele config en
+    // valuation leven in de masterdata-tabellen (enige bron van waarheid).
     const payload = _collectGenericSettings({
-        site: document.getElementById('cfgSite').value.trim(),
-        forecast_months: parseInt(document.getElementById('cfgForecastMonths').value || 12),
-        unlimited_machines: document.getElementById('cfgUnlimitedMachines').value.trim(),
-        valuation_params: vp,
         forecast_defaults: forecast_defaults,
     });
     try {
@@ -13373,32 +13331,6 @@ async function saveConfigSettings({ skipDeltaRecording = false } = {}) {
             return false;
         }
     } catch(e) { alert('Opslaan mislukt: ' + e); return false; }
-}
-
-async function resetVpParamsToDefaults() {
-    try {
-        const prevValueSnapshot = _snapshotValueRows(state.valueResults || {});
-        const res = await fetch('/api/config/reset_vp_params', { method: 'POST' });
-        const data = await res.json();
-        if (!data.success) {
-            alert(data.error || 'Reset failed');
-            return;
-        }
-        for (let i = 1; i <= 8; i++) {
-            const el = document.getElementById('vp' + i);
-            if (el) el.value = data.valuation_params[String(i)] ?? '';
-        }
-        _cfgClearDirty();
-        await _applyServerPayload(data, {
-            prevValueSnapshot,
-            deltaSource: 'config',
-            skipDeltaRecording: true,
-        });
-        state.valueRowDeltas = {};
-        state.demandTurnoverDeltas = {};
-        previousValuePlanningValues = {};
-        loadValuePlanningData();
-    } catch(e) { alert('Reset failed: ' + e); }
 }
 
 // Badge toont de masterbron die de server bij een multi-upload werkelijk

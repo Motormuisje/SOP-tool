@@ -76,14 +76,10 @@ REGISTRY: List[Setting] = [
             'Valuation parameters', 'De acht waarderingsparameters.',
             effect='value'),
 
-    # --- Generiek afgehandelde velden: registry is de volledige keten ---
-    Setting('forecast_align_to_month', 'planning', 'installation', 'bool',
-            'Forecast op kalendermaand',
-            'Aan (standaard): Line 01 draagt de forecast van zijn eigen '
-            'kalendermaand. Uit: positionele VBA-kopie — alleen voor het '
-            'cel-voor-cel reproduceren van een klantwerkboek tijdens '
-            'validatie (parallelle runs); kan Line 01 een maand verschuiven.',
-            effect='rebuild', handler='generic', default=True),
+    # --- Generiek afgehandelde velden -------------------------------------
+    # (leeg: forecast_align_to_month is verhuisd naar de masterdata-Config-
+    # tabel — de enige bron van waarheid voor structurele configuratie. De
+    # registry-machinerie blijft staan voor toekomstige sessie-instellingen.)
 ]
 
 

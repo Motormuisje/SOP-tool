@@ -257,3 +257,67 @@ def test_forecast_align_flag_survives_store_round_trip():
     with contextlib.redirect_stdout(io.StringIO()):
         hydrate_loader(loader, master)
     assert loader.config.forecast_align_to_month is False
+
+
+@pytest.mark.no_fixture
+def test_overlay_applies_structural_config_from_store():
+    """Masterdata-tabellen = enige bron van waarheid: unlimited-machines en
+    forecast-uitlijning uit de store gelden ook op werkboeksessies via de
+    overlay; kalenderankers en site blijven van het werkboek (die sturen de
+    load zelf)."""
+    from modules.data_loader import DataLoader
+    from modules.master_data import overlay_master_data
+    from modules.models import ShiftSystem
+
+    base = fake_master_loader()
+    master = json.loads(json.dumps(serialize_master(base), default=str))
+    loader = DataLoader(master_data=master)
+    with contextlib.redirect_stdout(io.StringIO()):
+        hydrate_loader(loader, master)
+    # "Werkboek"-staat: geen unlimited, uitlijning aan.
+    assert loader.machines['PBA01'].shift_system == ShiftSystem.THREE_SHIFT
+
+    store = json.loads(json.dumps(master))
+    store['config']['unlimited_capacity_machine'] = ['PBA01']
+    store['config']['forecast_align_to_month'] = False
+    store['config']['purchased_and_produced'] = {'MAT-X': 0.4}
+    store['config']['site'] = 'XXX9'
+    store['config']['forecast_actuals_months'] = 3
+    original_anchor = loader.config.initial_date
+    original_site = loader.config.site
+    original_actuals = loader.forecast_actuals_months
+    with contextlib.redirect_stdout(io.StringIO()):
+        overlay_master_data(loader, store)
+
+    assert loader.config.unlimited_capacity_machine == ['PBA01']
+    assert loader.machines['PBA01'].shift_system == ShiftSystem.UNLIMITED
+    assert loader.config.forecast_align_to_month is False
+    assert loader.purchased_and_produced == {'MAT-X': 0.4}
+    assert loader.config.initial_date == original_anchor  # anker onaangetast
+    assert loader.config.site == original_site  # site stuurde de load zelf al
+    assert loader.forecast_actuals_months == original_actuals  # anker idem
+
+
+@pytest.mark.no_fixture
+def test_overlay_pap_respects_session_override():
+    '''Sessie-wat-als (PAP-override) wint van de masterdefault. Regressie:
+    de overlay draait in load_all NA _apply_config_overrides en clobberde de
+    override bij elke rebuild van een werkboek+store-sessie.'''
+    from modules.data_loader import DataLoader
+    from modules.master_data import overlay_master_data
+
+    base = fake_master_loader()
+    master = json.loads(json.dumps(serialize_master(base), default=str))
+    loader = DataLoader(master_data=master,
+                        config_overrides={'purchased_and_produced': 'MAT-X:0.9'})
+    with contextlib.redirect_stdout(io.StringIO()):
+        hydrate_loader(loader, master)
+    loader._apply_pap_override()  # zoals _apply_config_overrides in load_all
+    assert loader.purchased_and_produced['MAT-X'] == 0.9
+
+    store = json.loads(json.dumps(master))
+    store['config']['purchased_and_produced'] = {'MAT-X': 0.4, 'MAT-Y': 0.2}
+    with contextlib.redirect_stdout(io.StringIO()):
+        overlay_master_data(loader, store)
+    # Masterdefault levert MAT-Y; de sessie-override op MAT-X blijft winnen.
+    assert loader.purchased_and_produced == {'MAT-X': 0.9, 'MAT-Y': 0.2}

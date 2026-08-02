@@ -339,16 +339,26 @@ class DataLoader:
                 self.config.unlimited_capacity_machine = machines
         if ov.get('forecast_align_to_month') is not None:
             self.config.forecast_align_to_month = bool(ov['forecast_align_to_month'])
-        if ov.get('purchased_and_produced'):
-            for entry in str(ov['purchased_and_produced']).split(','):
-                parts = entry.strip().split(':')
-                if len(parts) == 2:
-                    try:
-                        self.purchased_and_produced[parts[0].strip()] = float(parts[1].strip())
-                    except ValueError:
-                        pass
+        self._apply_pap_override()
         if ov.get('site'):
             print(f"  [config override] site={self.config.site}, unlimited={self.config.unlimited_capacity_machine}")
+
+    def _apply_pap_override(self):
+        """Merge de sessie-PAP-override (wat-als) over de huidige basis.
+
+        Apart aanroepbaar omdat de master-store-overlay de basis LATER kan
+        vervangen (masterdefault); de sessie-override moet daarna opnieuw
+        winnen."""
+        ov = self.config_overrides or {}
+        if not ov.get('purchased_and_produced'):
+            return
+        for entry in str(ov['purchased_and_produced']).split(','):
+            parts = entry.strip().split(':')
+            if len(parts) == 2:
+                try:
+                    self.purchased_and_produced[parts[0].strip()] = float(parts[1].strip())
+                except ValueError:
+                    pass
 
     def _apply_valuation_overrides(self):
         """Override valuation parameters with values from global config."""
