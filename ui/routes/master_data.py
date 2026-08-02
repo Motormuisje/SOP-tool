@@ -122,6 +122,69 @@ def _restore_derived_machine_fields(previous: dict, incoming: dict) -> None:
             machine['shift_system'] = prev['shift_system']
 
 
+def _apply_product_sections(candidate: dict, number: str, name: str, body: dict):
+    """Pas de optionele wizard-secties (veiligheidsvoorraad, inkoop, prijs,
+    kost) atomair toe op de overige datasets. Retourneert een foutmelding
+    (str) of None; de caller valideert daarna alles in één keer door
+    hydratie en slaat op via de CAS — één store-mutatie voor het hele
+    product."""
+    def _num(section, key):
+        raw = section.get(key)
+        if raw in (None, ''):
+            return None
+        return float(raw)
+
+    site = str(((candidate.get('config') or {}).get('site')) or '')
+    try:
+        ss = body.get('safety_stock')
+        if isinstance(ss, dict):
+            entry = dict((candidate.get('safety_stock') or {}).get(number) or {})
+            entry.update({
+                'material_number': number,
+                'safety_stock': _num(ss, 'safety_stock') or 0.0,
+                'lot_size': _num(ss, 'lot_size') or 0.0,
+                'strategic_stock': _num(ss, 'strategic_stock') or 0.0,
+                'target_stock': _num(ss, 'target_stock') or 0.0,
+            })
+            entry.setdefault('use_moving_average', False)
+            candidate['safety_stock'] = {**(candidate.get('safety_stock') or {}),
+                                         number: entry}
+        pu = body.get('purchase')
+        if isinstance(pu, dict):
+            purchase = dict(candidate.get('purchase') or {})
+            lead_times = dict(purchase.get('lead_times') or {})
+            moqs = dict(purchase.get('moq') or {})
+            sheet = set(purchase.get('sheet_materials') or [])
+            lead = _num(pu, 'lead_time')
+            moq = _num(pu, 'moq')
+            if lead is not None and lead > 0:
+                lead_times[number] = int(lead)
+            if moq is not None and moq > 0:
+                moqs[number] = moq
+                sheet.add(number)
+            purchase.update({'lead_times': lead_times, 'moq': moqs,
+                             'sheet_materials': sorted(sheet)})
+            candidate['purchase'] = purchase
+        sp = body.get('sales_price')
+        if isinstance(sp, dict):
+            price = _num(sp, 'price_per_unit')
+            volume = _num(sp, 'volume')
+            if price is not None and (volume or 0) > 0:
+                candidate['sales_prices'] = {**(candidate.get('sales_prices') or {}), number: {
+                    'plant_code': site, 'product_id': number,
+                    'volume_2025': volume, 'ex_works_revenue': price * volume}}
+        mc = body.get('material_cost')
+        if isinstance(mc, dict):
+            cost = _num(mc, 'cost_per_unit')
+            if cost is not None:
+                candidate['material_costs'] = {**(candidate.get('material_costs') or {}), number: {
+                    'plant_code': site, 'product_code': number,
+                    'product_name': name, 'cost_per_unit': cost}}
+    except (TypeError, ValueError) as exc:
+        return f'Ongeldig getal in de productgegevens: {exc}'
+    return None
+
+
 def _deactivate_missing_materials(previous: dict, incoming: dict) -> list:
     """Missing rows are never silently deleted: materials present in the
     store but absent from the imported workbook are appended DEACTIVATED
@@ -354,7 +417,9 @@ def create_master_data_blueprint(
                     value = str(body.get(field_name) or '').strip()
                     if value and value != str(existing.get(field_name) or ''):
                         updates[field_name] = value
-                if not updates:
+                sections_present = any(k in body for k in (
+                    'safety_stock', 'purchase', 'sales_price', 'material_cost'))
+                if not updates and not sections_present:
                     payload = _status_payload(record)
                     payload.update({'success': True, 'action': 'already_active',
                                     'material': number, 'requires_recalculate': False})
@@ -373,15 +438,29 @@ def create_master_data_blueprint(
                         existing[field_name] = value
                 action = 'reactivated'
         else:
-            materials.append({
+            new_material = {
                 'material_number': number,
                 'name': str(body.get('name') or '').strip(),
                 'product_type': str(body.get('product_type') or 'Other'),
                 'product_family': str(body.get('product_family') or ''),
                 'is_active': True,
-            })
+            }
+            for optional_field in ('spc_product', 'product_cluster', 'product_name'):
+                value = str(body.get(optional_field) or '').strip()
+                if value:
+                    new_material[optional_field] = value
+            if body.get('default_inventory_value') not in (None, ''):
+                try:
+                    new_material['default_inventory_value'] = float(body['default_inventory_value'])
+                except (TypeError, ValueError):
+                    return jsonify({'error': 'Ongeldige voorraadwaarde per eenheid.'}), 400
+            materials.append(new_material)
             action = 'added'
         candidate['materials'] = materials
+        section_error = _apply_product_sections(
+            candidate, number, str(body.get('name') or '').strip(), body)
+        if section_error:
+            return jsonify({'error': section_error}), 400
         try:
             _validate_master(candidate)
         except Exception as exc:

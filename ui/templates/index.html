@@ -1614,7 +1614,10 @@
                   Masterdata-tabellen
                   <span class="cfg-info">i<span class="cfg-tooltip">Bekijk en bewerk de masterdata direct op deze pagina. Kies een tabel; wijzigingen gelden voor álle instanties bij de eerstvolgende berekening. Voor bulk-onderhoud is het masterwerkboek (export/import hierboven) vaak handiger.</span></span>
                 </h3>
-                <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24">geldt bij volgende berekening</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24">geldt bij volgende berekening</span>
+                  <button onclick="openMasterProductWizard()" class="btn-primary px-3 py-1 rounded text-xs font-semibold text-white" title="Voeg een product toe aan de site-masterdata; een wizard loopt alle stappen met je door (identificatie, voorraad, inkoop/kosten, prijs). Voor wat-als-producten in één instantie gebruik je 'Product toevoegen' bij Scenario-producten.">+ Product toevoegen</button>
+                </div>
               </div>
               <div id="masterDatasetButtons" class="flex flex-wrap gap-2 mb-3"></div>
               <div id="masterDatasetInline" style="display:none">
@@ -1751,6 +1754,102 @@
                 <button type="button" id="uomApplyBtn" onclick="applyUomDecisions()" class="px-4 py-1.5 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded font-semibold">Besluiten toepassen</button>
             </div>
         </div>
+    </div>
+
+    <!-- Masterdata-productwizard (C4c-vervolg): product toevoegen aan de
+         STORE (enige bron van waarheid), stap voor stap door alle datasets. -->
+    <div id="masterProductModal" style="display:none;position:fixed;inset:0;z-index:9300;background:rgba(2,6,23,0.82);align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px">
+      <div class="card rounded-xl" style="width:min(720px,95vw);padding:20px 22px">
+        <div class="flex items-center justify-between mb-1">
+          <h3 class="font-semibold text-base">Product toevoegen aan de masterdata</h3>
+          <button type="button" onclick="document.getElementById('masterProductModal').style.display='none'" class="px-3 py-1 text-sm bg-slate-600 hover:bg-slate-700 text-white rounded">&#10005; Sluiten</button>
+        </div>
+        <p class="text-xs text-slate-500 mb-3">Geldt voor álle instanties en komt in het masterwerkboek. Het product plant pas mee zodra het ook in de maand-extracts (BOM/forecast) verschijnt.</p>
+        <div class="flex items-center gap-1 mb-4 text-xs flex-wrap">
+          <button data-mw-tab="1" onclick="_mwGoto(1)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">1. Identificatie</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-mw-tab="2" onclick="_mwGoto(2)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">2. Voorraad</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-mw-tab="3" onclick="_mwGoto(3)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">3. Inkoop &amp; kosten</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-mw-tab="4" onclick="_mwGoto(4)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">4. Prijs</button>
+          <span class="text-slate-600">&rarr;</span>
+          <button data-mw-tab="5" onclick="_mwGoto(5)" class="px-3 py-1 rounded-full bg-slate-700 text-slate-300">5. Overzicht</button>
+        </div>
+
+        <div data-mw-step="1">
+          <div class="grid grid-cols-2 gap-3 mb-2">
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Materiaalnummer *</label>
+              <input id="mwNumber" type="text" placeholder="SAP-nummer" oninput="_mwCheckExisting()" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
+              <div id="mwNumberHint" class="text-xs mt-1"></div></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Naam *</label>
+              <input id="mwName" type="text" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Producttype *</label>
+              <select id="mwType" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200">
+                <option value="Raw Material">Grondstof (ingekocht)</option>
+                <option value="Packaging Goods">Verpakking (ingekocht)</option>
+                <option value="Bulk Product">Bulkproduct (geproduceerd)</option>
+                <option value="Packaged Product">Verpakt product (geproduceerd)</option>
+                <option value="Other">Overig</option>
+              </select></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Productfamilie</label>
+              <input id="mwFamily" type="text" placeholder="bijv. C003 - Dolomite" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">SPC-product <span class="text-slate-600 font-normal">(optioneel)</span></label>
+              <input id="mwSpc" type="text" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Voorraadwaarde / eenheid <span class="text-slate-600 font-normal">(&euro;, optioneel)</span></label>
+              <input id="mwInvValue" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+          </div>
+        </div>
+
+        <div data-mw-step="2" style="display:none">
+          <p class="text-xs text-slate-500 mb-3">Voorraaddoelen voor de planning. Laat leeg voor 0.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Veiligheidsvoorraad</label>
+              <input id="mwSafety" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Lotgrootte</label>
+              <input id="mwLotSize" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Strategische voorraad <span class="text-slate-600 font-normal">(optioneel)</span></label>
+              <input id="mwStrategic" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Doelvoorraad <span class="text-slate-600 font-normal">(optioneel)</span></label>
+              <input id="mwTarget" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+          </div>
+        </div>
+
+        <div data-mw-step="3" style="display:none">
+          <p id="mwPurchaseHint" class="text-xs text-slate-500 mb-3"></p>
+          <div class="grid grid-cols-3 gap-3">
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Lead time (maanden)</label>
+              <input id="mwLeadTime" type="text" inputmode="numeric" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">MOQ</label>
+              <input id="mwMoq" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Inkoopkost / eenheid (&euro;)</label>
+              <input id="mwRawCost" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+          </div>
+        </div>
+
+        <div data-mw-step="4" style="display:none">
+          <p class="text-xs text-slate-500 mb-3">De verkoopprijs wordt opgeslagen als prijs &times; volume (ExWorks-omzet), zoals de engine hem leest. Laat leeg als dit product geen eigen verkoopprijs heeft.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Verkoopprijs / eenheid (&euro;)</label>
+              <input id="mwPrice" type="text" inputmode="decimal" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+            <div><label class="text-xs text-slate-400 font-semibold block mb-1">Verwacht jaarvolume</label>
+              <input id="mwVolume" type="text" inputmode="decimal" placeholder="nodig bij een prijs" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-blue-500 focus:outline-none"></div>
+          </div>
+        </div>
+
+        <div data-mw-step="5" style="display:none">
+          <div id="mwSummary" class="mb-4 p-3 rounded-lg bg-slate-900 text-sm text-slate-300"></div>
+          <div class="flex items-center gap-3">
+            <button id="btnSaveMasterProduct" onclick="saveMasterProduct()" class="btn-primary px-6 py-2 rounded-lg text-sm font-semibold text-white">Toevoegen aan masterdata</button>
+            <span id="mwSaveStatus" class="text-xs text-slate-400"></span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-4 pt-3" style="border-top:1px solid #334155">
+          <button id="mwBack" onclick="_mwGoto(_mwStep - 1)" class="px-4 py-1.5 rounded text-sm bg-slate-700 hover:bg-slate-600 text-slate-300">&larr; Terug</button>
+          <button id="mwNext" onclick="_mwGoto(_mwStep + 1)" class="btn-primary px-5 py-1.5 rounded text-sm font-semibold text-white">Volgende &rarr;</button>
+        </div>
+      </div>
     </div>
 
     <!-- Chart zoom modal (Fase 1.1). display toggled in JS; no Tailwind .hidden
@@ -5212,6 +5311,149 @@ const _MASTER_DATASETS = {
     config: { label: 'Config', kind: 'view' },
     fte: { label: 'FTE', kind: 'view' },
 };
+
+// ===== Masterdata-productwizard ==================================================
+// Voegt een product toe aan de STORE (enige bron van waarheid): één POST
+// zet identificatie, veiligheidsvoorraad, inkoop/kosten en prijs atomair
+// in alle datasets; de spiegel (masterwerkboek) wordt direct ververst.
+let _mwStep = 1;
+let _mwExistingMaterials = {};
+
+async function openMasterProductWizard() {
+    // Bestaande nummers laden voor de live-check op stap 1.
+    _mwExistingMaterials = {};
+    try {
+        const res = await fetch('/api/master_data/materials');
+        const data = await res.json();
+        if (data.error) { notify(data.error, 'error', 5000); return; }
+        for (const m of data.value || []) _mwExistingMaterials[String(m.material_number)] = m;
+    } catch (e) { notify('Masterdata laden mislukt: ' + e, 'error'); return; }
+    for (const id of ['mwNumber','mwName','mwFamily','mwSpc','mwInvValue','mwSafety','mwLotSize','mwStrategic','mwTarget','mwLeadTime','mwMoq','mwRawCost','mwPrice','mwVolume']) {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    }
+    document.getElementById('mwNumberHint').textContent = '';
+    document.getElementById('mwSaveStatus').textContent = '';
+    document.getElementById('masterProductModal').style.display = 'flex';
+    _mwGoto(1);
+}
+
+function _mwCheckExisting() {
+    const hint = document.getElementById('mwNumberHint');
+    const nr = (document.getElementById('mwNumber').value || '').trim();
+    const existing = _mwExistingMaterials[nr];
+    if (!existing) { hint.textContent = ''; return; }
+    if (existing.is_active) {
+        hint.innerHTML = '<span class="text-amber-300">&#9888; Bestaat al (actief): "' + escapeHtml(existing.name || '') + '". Ingevulde velden werken het bestaande record bij.</span>';
+    } else {
+        hint.innerHTML = '<span class="text-blue-300">&#9432; Bestaat gedeactiveerd; toevoegen heractiveert het met de ingevulde velden.</span>';
+    }
+}
+
+function _mwGoto(step) {
+    step = Math.max(1, Math.min(5, step));
+    if (step > 1 && _mwStep === 1) {
+        const nr = (document.getElementById('mwNumber').value || '').trim();
+        const nm = (document.getElementById('mwName').value || '').trim();
+        const isExisting = !!_mwExistingMaterials[nr];
+        if (!nr || (!nm && !isExisting)) { notify('Vul eerst materiaalnummer en naam in.', 'error'); return; }
+    }
+    _mwStep = step;
+    document.querySelectorAll('[data-mw-step]').forEach(el => {
+        el.style.display = Number(el.dataset.mwStep) === step ? '' : 'none';
+    });
+    document.querySelectorAll('[data-mw-tab]').forEach(btn => {
+        const active = Number(btn.dataset.mwTab) === step;
+        btn.style.background = active ? '#3b82f6' : '';
+        btn.style.color = active ? '#fff' : '';
+    });
+    const back = document.getElementById('mwBack');
+    const next = document.getElementById('mwNext');
+    if (back) back.style.visibility = step === 1 ? 'hidden' : '';
+    if (next) next.style.display = step === 5 ? 'none' : '';
+    if (step === 3) {
+        const type = document.getElementById('mwType').value;
+        const purchased = type === 'Raw Material' || type === 'Packaging Goods';
+        document.getElementById('mwPurchaseHint').textContent = purchased
+            ? 'Dit producttype wordt ingekocht: lead time en MOQ sturen het inkoopplan; de inkoopkost voedt de grondstofkosten in de financiën.'
+            : 'Dit producttype wordt geproduceerd — inkoopvelden zijn meestal niet nodig; alleen invullen bij deels ingekochte materialen.';
+    }
+    if (step === 5) _mwRenderSummary();
+}
+
+function _mwVal(id) { return (document.getElementById(id)?.value || '').trim(); }
+
+function _mwRenderSummary() {
+    const rows = [
+        ['Product', _mwVal('mwNumber') + ' — ' + _mwVal('mwName')],
+        ['Type / familie', _mwVal('mwType') + ' / ' + (_mwVal('mwFamily') || '—')],
+        ['Veiligheidsvoorraad / lot', (_mwVal('mwSafety') || '0') + ' / ' + (_mwVal('mwLotSize') || '0')],
+        ['Inkoop', (_mwVal('mwLeadTime') ? 'lead ' + _mwVal('mwLeadTime') + ' mnd' : '—') + (_mwVal('mwMoq') ? ', MOQ ' + _mwVal('mwMoq') : '')],
+        ['Inkoopkost / voorraadwaarde', (_mwVal('mwRawCost') || '—') + ' / ' + (_mwVal('mwInvValue') || '—')],
+        ['Verkoopprijs × volume', _mwVal('mwPrice') ? _mwVal('mwPrice') + ' × ' + (_mwVal('mwVolume') || '?') : '—'],
+    ];
+    document.getElementById('mwSummary').innerHTML = rows.map(([k, v]) =>
+        '<div class="flex justify-between gap-4 py-0.5"><span class="text-slate-500">' + escapeHtml(k)
+        + '</span><span class="text-right">' + escapeHtml(v) + '</span></div>').join('')
+        + '<div class="text-xs text-slate-500 mt-2">Na opslaan: masterwerkboek wordt bijgewerkt; herbereken instanties om het product mee te laten tellen. Het plant pas mee zodra het in de maand-extracts staat.</div>';
+}
+
+function _mwNum(id) {
+    const raw = _mwVal(id);
+    if (raw === '') return null;
+    const n = parseLocaleNumber(raw);
+    if (Number.isNaN(n)) throw new Error('Ongeldig getal bij ' + id.replace('mw', ''));
+    return n;
+}
+
+async function saveMasterProduct() {
+    const statusEl = document.getElementById('mwSaveStatus');
+    let payload;
+    try {
+        payload = {
+            material: _mwVal('mwNumber'),
+            name: _mwVal('mwName'),
+            product_type: _mwVal('mwType'),
+            product_family: _mwVal('mwFamily'),
+            spc_product: _mwVal('mwSpc'),
+            default_inventory_value: _mwNum('mwInvValue'),
+            safety_stock: {
+                safety_stock: _mwNum('mwSafety'), lot_size: _mwNum('mwLotSize'),
+                strategic_stock: _mwNum('mwStrategic'), target_stock: _mwNum('mwTarget'),
+            },
+            purchase: { lead_time: _mwNum('mwLeadTime'), moq: _mwNum('mwMoq') },
+            sales_price: { price_per_unit: _mwNum('mwPrice'), volume: _mwNum('mwVolume') },
+            material_cost: { cost_per_unit: _mwNum('mwRawCost') },
+        };
+        if (payload.sales_price.price_per_unit !== null && !payload.sales_price.volume) {
+            notify('Een verkoopprijs heeft een verwacht jaarvolume nodig (stap 4).', 'error', 5000);
+            _mwGoto(4);
+            return;
+        }
+    } catch (e) {
+        notify(String(e.message || e), 'error', 5000);
+        return;
+    }
+    statusEl.textContent = 'Opslaan...';
+    try {
+        const res = await fetch('/api/master_data/materials/add', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) { notify(data.error || 'Opslaan mislukt.', 'error', 6000); statusEl.textContent = ''; return; }
+        document.getElementById('masterProductModal').style.display = 'none';
+        const verb = data.action === 'added' ? 'toegevoegd aan de masterdata'
+            : (data.action === 'reactivated' ? 'geheractiveerd en bijgewerkt' : 'bijgewerkt in de masterdata');
+        notify(`${payload.material} ${verb} (versie ${data.version}); het masterwerkboek is bijgewerkt. Herbereken om het door te voeren.`, 'success', 7000);
+        _renderMasterDataStatus(data);
+        // Tabellen verversen: als de materialen-tabel open staat, herladen.
+        if (_activeMasterDataset === 'materials') openMasterDatasetModal('materials');
+    } catch (e) {
+        notify('Opslaan mislukt: ' + e, 'error', 6000);
+        statusEl.textContent = '';
+    }
+}
 
 async function loadUomConfigStatus() {
     const el = document.getElementById('cfgUomStatus');

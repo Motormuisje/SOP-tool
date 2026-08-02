@@ -308,3 +308,50 @@ def test_add_missing_material_and_reactivate(md_app):
     body = res.get_json()
     assert res.status_code == 200 and body['action'] == 'already_active'
     assert body['requires_recalculate'] is False
+
+
+def test_full_product_wizard_add_lands_in_all_datasets(md_app):
+    """Masterdata-productwizard: één POST zet het product atomair in alle
+    relevante datasets (materiaal, veiligheidsvoorraad, inkoop, prijs,
+    kost) — de tabellen zijn de enige bron van waarheid."""
+    _seed_store(md_app.store)
+    res = md_app.client.post('/api/master_data/materials/add', json={
+        'material': 'M9', 'name': 'Wizardproduct',
+        'product_type': 'Raw Material', 'product_family': 'FAM',
+        'spc_product': 'SPC9', 'default_inventory_value': 12.5,
+        'safety_stock': {'safety_stock': 40, 'lot_size': 10},
+        'purchase': {'lead_time': 2, 'moq': 25},
+        'sales_price': {'price_per_unit': 80, 'volume': 1200},
+        'material_cost': {'cost_per_unit': 55.5},
+    })
+    body = res.get_json()
+    assert body['success'] and body['action'] == 'added', body
+
+    m = master_store.get_current_master_record()['master']
+    mat = next(x for x in m['materials'] if x['material_number'] == 'M9')
+    assert mat['product_type'] == 'Raw Material'
+    assert mat['spc_product'] == 'SPC9'
+    assert mat['default_inventory_value'] == 12.5
+    assert m['safety_stock']['M9']['safety_stock'] == 40.0
+    assert m['safety_stock']['M9']['lot_size'] == 10.0
+    assert m['purchase']['lead_times']['M9'] == 2
+    assert m['purchase']['moq']['M9'] == 25.0
+    assert 'M9' in m['purchase']['sheet_materials']
+    assert m['sales_prices']['M9']['ex_works_revenue'] == 80 * 1200
+    assert m['sales_prices']['M9']['volume_2025'] == 1200.0
+    assert m['material_costs']['M9']['cost_per_unit'] == 55.5
+    assert m['material_costs']['M9']['plant_code'] == m['config']['site']
+
+    # Ongeldig getal → nette 400, niets gemuteerd
+    v_before = master_store.get_current_master_record()['version']
+    res = md_app.client.post('/api/master_data/materials/add', json={
+        'material': 'M10', 'name': 'X', 'purchase': {'lead_time': 'abc'}})
+    assert res.status_code == 400
+    assert master_store.get_current_master_record()['version'] == v_before
+
+    # Secties op een al-actief materiaal → update, geen already_active
+    res = md_app.client.post('/api/master_data/materials/add', json={
+        'material': 'M9', 'safety_stock': {'safety_stock': 60, 'lot_size': 10}})
+    assert res.get_json()['action'] == 'updated'
+    m = master_store.get_current_master_record()['master']
+    assert m['safety_stock']['M9']['safety_stock'] == 60.0
