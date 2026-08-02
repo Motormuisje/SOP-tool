@@ -55,6 +55,11 @@ def refresh_mirror() -> dict:
         _state.update(stale=True, path=str(path),
                       reason=f'Werkboek kon niet worden bijgewerkt ({exc.__class__.__name__}). '
                              'Staat het bestand nog open in Excel?')
+    except Exception as exc:  # bv. IllegalCharacterError uit openpyxl
+        # De store-save is al gelukt; een exportfout mag de mutatie-route
+        # niet in een 500 laten eindigen. Markeren, nooit stil falen.
+        _state.update(stale=True, path=str(path),
+                      reason=f'Werkboek kon niet worden gegenereerd: {exc}')
     return dict(_state)
 
 

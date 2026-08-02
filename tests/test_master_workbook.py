@@ -132,3 +132,58 @@ def test_absorb_equivalents_kills_excel_drift_but_keeps_real_edits():
     assert m2['name'] == 'ECHT GEWIJZIGD' and m2['fte_requirements'] == 3.5  # echte edits blijven
     assert m2['spc_product'] == previous['materials'][1]['spc_product']      # leeg-equivalent
     assert incoming['safety_stock']['M1'] == previous['safety_stock']['M1']
+
+
+def test_parse_validations_reject_dangerous_edits(tmp_path):
+    """Review-fixes R4/R7/R8/R9: tikfouten en halfgewiste rijen geven een
+    nette MasterWorkbookError of worden overgeslagen — nooit een stille 0,
+    een leeg materiaalnummer of een verschoven kalenderanker."""
+    import openpyxl
+    master = _master()
+    path = _export(tmp_path, master)
+
+    # R8: lege OEE → nette fout met machinecode
+    wb = openpyxl.load_workbook(str(path))
+    ws = wb['Machines']
+    headers = [c.value for c in ws[1]]
+    assert 'shift_system' not in headers  # R3: afgeleid veld niet in het werkboek
+    ws.cell(row=2, column=headers.index('oee') + 1).value = None
+    wb.save(str(path))
+    with pytest.raises(MasterWorkbookError, match='OEE'):
+        parse_master_workbook(path)
+
+    # R4: tekst in een getalcel → nette fout, geen kale ValueError
+    path2 = _export(tmp_path, master)
+    wb = openpyxl.load_workbook(str(path2))
+    ws = wb['Veiligheidsvoorraad']
+    ws.cell(row=2, column=3, value='10 ton')
+    wb.save(str(path2))
+    with pytest.raises(MasterWorkbookError, match='Ongeldige celwaarde'):
+        parse_master_workbook(path2)
+
+    # R9: lege initial_date → nette fout i.p.v. stil dec-2025-anker
+    path3 = _export(tmp_path, master)
+    wb = openpyxl.load_workbook(str(path3))
+    ws = wb['Config']
+    for row in ws.iter_rows():
+        if row[0].value == 'initial_date':
+            row[1].value = None
+    wb.save(str(path3))
+    with pytest.raises(MasterWorkbookError, match='initial_date'):
+        parse_master_workbook(path3)
+
+    # R7: halfgewiste materiaalrij (leeg nummer) wordt overgeslagen
+    # R6: lege forecast_align-cel betekent default True
+    path4 = _export(tmp_path, master)
+    wb = openpyxl.load_workbook(str(path4))
+    ws = wb['Materialen']
+    headers = [c.value for c in ws[1]]
+    ws.cell(row=2, column=headers.index('material_number') + 1).value = None
+    ws2 = wb['Config']
+    for row in ws2.iter_rows():
+        if row[0].value == 'forecast_align_to_month':
+            row[1].value = None
+    wb.save(str(path4))
+    parsed, _ = parse_master_workbook(path4)
+    assert [m['material_number'] for m in parsed['materials']] == ['M2']
+    assert parsed['config']['forecast_align_to_month'] is True

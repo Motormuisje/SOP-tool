@@ -73,6 +73,7 @@ class DataLoader:
         self.uom_suspects: list = []
         self.uom_recipe_warnings: list = []
         self.uom_overrides_applied: List[Tuple[str, float, int]] = []
+        self.uom_double_warnings: List[str] = []
         # Master-consistency: transactional references (BOM/forecast/stock)
         # to materials the master does not (actively) know. Populated by
         # _check_master_consistency() on every load.
@@ -118,7 +119,6 @@ class DataLoader:
             self._load_bom_from_extract()
         else:
             self._load_bom()
-        self._apply_uom_guard()
 
         if self.excel_file is not None:
             self._load_machines()
@@ -148,7 +148,6 @@ class DataLoader:
 
         self._calculate_bom_levels()
         self._warn_on_bom_cycles()
-        self._check_master_consistency()
 
         if self.excel_file is not None:
             self._load_avg_sales_price()
@@ -166,6 +165,15 @@ class DataLoader:
                 print(f"  Master store overlay: {len(self.master_data.get('materials') or [])} "
                       f"materialen (app is bron van waarheid)")
             self._apply_valuation_overrides()
+
+        # UoM-guard en masterdata-consistentie draaien op de DEFINITIEVE
+        # master, dus ná de store-overlay: eerder oordeelden ze over
+        # werkboekdata die daarna nog door de app-masterdata werd vervangen
+        # (materiaal in de app toegevoegd → warning bleef; in de app
+        # gedeactiveerd → warning ontbrak; store-only verpakking → valse
+        # UoM-verdachten).
+        self._apply_uom_guard()
+        self._check_master_consistency()
 
         print("-" * 60)
         print(f"  Materials: {len(self.materials)}, BOM: {len(self.bom)}, Routings: {sum(len(v) for v in self.routing.values())}")
@@ -378,6 +386,7 @@ class DataLoader:
 
         overrides = self.config_overrides.get('uom_overrides') or {}
         self.uom_overrides_applied = apply_uom_overrides(self.bom, overrides)
+        self.uom_double_warnings = []
         for component, factor, rows in self.uom_overrides_applied:
             if rows:
                 print(f"  [uom] conversion applied to {component}: x{factor} ({rows} BOM rows)")
@@ -462,6 +471,9 @@ class DataLoader:
         if ratios and max(ratios) < 1e-4:
             print(f"  [uom] WARNING: {component} ends up below 0.1 g/ton after conversion — "
                   f"source data may already be converted; review the stored factor")
+            # Surfaced to the UI (config card + guard dialog): a console-only
+            # warning never reaches the planner who must act on it.
+            self.uom_double_warnings.append(component)
 
     def _load_bom(self):
         df = pd.read_excel(self.excel_file, sheet_name='BOM')

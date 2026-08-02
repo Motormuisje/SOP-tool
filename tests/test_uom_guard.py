@@ -266,15 +266,49 @@ class TestUomStore:
 
     def test_invalid_decisions_are_ignored(self):
         from ui import uom_store
+        uom_store.record_decisions([{'component': 'A', 'action': 'convert', 'factor': 0.001}])
         uom_store.record_decisions([
             {'component': '', 'action': 'convert'},
             {'component': 'X', 'action': 'nonsense'},
             {'component': 'Y', 'action': 'convert', 'factor': 'abc'},
+            # Een ongeldige factor mag een bestaande override niet stil
+            # verwijderen en al helemaal niet stil 0.001 worden.
+            {'component': 'A', 'action': 'convert', 'factor': 0},
+            {'component': 'A', 'action': 'convert', 'factor': -1},
         ])
-        # Y falls back to the default kg->ton factor; the rest is dropped.
-        assert uom_store.get_confirmed_overrides() == {'Y': 0.001}
+        assert uom_store.get_confirmed_overrides() == {'A': 0.001}
 
     def test_missing_store_file_is_empty(self):
         from ui import uom_store
         assert uom_store.get_confirmed_overrides() == {}
         assert uom_store.get_dismissed() == {}
+
+
+def test_override_skips_rows_with_authoritative_mass_uom():
+    """Review-fix R1: zodra het extract een UoM-kolom krijgt is de rij al
+    bij inladen geconverteerd; de opgeslagen factor mag hem niet nogmaals
+    x0.001 doen (dosering zou 1.000.000x te klein worden)."""
+    bom = [
+        _item('P1', 'ADDITIVE', 0.0019, uom='KG'),   # loader-geconverteerd
+        _item('P2', 'ADDITIVE', 1.9),                # oude stijl, geen UoM
+    ]
+    applied = apply_uom_overrides(bom, {'ADDITIVE': 0.001})
+    assert applied == [('ADDITIVE', 0.001, 1)]
+    assert bom[0].quantity_per == pytest.approx(0.0019)   # onaangeroerd
+    assert bom[1].quantity_per == pytest.approx(0.0019)   # geconverteerd
+
+
+def test_small_genuine_bulk_survives_unresolvable_recipe():
+    """Review-fix R5: een klein, op zichzelf plausibel component waarvan
+    conversie het recept niet eens plausibel maakt, is echte bulk en mag
+    niet geflagd worden — ook niet als het recept onopgelost blijft."""
+    bom = [
+        _item('P1', 'WATER', 1000.0),
+        _item('P1', 'ADDITIVE', 400.0),
+        _item('P1', 'BULK', 0.3),
+    ]
+    suspects, warnings = analyze_bom(bom)
+    flagged = {s.component_material for s in suspects}
+    assert 'BULK' not in flagged
+    assert flagged == {'WATER', 'ADDITIVE'}
+    assert len(warnings) == 1  # recept blijft eerlijk gemarkeerd als onopgelost

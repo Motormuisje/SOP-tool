@@ -5,6 +5,10 @@ SOP_GOLDEN_FIXTURE to point at a local .xlsm file. See tests/README.md.
 """
 
 import os
+
+# ui.app start bij import een autorun-thread over de ECHTE sessions_store van
+# deze machine; in tests mag dat nooit. Vóór elke mogelijke ui.app-import.
+os.environ.setdefault('SOP_DISABLE_AUTORUN', '1')
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -447,11 +451,12 @@ def _isolate_master_store(tmp_path):
     de store zelf nodig hebben (store_env) overschrijven dit expliciet.
     Zelfde isolatie voor de masterwerkboek-spiegel: die schrijft na elke
     store-mutatie een xlsx en mag nooit in de echte datamap belanden."""
-    from ui import master_mirror, master_store
+    from ui import master_mirror, master_store, uom_store
 
     previous = master_store.get_store_path()
     master_store.set_store_path(tmp_path / "isolated_master_store.json")
     master_mirror.set_mirror_dir(tmp_path / "mirror")
+    uom_store.set_store_path(tmp_path / "isolated_uom_overrides.json")
     yield
     if previous is not None:
         master_store.set_store_path(previous)

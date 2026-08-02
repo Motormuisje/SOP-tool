@@ -119,14 +119,16 @@ class RecipeWarning:
         }
 
 
-# One recipe = one (parent, production version, BOM number, alternative):
-# a parent may carry several alternative BOMs under one production version,
-# and each alternative must balance on its own.
-RecipeKey = Tuple[str, Optional[str], Optional[str], Optional[str]]
+# One recipe = one (plant, parent, production version, BOM number,
+# alternative): a parent may carry several alternative BOMs under one
+# production version, and each alternative must balance on its own. Plant is
+# part of the key because rows with a BLANK plant cell pass the site filter
+# and must not merge into another plant's recipe totals.
+RecipeKey = Tuple[str, str, Optional[str], Optional[str], Optional[str]]
 
 
 def _recipe_key(item: BOMItem) -> RecipeKey:
-    return (item.parent_material, item.production_version,
+    return (item.plant, item.parent_material, item.production_version,
             item.bill_of_material, item.alternative_bom)
 
 
@@ -189,6 +191,12 @@ def _flag_recipe(
         if after < target_lower:
             # Removing this line would gut the recipe; it is the bulk.
             continue
+        if item.quantity_per <= target_upper and after > target_upper:
+            # A small, individually-plausible line whose conversion does not
+            # even make the recipe plausible is genuine bulk riding inside an
+            # unresolvable recipe — flagging it would be the false positive
+            # this function promises to avoid.
+            continue
         remaining = after
         flagged.append(item)
     return flagged, remaining
@@ -218,7 +226,7 @@ def analyze_bom(
     warnings: List[RecipeWarning] = []
 
     for key, items in recipes.items():
-        parent, pv = key[0], key[1]
+        parent, pv = key[1], key[2]
         output = 1.0 + outputs.get(key, 0.0)
         total = trusted.get(key, 0.0) + sum(i.quantity_per for i in items)
         if total <= suspect_total * output:
@@ -283,8 +291,14 @@ def apply_uom_overrides(
             continue
         count = 0
         for item in bom:
-            if item.component_material == component:
-                item.quantity_per *= factor
-                count += 1
+            if item.component_material != component:
+                continue
+            # Rows with an authoritative mass UoM were already converted at
+            # load time; applying the stored factor again would shrink the
+            # dose another 1000x the month the extract gains a UoM column.
+            if item.component_uom and str(item.component_uom).strip().upper() in MASS_UNIT_FACTORS:
+                continue
+            item.quantity_per *= factor
+            count += 1
         applied.append((component, factor, count))
     return applied

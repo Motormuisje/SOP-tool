@@ -325,6 +325,7 @@ app.register_blueprint(create_config_blueprint(
     lambda sess, engine: _replay_pending_edits(sess, engine),
     _moq_warnings_payload,
     _value_results_payload,
+    all_sessions=sessions,
 ))
 app.register_blueprint(create_read_blueprint(
     lambda: _get_active(),
@@ -497,9 +498,12 @@ def _autorun_sessions():
                         f'autorun SKIP "{label}": geen bruikbare databron')
                     continue
                 # Engine build/run happens outside the lock; only the install
-                # into the shared session dict is locked.
+                # into the shared session dict is locked. Skip when a request
+                # handler (calculate/switch) built a fresher engine meanwhile —
+                # installing the autorun result would silently roll that back.
                 with _sessions_lock:
-                    sess['engine'] = engine
+                    if sess.get('engine') is None:
+                        sess['engine'] = engine
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).error(f'autorun FAIL "{label}": {exc}')
@@ -554,6 +558,8 @@ _SESSION_SAVE_PATHS = {
     '/api/export_db',
     '/api/comments',
     '/api/comments/delete',
+    '/api/config/settings',
+    '/api/uom/decisions',
 }
 
 _SESSION_SAVE_METHODS = {'POST', 'DELETE'}

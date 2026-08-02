@@ -167,7 +167,11 @@ def export_master_workbook(master: dict, path, site: str,
     _write_table(wb, SHEET_MATERIALS, _field_names(Material),
                  master.get('materials') or [])
 
-    machine_fields = [f for f in _field_names(Machine) if f != 'availability_by_period']
+    # shift_system is DERIVED state (finalize_shift_systems zet hem bij elke
+    # load op UNLIMITED/3-shift o.b.v. de unlimited-lijst); hem exporteren
+    # suggereerde een bewerkbaar veld waarvan edits stil verdwenen.
+    machine_fields = [f for f in _field_names(Machine)
+                      if f not in ('availability_by_period', 'shift_system')]
     periods = sorted({p for m in (master.get('machines') or [])
                       for p in (m.get('availability_by_period') or {})})
     machine_headers = machine_fields + [f'{_AVAILABILITY_PREFIX}{p}' for p in periods]
@@ -272,18 +276,34 @@ def parse_master_workbook(path) -> Tuple[dict, dict]:
         fte_raw = dict(_read_kv(sheets[SHEET_FTE]))
         vp_raw = dict(_read_kv(sheets[SHEET_VALUATION]))
 
+        def guarded(sheet, fn):
+            # Een tikfout als '10 ton' in een getalcel moet een nette
+            # Nederlandse afwijzing geven, geen HTTP 500 met traceback.
+            try:
+                return fn()
+            except MasterWorkbookError:
+                raise
+            except (ValueError, TypeError) as exc:
+                raise MasterWorkbookError(
+                    f'Ongeldige celwaarde in blad "{sheet}": {exc}') from exc
+
         master = {
             'schema_version': 1,
-            'config': _parse_config(cfg_raw),
-            'fte': _parse_fte(fte_raw),
-            'materials': _parse_table(sheets[SHEET_MATERIALS], Material),
-            'machines': _parse_machines(sheets[SHEET_MACHINES]),
-            'safety_stock': _parse_keyed_table(sheets[SHEET_SAFETY], SafetyStockConfig),
-            'purchase': _parse_purchase(sheets[SHEET_PURCHASE]),
-            'sales_prices': _parse_keyed_table(sheets[SHEET_PRICES], SalesPriceItem),
-            'material_costs': _parse_keyed_table(sheets[SHEET_MATERIAL_COSTS], RawMaterialCost),
-            'machine_costs': _parse_keyed_table(sheets[SHEET_MACHINE_COSTS], MachineCost),
-            'valuation_params': _parse_valuation(vp_raw),
+            'config': guarded(SHEET_CONFIG, lambda: _parse_config(cfg_raw)),
+            'fte': guarded(SHEET_FTE, lambda: _parse_fte(fte_raw)),
+            'materials': guarded(SHEET_MATERIALS, lambda: _parse_table(
+                sheets[SHEET_MATERIALS], Material, require='material_number')),
+            'machines': guarded(SHEET_MACHINES, lambda: _parse_machines(sheets[SHEET_MACHINES])),
+            'safety_stock': guarded(SHEET_SAFETY, lambda: _parse_keyed_table(
+                sheets[SHEET_SAFETY], SafetyStockConfig)),
+            'purchase': guarded(SHEET_PURCHASE, lambda: _parse_purchase(sheets[SHEET_PURCHASE])),
+            'sales_prices': guarded(SHEET_PRICES, lambda: _parse_keyed_table(
+                sheets[SHEET_PRICES], SalesPriceItem)),
+            'material_costs': guarded(SHEET_MATERIAL_COSTS, lambda: _parse_keyed_table(
+                sheets[SHEET_MATERIAL_COSTS], RawMaterialCost)),
+            'machine_costs': guarded(SHEET_MACHINE_COSTS, lambda: _parse_keyed_table(
+                sheets[SHEET_MACHINE_COSTS], MachineCost)),
+            'valuation_params': guarded(SHEET_VALUATION, lambda: _parse_valuation(vp_raw)),
         }
         return master, meta
     finally:
@@ -321,15 +341,22 @@ def _parse_config(raw: dict) -> dict:
     initial_date = raw.get('initial_date')
     if isinstance(initial_date, datetime):
         initial_date = initial_date.isoformat()
+    if _empty(initial_date):
+        # Stil terugvallen op het hydratie-anker (dec 2025) zou alle
+        # periodesleutels verschuiven zonder dat iemand het merkt.
+        raise MasterWorkbookError('Config: initial_date mag niet leeg zijn.')
+    align_raw = raw.get('forecast_align_to_month')
     return {
-        'initial_date': str(initial_date or '') or None,
+        'initial_date': str(initial_date),
         'forecast_months': int(float(raw.get('forecast_months') or 12)),
         'site': str(raw.get('site') or '').strip(),
         'unlimited_capacity_machine': [
             m.strip() for m in str(raw.get('unlimited_capacity_machine') or '').split(',')
             if m.strip()],
         'forecast_actuals_months': int(float(raw.get('forecast_actuals_months') or 12)),
-        'forecast_align_to_month': _to_bool(raw.get('forecast_align_to_month', True)),
+        # Lege cel betekent "default" (True), net als elke andere lege cel —
+        # _to_bool(None) zou stil naar de positionele validatiemodus wisselen.
+        'forecast_align_to_month': True if _empty(align_raw) else _to_bool(align_raw),
         'purchased_and_produced': pap,
     }
 
@@ -346,11 +373,19 @@ def _parse_fte(raw: dict) -> dict:
     }
 
 
-def _parse_table(ws, dc) -> list:
+def _empty(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _parse_table(ws, dc, require: Optional[str] = None) -> list:
     casters = _casters(dc)
     fields = _field_names(dc)
     items = []
     for row in _read_table(ws):
+        # Een half-gewiste rij (identiteit leeg, één cel achtergebleven) mag
+        # nooit als record met lege sleutel de store in.
+        if require and _empty(row.get(require)):
+            continue
         item = {}
         for f in fields:
             item[f] = casters[f](row.get(f)) if f in casters else row.get(f)
@@ -360,10 +395,21 @@ def _parse_table(ws, dc) -> list:
 
 def _parse_machines(ws) -> list:
     casters = _casters(Machine)
-    fields = [f for f in _field_names(Machine) if f != 'availability_by_period']
+    fields = [f for f in _field_names(Machine)
+              if f not in ('availability_by_period', 'shift_system')]
     items = []
     for row in _read_table(ws):
+        if _empty(row.get('machine_code')):
+            continue
+        # OEE leeg → 0.0 zou stil alle capaciteit van de machine wissen.
+        if _empty(row.get('oee')):
+            raise MasterWorkbookError(
+                f"Machine {row.get('machine_code')}: OEE mag niet leeg zijn.")
         item = {f: casters[f](row.get(f)) for f in fields}
+        # shift_system is afgeleid (finalize_shift_systems) en staat niet in
+        # het werkboek; placeholder — de importroute neemt de opgeslagen
+        # waarde over, hydratie herleidt hem daarna hoe dan ook.
+        item['shift_system'] = '3-shift system'
         availability = {}
         for col, value in row.items():
             if col.startswith(_AVAILABILITY_PREFIX) and value is not None:

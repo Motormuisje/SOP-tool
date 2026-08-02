@@ -131,17 +131,27 @@ def record_decisions(decisions) -> dict:
         action = decision.get('action')
         if not component or action not in ('convert', 'dismiss', 'clear'):
             continue
-        overrides.pop(component, None)
-        dismissed.pop(component, None)
         if action == 'convert':
+            # Valideer VOOR er iets gemuteerd wordt: een expliciet
+            # meegegeven 0/negatief/1 mag geen bestaande override stil
+            # verwijderen en al helemaal niet stil 0.001 worden.
+            raw = decision.get('factor', 0.001)
             try:
-                factor = float(decision.get('factor', 0.001) or 0.001)
+                factor = float(raw if raw is not None else 0.001)
             except (TypeError, ValueError):
-                factor = 0.001
-            if factor > 0 and factor != 1:
-                overrides[component] = factor
+                continue
+            if factor <= 0 or factor == 1:
+                continue
+            overrides.pop(component, None)
+            dismissed.pop(component, None)
+            overrides[component] = factor
         elif action == 'dismiss':
+            overrides.pop(component, None)
+            dismissed.pop(component, None)
             dismissed[component] = True
+        else:  # clear
+            overrides.pop(component, None)
+            dismissed.pop(component, None)
     new_record = {'overrides': overrides, 'dismissed': dismissed}
     _save_record(new_record)
     return new_record

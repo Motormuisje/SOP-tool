@@ -102,8 +102,11 @@ def create_workflow_blueprint(
                         req_data = request.form.to_dict() or {}
 
                     planning_month = req_data.get('planning_month', None)
-                    months_actuals = int(req_data.get('months_actuals', 0) or 0)
-                    months_forecast = int(req_data.get('months_forecast', 12) or 12)
+                    try:
+                        months_actuals = int(float(req_data.get('months_actuals', 0) or 0))
+                        months_forecast = int(float(req_data.get('months_forecast', 12) or 12))
+                    except (TypeError, ValueError):
+                        return jsonify({'error': 'Ongeldige waarde voor months_actuals/months_forecast.'}), 400
 
                     print("\nUser Input Parameters:")
                     print(f"  Planning Month: {planning_month}")

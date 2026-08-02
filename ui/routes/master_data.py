@@ -9,8 +9,14 @@ the store version. Edits apply at the NEXT calculation — no auto-rebuild.
 
 import contextlib
 import io
+import threading
 from pathlib import Path
 from typing import Callable
+
+# Serialiseert alle store-mutaties (import/PATCH/add/werkboek-import):
+# twee gelijktijdige read-modify-writes zouden elkaars edit stil wissen en
+# hetzelfde versienummer aan verschillende inhoud geven.
+_master_mutation_lock = threading.Lock()
 
 from flask import Blueprint, jsonify, request
 from werkzeug.utils import secure_filename
@@ -83,6 +89,37 @@ def _workbook_diff(previous: dict, incoming: dict) -> dict:
                               for mn in changed],
         'datasets_changed': sorted(dataset_changes),
     }
+
+
+def _save_with_version_check(previous, candidate: dict, *, source_filename: str = '',
+                             edited: bool = False):
+    """Compare-and-swap-save: binnen de lock her-lezen en alleen opslaan als
+    de store nog op de versie staat waarop deze mutatie gebaseerd is.
+    Retourneert None bij een conflict (caller antwoordt 409) — twee
+    gelijktijdige bewerkingen kunnen elkaars werk niet meer stil wissen."""
+    with _master_mutation_lock:
+        current = master_store.get_current_master_record()
+        if ((current or {}).get('version')) != ((previous or {}).get('version')):
+            return None
+        return master_store.save_master_store(
+            master_store.get_store_path(), candidate,
+            source_filename=source_filename, previous=current, edited=edited)
+
+
+_VERSION_CONFLICT_ERROR = ('De masterdata is intussen door iemand anders gewijzigd. '
+                           'Ververs de pagina en probeer het opnieuw.')
+
+
+def _restore_derived_machine_fields(previous: dict, incoming: dict) -> None:
+    """shift_system is afgeleide staat (finalize_shift_systems herleidt hem
+    bij elke load uit de unlimited-lijst) en staat daarom niet in het
+    werkboek; neem de opgeslagen waarde over zodat een ongewijzigde
+    round-trip geen machine-diff veroorzaakt."""
+    prev_by_code = {m.get('machine_code'): m for m in previous.get('machines') or []}
+    for machine in incoming.get('machines') or []:
+        prev = prev_by_code.get(machine.get('machine_code'))
+        if prev is not None and 'shift_system' in prev:
+            machine['shift_system'] = prev['shift_system']
 
 
 def _deactivate_missing_materials(previous: dict, incoming: dict) -> list:
@@ -178,8 +215,9 @@ def create_master_data_blueprint(
                            'Importeren overschrijft die. Bevestig om door te gaan.',
             })
 
-        record = master_store.save_master_store(
-            store_path, master, source_filename=source_name, previous=previous)
+        record = _save_with_version_check(previous, master, source_filename=source_name)
+        if record is None:
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
         master_mirror.refresh_mirror()
         payload = _status_payload(record)
         payload['success'] = True
@@ -246,6 +284,7 @@ def create_master_data_blueprint(
         # lege diff en muteert de store niet.
         from modules.master_workbook import absorb_equivalents
         absorb_equivalents(previous, incoming)
+        _restore_derived_machine_fields(previous, incoming)
 
         deactivated = _deactivate_missing_materials(previous, incoming)
 
@@ -277,9 +316,10 @@ def create_master_data_blueprint(
                 'message': 'Controleer de wijzigingen en bevestig om door te voeren.',
             })
 
-        record = master_store.save_master_store(
-            store_path, incoming, source_filename=upload.filename,
-            previous=previous_record)
+        record = _save_with_version_check(previous_record, incoming,
+                                          source_filename=upload.filename)
+        if record is None:
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
         master_mirror.refresh_mirror()
         payload = _status_payload(record)
         payload.update({'success': True, 'requires_recalculate': True,
@@ -305,7 +345,12 @@ def create_master_data_blueprint(
         existing = next((m for m in materials if m.get('material_number') == number), None)
         if existing is not None:
             if existing.get('is_active'):
-                return jsonify({'error': f'{number} staat al actief in de masterdata.'}), 400
+                # Idempotent: de promote-flow en een dubbelklik op de
+                # banner-knop mogen geen rode foutmelding opleveren.
+                payload = _status_payload(record)
+                payload.update({'success': True, 'action': 'already_active',
+                                'material': number, 'requires_recalculate': False})
+                return jsonify(payload)
             existing['is_active'] = True
             action = 'reactivated'
         else:
@@ -322,8 +367,9 @@ def create_master_data_blueprint(
             _validate_master(candidate)
         except Exception as exc:
             return jsonify({'error': f'Wijziging geweigerd: {exc}'}), 400
-        new_record = master_store.save_master_store(
-            master_store.get_store_path(), candidate, previous=record, edited=True)
+        new_record = _save_with_version_check(record, candidate, edited=True)
+        if new_record is None:
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
         master_mirror.refresh_mirror()
         payload = _status_payload(new_record)
         payload.update({'success': True, 'action': action, 'material': number,
@@ -365,9 +411,9 @@ def create_master_data_blueprint(
         except Exception as exc:
             return jsonify({'error': f'Wijziging geweigerd: {exc}'}), 400
 
-        store_path = master_store.get_store_path()
-        new_record = master_store.save_master_store(
-            store_path, candidate, previous=record, edited=True)
+        new_record = _save_with_version_check(record, candidate, edited=True)
+        if new_record is None:
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
         # De spiegel op schijf blijft de actuele stand ("kijk naar de
         # master-Excel"), ook na grid-edits in de app.
         master_mirror.refresh_mirror()

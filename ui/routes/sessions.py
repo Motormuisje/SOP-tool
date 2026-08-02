@@ -264,6 +264,14 @@ def create_sessions_blueprint(
                 params = sess['parameters']
                 with engine_rebuild_lock, contextlib.redirect_stdout(io.StringIO()):
                     engine = build_clean_engine_for_session(sess, params)
+                    if engine is None:
+                        # Geen bruikbare databron (store weg/corrupt, geen
+                        # extracts): nette melding i.p.v. AttributeError-500.
+                        sess['restore_status'] = 'failed'
+                        sess['restore_error'] = 'Geen masterdata of extracts beschikbaar voor deze sessie.'
+                        return jsonify({'error': 'Kon deze sessie niet herstellen: geen masterdata '
+                                                 'of extracts beschikbaar. Importeer masterdata in de '
+                                                 'Config-tab en herbereken.'}), 400
                     install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
                     with app_context():
                         replay_pending_edits(sess, engine)

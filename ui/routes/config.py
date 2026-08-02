@@ -67,6 +67,7 @@ def create_config_blueprint(
     replay_pending_edits: Callable[[dict, object], None],
     moq_warnings_payload: Callable[[object], dict],
     value_results_payload: Callable[[object], dict],
+    all_sessions: dict = None,
 ) -> Blueprint:
     bp = Blueprint('config', __name__)
 
@@ -222,12 +223,17 @@ def create_config_blueprint(
         }
 
         old_fc_defaults = json.dumps(global_config.get('forecast_defaults', {}), sort_keys=True)
-        if 'site' in data:
-            global_config['site'] = data['site'].strip()
-        if 'forecast_months' in data:
-            global_config['forecast_months'] = int(data['forecast_months'] or 12)
-        if 'unlimited_machines' in data:
-            global_config['unlimited_machines'] = data['unlimited_machines'].strip()
+        # Invoerharding: verkeerd getypte JSON ("abc" als horizon, een getal
+        # als site) hoort een nette 400 te geven, geen 500 met traceback.
+        try:
+            if 'site' in data:
+                global_config['site'] = str(data['site']).strip()
+            if 'forecast_months' in data:
+                global_config['forecast_months'] = int(float(data['forecast_months'] or 12))
+            if 'unlimited_machines' in data:
+                global_config['unlimited_machines'] = str(data['unlimited_machines']).strip()
+        except (TypeError, ValueError) as exc:
+            return jsonify({'error': f'Ongeldige configuratiewaarde: {exc}'}), 400
         if 'forecast_defaults' in data:
             global_config['forecast_defaults'] = _sanitize_forecast_defaults(data['forecast_defaults'])
             # Per-session state: the session dict is what rebuilds and
@@ -254,33 +260,52 @@ def create_config_blueprint(
 
         if 'purchased_and_produced' in data:
             global_config['purchased_and_produced'] = data['purchased_and_produced'].strip()
-            if current_engine is not None and not structural_config_changed:
+            # Sessieveld is de bron van waarheid bij rebuild/warmup: zonder
+            # deze write verdween een PAP-wijziging op een koude sessie stil
+            # (de gepersisteerde oude waarde won van global).
+            if sess is not None:
+                sess['purchased_and_produced'] = global_config['purchased_and_produced']
+            if current_engine is not None:
                 old_pap = dict(getattr(current_engine.data, 'purchased_and_produced', {}) or {})
                 new_pap = parse_purchased_and_produced(global_config['purchased_and_produced'])
                 changed_mats = sorted({
                     mat for mat in set(old_pap) | set(new_pap)
                     if abs(float(old_pap.get(mat, -999999999)) - float(new_pap.get(mat, -999999999))) > 1e-9
                 })
+                # Ook bij een structurele wijziging op de OUDE engine zetten:
+                # de rebuild leest PAP engine-first, dus dit is wat de nieuwe
+                # engine straks meekrijgt. De gerichte herberekening is dan
+                # overbodig (de rebuild dekt alles).
                 current_engine.data.purchased_and_produced = new_pap
-                if changed_mats:
-                    ensure_reset_baseline(sess, current_engine)
-                    for mat in changed_mats:
-                        recalc_pap_material(current_engine, mat)
-                    finish_pap_recalc(current_engine)
-                    planning_recalculated = True
-                else:
-                    recalculate_value_results(current_engine, sess)
-                value_recalculated = True
+                if not structural_config_changed:
+                    if changed_mats:
+                        ensure_reset_baseline(sess, current_engine)
+                        for mat in changed_mats:
+                            recalc_pap_material(current_engine, mat)
+                        finish_pap_recalc(current_engine)
+                        planning_recalculated = True
+                    else:
+                        recalculate_value_results(current_engine, sess)
+                    value_recalculated = True
         if 'valuation_params' in data:
-            global_config['valuation_params'] = {
-                str(k): float(v) for k, v in data['valuation_params'].items() if v is not None
-            }
-            if current_engine is not None and not structural_config_changed and getattr(current_engine, 'data', None) is not None:
+            try:
+                global_config['valuation_params'] = {
+                    str(k): float(v) for k, v in data['valuation_params'].items() if v is not None
+                }
+            except (TypeError, ValueError, AttributeError) as exc:
+                return jsonify({'error': f'Ongeldige valuation-parameters: {exc}'}), 400
+            if sess is not None:
+                sess['valuation_params'] = dict(global_config['valuation_params'])
+            if current_engine is not None and getattr(current_engine, 'data', None) is not None:
+                # Idem: ook vóór een structurele rebuild op de oude engine
+                # zetten, anders wint de oude engine-waarde in de
+                # engine-first override-keten en raakt de nieuwe VP zoek.
                 current_engine.data.valuation_params = valuation_params_from_config(
                     global_config['valuation_params']
                 )
-                recalculate_value_results(current_engine, sess)
-                value_recalculated = True
+                if not structural_config_changed:
+                    recalculate_value_results(current_engine, sess)
+                    value_recalculated = True
 
         # Generieke velden met effect 'value' (registry): financiële
         # herberekening zonder structurele rebuild.
@@ -385,6 +410,12 @@ def create_config_blueprint(
             }
             payload.update(moq_warnings_payload(current_engine))
             payload.update(value_results_payload(current_engine))
+            # De factoren zijn installatiebreed: andere warme sessies rekenen
+            # nog met de oude conversies. Hun engine invalideren dwingt een
+            # verse rebuild (met de nieuwe factoren) af bij de sessiewissel.
+            for other in (all_sessions or {}).values():
+                if other is not sess and other.get('engine') is not None:
+                    other['engine'] = None
 
         from ui.serializers import uom_suspects_payload
         payload['uom'] = uom_suspects_payload(current_engine)

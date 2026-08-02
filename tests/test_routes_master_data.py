@@ -302,6 +302,9 @@ def test_add_missing_material_and_reactivate(md_app):
     stored = master_store.get_current_master_record()['master']
     assert sum(1 for m in stored['materials'] if m['material_number'] == 'M2') == 1
 
-    # Al actief → nette fout
+    # Al actief → idempotent succes (promote-flow / dubbelklik op de
+    # banner-knop mag geen rode foutmelding geven)
     res = md_app.client.post('/api/master_data/materials/add', json={'material': 'M1'})
-    assert res.status_code == 400
+    body = res.get_json()
+    assert res.status_code == 200 and body['action'] == 'already_active'
+    assert body['requires_recalculate'] is False

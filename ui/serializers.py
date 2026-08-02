@@ -38,6 +38,10 @@ def uom_suspects_payload(engine) -> dict:
         ],
         'overrides': uom_store.get_confirmed_overrides(),
         'dismissed': sorted(dismissed),
+        # Componenten waarvan de dosering na conversie < 0.1 g/ton uitkomt:
+        # sterk signaal dat de bron intussen zelf gecorrigeerd is en de
+        # opgeslagen factor dubbelop werkt. Console-only was onzichtbaar.
+        'double_conversion': list(getattr(data, 'uom_double_warnings', None) or []),
     }
 
 

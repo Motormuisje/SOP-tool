@@ -2099,6 +2099,9 @@ function _applyStickyColumns(tableKey) {
     });
     // Apply to all body cells
     bodyEl.querySelectorAll('tr').forEach(tr => {
+        // Previewrijen met colspan hebben een andere celindeling; pinnen op
+        // celindex zou daar de verkeerde cellen vastzetten.
+        if (tr.querySelector('td[colspan]')) return;
         tr.querySelectorAll('td').forEach((td, i) => {
             if (pinned.has(i)) {
                 td.style.left = offsets[i] + 'px';
@@ -2864,8 +2867,12 @@ async function addMissingToMaster(material) {
         });
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Toevoegen mislukt.', 'error', 5000); return; }
-        const verb = data.action === 'reactivated' ? 'geheractiveerd' : 'toegevoegd aan de masterdata';
-        notify(`${material} ${verb} (versie ${data.version}). Vul prijs/inrichting aan in de masterdata-grid en herbereken om het door te voeren.`, 'info', 7000);
+        const verb = data.action === 'reactivated' ? 'geheractiveerd'
+            : (data.action === 'already_active' ? 'stond al actief in de masterdata' : 'toegevoegd aan de masterdata');
+        notify(`${material} ${verb}${data.version ? ' (versie ' + data.version + ')' : ''}. Vul prijs/inrichting aan in de masterdata-grid en herbereken om het door te voeren.`, 'info', 7000);
+        // Banner meteen bijwerken: dit materiaal is afgehandeld.
+        state.masterConsistency = (state.masterConsistency || []).filter(w => w.material !== material);
+        _renderMasterConsistencyBanner();
     } catch (err) {
         notify('Toevoegen mislukt: ' + err, 'error', 5000);
     }
@@ -3029,6 +3036,11 @@ async function _postUomDecisions(decisions) {
             notify('Besluiten opgeslagen.', 'success');
         }
         state.uomGuard = data.uom || null;
+        if (!data.rebuilt && state.results) {
+            // Afwijzen/verwijderen wijzigt geen cijfers maar wél de
+            // markeringen: tabel en banner meteen bijwerken.
+            _renderViewOrDefer('planning');
+        }
         if (data.uom && data.uom.open_suspects > 0) renderUomGuardBody();
         else closeUomGuardModal();
     } catch (err) {
@@ -5211,6 +5223,8 @@ async function loadUomConfigStatus() {
         const parts = [`${n} actieve conversie(s)`];
         if (dismissed) parts.push(`${dismissed} afgewezen verdachte(n)`);
         if (open) parts.push(`<span class="text-amber-300">${open} wacht(en) op besluit — zie de Planning-tab</span>`);
+        const dubbel = uom.double_conversion || [];
+        if (dubbel.length) parts.push(`<span class="text-red-400">⚠ mogelijk dubbel geconverteerd: ${dubbel.map(escapeHtml).join(', ')} — bron al gecorrigeerd? Verwijder dan de conversie.</span>`);
         el.innerHTML = parts.join(' &middot; ');
     } catch (e) {
         el.textContent = 'Status niet beschikbaar.';
@@ -5394,8 +5408,14 @@ let _masterDatasetCache = null;  // { dataset, value, version }
 async function openMasterDatasetModal(dataset) {
     const spec = _MASTER_DATASETS[dataset];
     if (!spec) return;
-    const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`);
-    const data = await res.json();
+    let data;
+    try {
+        const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`);
+        data = await res.json();
+    } catch (err) {
+        notify('Dataset laden mislukt: ' + err, 'error', 5000);
+        return;
+    }
     if (data.error) { alert(data.error); return; }
     _masterDatasetCache = data;
     _activeMasterDataset = dataset;
@@ -12660,8 +12680,10 @@ function _cfgClearDirty() {
 }
 
 async function saveConfigFromBar() {
-    await saveConfigSettings();
-    _cfgClearDirty();
+    // Alleen bij een geslaagde save de dirty-status wissen: anders verdwijnt
+    // de balk terwijl de wijzigingen niet zijn opgeslagen.
+    const ok = await saveConfigSettings();
+    if (ok) _cfgClearDirty();
 }
 
 function discardConfigChanges() {
@@ -12723,7 +12745,18 @@ let _cfgSpy = null;
 function _cfgNavSticky() {
     const nav = document.getElementById('cfgNav');
     const tab = document.getElementById('config-tab');
-    if (!nav || !tab || tab.classList.contains('hidden')) return;
+    if (!nav) return;
+    if (!tab || tab.classList.contains('hidden')) {
+        // Tab-wissel terwijl de nav fixed stond: terug naar de normale
+        // positie, anders zweeft hij bij terugkeer op een stale plek.
+        if (nav.style.position === 'fixed') {
+            nav.style.position = 'sticky';
+            nav.style.left = '';
+            nav.style.width = '200px';
+            nav.style.top = '12px';
+        }
+        return;
+    }
     const parent = nav.parentElement;
     const parentTop = parent.getBoundingClientRect().top;
     if (parentTop < 12) {
@@ -12797,8 +12830,13 @@ function filterConfigSections(query) {
 
 async function loadConfigTab() {
     _cfgInitDirtyTracking();
-    _cfgClearDirty();
     if (!_cfgNavBuilt) { _cfgNavBuilt = true; _buildConfigNav(); }
+    _cfgNavSticky();
+    // Onopgeslagen wijzigingen overleven een tab-wissel: velden niet
+    // overschrijven met serverwaarden zolang er dirty-state is.
+    const keepEdits = _cfgDirty.size > 0;
+    if (keepEdits) { _renderCfgSaveBar(); }
+    else { _cfgClearDirty(); }
     const nameEl = document.getElementById('cfgInstanceName');
     if (nameEl) {
         const src = document.getElementById('fileName');
@@ -12809,6 +12847,7 @@ async function loadConfigTab() {
         const res = await fetch('/api/config');
         const cfg = await res.json();
         _renderConfigStatus(cfg);
+        if (!keepEdits) {
         _renderGenericSettings(cfg.settings_meta || []);
         const fd = cfg.file_defaults || {};
 
@@ -12836,6 +12875,7 @@ async function loadConfigTab() {
             _cfgSetField('vp' + i, override, fileVal,
                 v => v !== undefined && v !== null ? Number(v).toLocaleString() : '');
         }
+        } // einde !keepEdits: veldvulling overslaan bij onopgeslagen wijzigingen
 
         // Update multi-upload badge
         _renderMasterBadge(cfg);
@@ -13032,7 +13072,7 @@ async function saveConfigSettings({ skipDeltaRecording = false } = {}) {
         const data = await res.json();
         const statusEl = document.getElementById('cfgSaveStatus');
         if (data.success) {
-            statusEl.textContent = '&#10003; Opgeslagen';
+            statusEl.textContent = '✓ Opgeslagen';
             statusEl.style.color = '#86efac';
             if (data.results || data.value_results) {
                 _buildMachineDeltaSummary(beforeImpact, data, [{
@@ -13049,11 +13089,13 @@ async function saveConfigSettings({ skipDeltaRecording = false } = {}) {
                 skipDeltaRecording,
             });
             setTimeout(() => { statusEl.textContent = ''; }, 3000);
+            return true;
         } else {
             statusEl.textContent = data.error ? ('Fout: ' + data.error) : 'Fout bij opslaan';
             statusEl.style.color = '#fca5a5';
+            return false;
         }
-    } catch(e) { alert('Opslaan mislukt: ' + e); }
+    } catch(e) { alert('Opslaan mislukt: ' + e); return false; }
 }
 
 async function resetVpParamsToDefaults() {
