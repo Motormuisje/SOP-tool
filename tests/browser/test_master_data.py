@@ -55,10 +55,10 @@ def test_master_data_import_and_edit_flow(browser_page, golden_fixture_path):
 
     # Materialen-modal openen en de eerste naam bewerken.
     page.evaluate("() => openMasterDatasetModal('materials')")
-    page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+    page.wait_for_selector("#masterDatasetBody tr[data-master-key]", timeout=30000)
     key = page.evaluate(
         """(name) => {
-            const row = document.querySelector('#masterDatasetModal tr[data-master-key]');
+            const row = document.querySelector('#masterDatasetBody tr[data-master-key]');
             row.querySelector('[data-master-col="name"] input').value = name;
             return row.dataset.masterKey;
         }""",
@@ -77,7 +77,8 @@ def test_master_data_import_and_edit_flow(browser_page, golden_fixture_path):
                              timeout=60).json()["value"]
     renamed = next(m for m in materials if str(m["material_number"]) == str(key))
     assert renamed["name"] == MN_RENAME
-    assert page.locator("#masterDatasetModal").count() == 0  # modal sluit na opslaan
+    # C4b: dataset is inline (geen modal meer); na opslaan blijft de sectie zichtbaar
+    page.wait_for_selector("#masterDatasetBody tr[data-master-key]", timeout=30000)
 
     # Gemelde bug: 'ik verander de naam en herbereken, maar de naam wordt
     # niet geüpdatet'. De actieve sessie is een WERKBOEK-sessie; de app-
@@ -146,7 +147,7 @@ def test_sales_price_edit_recomputes_revenue(browser_page, golden_fixture_path):
     try:
         # 1) Round-trip zonder wijziging: opslaan verandert niets.
         page.evaluate("() => openMasterDatasetModal('sales_prices')")
-        page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+        page.wait_for_selector("#masterDatasetBody tr[data-master-key]", timeout=30000)
         with page.expect_response(
                 lambda r: "/api/master_data/sales_prices" in r.url
                 and r.request.method == "PATCH" and r.ok, timeout=60000):
@@ -157,10 +158,10 @@ def test_sales_price_edit_recomputes_revenue(browser_page, golden_fixture_path):
 
         # 2) Prijs verdubbelen via het prijsveld; omzet-weergave rekent live mee.
         page.evaluate("() => openMasterDatasetModal('sales_prices')")
-        page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+        page.wait_for_selector("#masterDatasetBody tr[data-master-key]", timeout=30000)
         shown = page.evaluate(
             """([key, newPrice]) => {
-                const row = document.querySelector(`#masterDatasetModal tr[data-master-key="${key}"]`);
+                const row = document.querySelector(`#masterDatasetBody tr[data-master-key="${key}"]`);
                 const input = row.querySelector('[data-master-col="price"] .master-edit');
                 input.value = String(newPrice);
                 input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -184,7 +185,7 @@ def test_sales_price_edit_recomputes_revenue(browser_page, golden_fixture_path):
     finally:
         requests.patch(base_url + "/api/master_data/sales_prices",
                        json={"value": original}, timeout=120)
-        page.evaluate("() => { const m = document.getElementById('masterDatasetModal'); if (m) m.remove(); }")
+        page.evaluate("() => { const m = document.getElementById('masterDatasetInline'); if (m) m.style.display = 'none'; }")
     assert page.js_errors == []
 
 
@@ -221,15 +222,15 @@ def test_locale_parser_rejects_malformed_numbers(browser_page, golden_fixture_pa
     original = requests.get(base_url + "/api/master_data/safety_stock",
                             timeout=60).json()["value"]
     page.evaluate("() => openMasterDatasetModal('safety_stock')")
-    page.wait_for_selector("#masterDatasetModal tr[data-master-key]", timeout=30000)
+    page.wait_for_selector("#masterDatasetBody tr[data-master-key]", timeout=30000)
     error = page.evaluate(
         """() => {
-            const row = document.querySelector('#masterDatasetModal tr[data-master-key]');
+            const row = document.querySelector('#masterDatasetBody tr[data-master-key]');
             row.querySelector('[data-master-col="lot_size"] .master-edit').value = '3000,5,6';
             return (collectMasterDataset('safety_stock').error || '');
         }""")
     assert "Ongeldig getal" in error
-    page.evaluate("() => document.getElementById('masterDatasetModal').remove()")
+    page.evaluate("() => { const m = document.getElementById('masterDatasetInline'); if (m) m.style.display = 'none'; }")
     status = requests.get(base_url + "/api/master_data", timeout=60).json()
     assert status["version"] == version_before
     after = requests.get(base_url + "/api/master_data/safety_stock",

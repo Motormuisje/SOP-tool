@@ -128,8 +128,9 @@ RecipeKey = Tuple[str, str, Optional[str], Optional[str], Optional[str]]
 
 
 def _recipe_key(item: BOMItem) -> RecipeKey:
-    return (item.plant, item.parent_material, item.production_version,
-            item.bill_of_material, item.alternative_bom)
+    # Plant genormaliseerd: ' NLK1' en 'NLK1' zijn hetzelfde recept.
+    return (str(item.plant or '').strip(), item.parent_material,
+            item.production_version, item.bill_of_material, item.alternative_bom)
 
 
 def _bucket_recipes(
@@ -183,22 +184,30 @@ def _flag_recipe(
     never reached. Returns (flagged items, remaining total).
     """
     remaining = trusted_mass + sum(i.quantity_per for i in items)
+    ordered = sorted(items, key=lambda i: i.quantity_per, reverse=True)
     flagged: List[BOMItem] = []
-    for item in sorted(items, key=lambda i: i.quantity_per, reverse=True):
+    for item in ordered:
         if remaining <= target_upper:
             break
         after = remaining - item.quantity_per + item.quantity_per * proposed_factor
         if after < target_lower:
             # Removing this line would gut the recipe; it is the bulk.
             continue
-        if item.quantity_per <= target_upper and after > target_upper:
-            # A small, individually-plausible line whose conversion does not
-            # even make the recipe plausible is genuine bulk riding inside an
-            # unresolvable recipe — flagging it would be the false positive
-            # this function promises to avoid.
-            continue
         remaining = after
         flagged.append(item)
+    # Bulk-veto achteraf: kleine, individueel plausibele regels blijven
+    # alleen geflagd als het recept COLLECTIEF plausibel eindigt. Een
+    # vooraf-veto per item (met suffix-lookahead) telde conversiecapaciteit
+    # mee van kandidaten die de gut-check hierboven vervolgens weigerde,
+    # waardoor echte bulk alsnog geflagd werd in een onoplosbaar recept.
+    if remaining > target_upper:
+        kept: List[BOMItem] = []
+        for item in flagged:
+            if item.quantity_per <= target_upper:
+                remaining += item.quantity_per - item.quantity_per * proposed_factor
+            else:
+                kept.append(item)
+        flagged = kept
     return flagged, remaining
 
 
@@ -293,10 +302,12 @@ def apply_uom_overrides(
         for item in bom:
             if item.component_material != component:
                 continue
-            # Rows with an authoritative mass UoM were already converted at
-            # load time; applying the stored factor again would shrink the
-            # dose another 1000x the month the extract gains a UoM column.
-            if item.component_uom and str(item.component_uom).strip().upper() in MASS_UNIT_FACTORS:
+            # Rows with ANY authoritative UoM are exempt: mass units were
+            # already converted at load time (re-applying would shrink the
+            # dose another 1000x), and piece units (PC/ST/M) describe counts
+            # the kg->ton factor must never touch. The detector treats every
+            # UoM'd row as authoritative, so the override must too.
+            if item.component_uom:
                 continue
             item.quantity_per *= factor
             count += 1

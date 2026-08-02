@@ -37,7 +37,12 @@ def save_sessions_to_disk(
                 '8': vp_obj.days_payable_outstanding,
             }
         else:
-            sess_vp = (sess.get('reset_baseline') or {}).get('valuation_params') or sess.get('valuation_params')
+            # Sessieveld eerst (zelfde volgorde als PAP hieronder): het wordt
+            # bij elke VP-save geschreven en is dus verser dan de baseline.
+            # Baseline-eerst persisteerde de PRE-EDIT waarden zodra de engine
+            # weg was (bv. na de cross-sessie-invalidatie van een
+            # UoM-beslissing) en draaide een VP-edit stil terug na herstart.
+            sess_vp = sess.get('valuation_params') or (sess.get('reset_baseline') or {}).get('valuation_params')
         # Persist purchased_and_produced per-session for the same reason as
         # valuation_params: cold rebuilds after restart must not inherit the
         # last-active session's PAP from the shared global config. Stored in

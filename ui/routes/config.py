@@ -13,6 +13,9 @@ from werkzeug.utils import secure_filename
 from modules.data_loader import DataLoader
 
 
+_MISSING = object()  # sentinel: sleutel bestond niet vóór deze request
+
+
 def _sanitize_forecast_defaults(raw) -> dict:
     """Coerce a forecast-defaults payload to a safe, JSON-serialisable dict.
 
@@ -223,17 +226,73 @@ def create_config_blueprint(
         }
 
         old_fc_defaults = json.dumps(global_config.get('forecast_defaults', {}), sort_keys=True)
-        # Invoerharding: verkeerd getypte JSON ("abc" als horizon, een getal
-        # als site) hoort een nette 400 te geven, geen 500 met traceback.
+
+        # ---- Valideer-dan-pas-toe -------------------------------------------
+        # Eerst ALLE invoer parsen (nette 400 zonder enige mutatie); pas
+        # daarna toepassen. Voorheen kon een geldige PAP-wijziging al
+        # doorgerekend zijn voordat kapotte valuation-params een 400 gaven,
+        # waarna de after-request-hook die halve staat ook nog persisteerde.
+        from ui.settings_registry import apply_generic_settings, generic_settings
         try:
+            parsed_scalars = {}
             if 'site' in data:
-                global_config['site'] = str(data['site']).strip()
+                parsed_scalars['site'] = str(data['site']).strip()
             if 'forecast_months' in data:
-                global_config['forecast_months'] = int(float(data['forecast_months'] or 12))
+                parsed_scalars['forecast_months'] = int(float(data['forecast_months'] or 12))
             if 'unlimited_machines' in data:
-                global_config['unlimited_machines'] = str(data['unlimited_machines']).strip()
-        except (TypeError, ValueError) as exc:
+                parsed_scalars['unlimited_machines'] = str(data['unlimited_machines']).strip()
+        except (TypeError, ValueError, OverflowError) as exc:
             return jsonify({'error': f'Ongeldige configuratiewaarde: {exc}'}), 400
+        pap_str = None
+        if 'purchased_and_produced' in data:
+            if not isinstance(data['purchased_and_produced'], str):
+                return jsonify({'error': 'purchased_and_produced moet een tekstwaarde zijn.'}), 400
+            pap_str = data['purchased_and_produced'].strip()
+        vp_parsed = None
+        if 'valuation_params' in data:
+            try:
+                vp_parsed = {
+                    str(k): float(v) for k, v in data['valuation_params'].items()
+                    if v is not None
+                }
+            except (TypeError, ValueError, AttributeError, OverflowError) as exc:
+                return jsonify({'error': f'Ongeldige valuation-parameters: {exc}'}), 400
+
+        # Prior-snapshot voor rollback bij een mislukte structurele rebuild:
+        # zonder terugdraaien bleef de OUDE engine met NIEUWE parameters
+        # achter (volgende gerichte herberekening prijst het oude plan stil
+        # met afgekeurde parameters) en persisteerde de hook een mengstaat.
+        _rollback_keys = (['site', 'forecast_months', 'unlimited_machines',
+                           'forecast_defaults', 'purchased_and_produced',
+                           'valuation_params']
+                          + [g.key for g in generic_settings()])
+        _prior_global = {k: global_config.get(k, _MISSING) for k in _rollback_keys}
+        _prior_sess = {k: (sess.get(k, _MISSING) if sess is not None else _MISSING)
+                       for k in ('forecast_defaults', 'purchased_and_produced',
+                                 'valuation_params')}
+        _engine_data = getattr(current_engine, 'data', None) if current_engine is not None else None
+        _prior_engine_pap = dict(getattr(_engine_data, 'purchased_and_produced', {}) or {}) if _engine_data is not None else None
+        _prior_engine_vp = getattr(_engine_data, 'valuation_params', None) if _engine_data is not None else None
+
+        def _rollback():
+            for key, value in _prior_global.items():
+                if value is _MISSING:
+                    global_config.pop(key, None)
+                else:
+                    global_config[key] = value
+            if sess is not None:
+                for key, value in _prior_sess.items():
+                    if value is _MISSING:
+                        sess.pop(key, None)
+                    else:
+                        sess[key] = value
+            if _engine_data is not None:
+                if _prior_engine_pap is not None:
+                    _engine_data.purchased_and_produced = _prior_engine_pap
+                _engine_data.valuation_params = _prior_engine_vp
+
+        for key, value in parsed_scalars.items():
+            global_config[key] = value
         if 'forecast_defaults' in data:
             global_config['forecast_defaults'] = _sanitize_forecast_defaults(data['forecast_defaults'])
             # Per-session state: the session dict is what rebuilds and
@@ -244,10 +303,10 @@ def create_config_blueprint(
         # Registry-gedreven velden (handler='generic'): coercion, opslag en
         # effectbepaling komen uit ui/settings_registry.py — een nieuw veld
         # toevoegen raakt deze route niet meer.
-        from ui.settings_registry import apply_generic_settings
         try:
             generic_effects = apply_generic_settings(data, global_config)
         except ValueError as exc:
+            _rollback()
             return jsonify({'error': str(exc)}), 400
 
         structural_config_changed = (
@@ -258,8 +317,8 @@ def create_config_blueprint(
             or 'rebuild' in generic_effects
         )
 
-        if 'purchased_and_produced' in data:
-            global_config['purchased_and_produced'] = data['purchased_and_produced'].strip()
+        if pap_str is not None:
+            global_config['purchased_and_produced'] = pap_str
             # Sessieveld is de bron van waarheid bij rebuild/warmup: zonder
             # deze write verdween een PAP-wijziging op een koude sessie stil
             # (de gepersisteerde oude waarde won van global).
@@ -287,13 +346,8 @@ def create_config_blueprint(
                     else:
                         recalculate_value_results(current_engine, sess)
                     value_recalculated = True
-        if 'valuation_params' in data:
-            try:
-                global_config['valuation_params'] = {
-                    str(k): float(v) for k, v in data['valuation_params'].items() if v is not None
-                }
-            except (TypeError, ValueError, AttributeError) as exc:
-                return jsonify({'error': f'Ongeldige valuation-parameters: {exc}'}), 400
+        if vp_parsed is not None:
+            global_config['valuation_params'] = vp_parsed
             if sess is not None:
                 sess['valuation_params'] = dict(global_config['valuation_params'])
             if current_engine is not None and getattr(current_engine, 'data', None) is not None:
@@ -317,9 +371,14 @@ def create_config_blueprint(
         if current_engine is not None and structural_config_changed:
             from ui.locks import engine_rebuild_lock
             with engine_rebuild_lock:
-                rebuilt = build_clean_engine_for_session(sess)
+                try:
+                    rebuilt = build_clean_engine_for_session(sess)
+                except Exception as exc:
+                    _rollback()
+                    return jsonify({'error': f'Herbouw met de nieuwe configuratie mislukte; de wijzigingen zijn teruggedraaid. ({exc})'}), 400
                 if rebuilt is None:
-                    return jsonify({'error': 'Could not rebuild active session for the changed config. Recalculate this session first.'}), 400
+                    _rollback()
+                    return jsonify({'error': 'Kon de actieve sessie niet herbouwen met de gewijzigde configuratie; de wijzigingen zijn teruggedraaid. Herbereken deze sessie eerst.'}), 400
                 install_clean_engine_baseline(sess, rebuilt, clear_machine_overrides=False)
                 with current_app.app_context():
                     replay_pending_edits(sess, rebuilt)
@@ -355,6 +414,9 @@ def create_config_blueprint(
 
         current_engine.data.valuation_params = valuation_params_from_config(baseline_vp)
         global_config['valuation_params'] = {str(k): float(v) for k, v in baseline_vp.items()}
+        # Sessieveld mee-resetten: persistentie is sessieveld-eerst, dus een
+        # achterblijvende pre-reset-edit zou na herstart stil terugkeren.
+        sess['valuation_params'] = {str(k): float(v) for k, v in baseline_vp.items()}
         recalculate_value_results(current_engine, sess)
         save_global_config()
 
@@ -391,6 +453,20 @@ def create_config_blueprint(
 
         sess, current_engine = get_active()
         payload = {'success': True, 'rebuilt': False}
+        # Installatiebrede factoren: ALLE andere warme sessies invalideren,
+        # ook als de actieve sessie koud is (het beheer werkt engine-loos
+        # vanuit de Config-tab) — anders rekenden warme sessies onbeperkt
+        # door met de oude conversies.
+        if factors_changed:
+            # Onder de rebuild-lock: een lopende calculate/switch-build (die
+            # de oude factoren al las) rondt eerst af en installeert; daarna
+            # pas invalideren wij — anders vulde die build een zojuist
+            # geleegde sessie weer met een engine op oude conversies.
+            from ui.locks import engine_rebuild_lock
+            with engine_rebuild_lock:
+                for other in (all_sessions or {}).values():
+                    if other is not sess and other.get('engine') is not None:
+                        other['engine'] = None
         if factors_changed and current_engine is not None:
             from ui.locks import engine_rebuild_lock
             with engine_rebuild_lock:
@@ -410,12 +486,6 @@ def create_config_blueprint(
             }
             payload.update(moq_warnings_payload(current_engine))
             payload.update(value_results_payload(current_engine))
-            # De factoren zijn installatiebreed: andere warme sessies rekenen
-            # nog met de oude conversies. Hun engine invalideren dwingt een
-            # verse rebuild (met de nieuwe factoren) af bij de sessiewissel.
-            for other in (all_sessions or {}).values():
-                if other is not sess and other.get('engine') is not None:
-                    other['engine'] = None
 
         from ui.serializers import uom_suspects_payload
         payload['uom'] = uom_suspects_payload(current_engine)

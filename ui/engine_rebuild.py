@@ -154,7 +154,11 @@ def build_clean_engine_for_session(
         master_data=src.master_data,
     )
     engine.run()
-    src.apply_to_session(sess)
+    # Bronlabel NIET hier op de sessie zetten: deze build kan nog worden
+    # weggegooid (staleness-guards in de install-paden). Het label reist mee
+    # op de engine en wordt pas bij install toegepast (zie
+    # install_clean_engine_baseline).
+    engine._resolved_master_source = src
     return engine
 
 
@@ -165,6 +169,10 @@ def install_clean_engine_baseline(
     clear_machine_overrides: bool = True,
 ) -> None:
     sess['reset_baseline'] = snapshot_engine_state(engine, shift_hours_lookup)
+    # Bronmarkering hoort bij de daadwerkelijk geïnstalleerde engine.
+    _src = getattr(engine, '_resolved_master_source', None)
+    if _src is not None:
+        _src.apply_to_session(sess)
     # A fresh calculate invalidates stale machine undo history.
     sess['machine_undo'] = []
     if clear_machine_overrides:

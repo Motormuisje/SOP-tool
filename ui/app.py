@@ -219,12 +219,31 @@ def _load_scenarios_from_disk():
 
 
 def _build_and_install_session_engine(sess: dict):
+    """Bouw buiten de lock; installeer atomair (baseline + replay + engine in
+    één gelockte stap) en alleen als (a) de sessie nog geen engine heeft —
+    een request-handler die intussen bouwde wint — en (b) de UoM-factoren
+    tijdens de build niet wijzigden (anders vult een in-flight build een
+    zojuist geïnvalideerde sessie met een engine op oude conversies).
+    Voorheen muteerde dit pad baseline/undo/overrides al vóór de guard,
+    waardoor een 'geskipte' install alsnog sessiestaat corrumpeerde."""
+    from ui import uom_store
+    gen0 = uom_store.generation()
     engine = build_clean_engine_for_session(sess, _global_config)
     if engine is None:
         return None
-    _install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
-    with app.app_context():
-        _replay_pending_edits(sess, engine)
+    with _sessions_lock:
+        if sess.get('engine') is not None:
+            return sess['engine']
+        if uom_store.generation() != gen0:
+            return None
+        if sessions.get(sess.get('id')) is not sess:
+            # Sessie is tijdens de build verwijderd/vervangen: niets meer in
+            # het wees-dict installeren.
+            return None
+        _install_clean_engine_baseline(sess, engine, clear_machine_overrides=False)
+        with app.app_context():
+            _replay_pending_edits(sess, engine)
+        sess['engine'] = engine
     return engine
 
 
@@ -253,8 +272,7 @@ def _start_session_warmup(session_id: str) -> bool:
             with _sessions_lock:
                 if engine is None:
                     sess['restore_status'] = 'cold'
-                elif sessions.get(session_id) is sess:
-                    sess['engine'] = engine
+                else:
                     sess['restore_status'] = 'ready'
                     sess['restore_error'] = None
         except Exception as exc:
@@ -495,15 +513,10 @@ def _autorun_sessions():
                 if engine is None:
                     import logging
                     logging.getLogger(__name__).warning(
-                        f'autorun SKIP "{label}": geen bruikbare databron')
+                        f'autorun SKIP "{label}": geen bruikbare databron of intussen vervallen')
                     continue
-                # Engine build/run happens outside the lock; only the install
-                # into the shared session dict is locked. Skip when a request
-                # handler (calculate/switch) built a fresher engine meanwhile —
-                # installing the autorun result would silently roll that back.
-                with _sessions_lock:
-                    if sess.get('engine') is None:
-                        sess['engine'] = engine
+                # Install (incl. baseline/replay) gebeurde atomair in de
+                # helper, met verser-werk- en UoM-generatie-guards.
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).error(f'autorun FAIL "{label}": {exc}')

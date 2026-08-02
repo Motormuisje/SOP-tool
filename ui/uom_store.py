@@ -22,6 +22,7 @@ response, marked as dismissed, and can be cleared to re-decide.
 """
 
 import json
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,16 @@ UOM_STORE_FILENAME = 'uom_overrides.json'
 
 _store_path: Optional[Path] = None
 _cache = {'mtime': None, 'record': None}
+# Generatieteller: opgehoogd bij elke besluitenronde. Achtergrondbouwers
+# (warmup) vergelijken de generatie van vóór hun build met die van erna en
+# gooien hun engine weg als er intussen factoren zijn gewijzigd — anders
+# vult een in-flight build de zojuist geïnvalideerde sessie weer met een
+# engine op oude conversies.
+_generation = 0
+
+
+def generation() -> int:
+    return _generation
 
 _EMPTY = {'overrides': {}, 'dismissed': {}}
 
@@ -67,9 +78,17 @@ def _read_store(store_path: Path) -> dict:
             store = json.load(f)
         if not isinstance(store, dict):
             return dict(_EMPTY)
+        def _valid_factor(v):
+            # Ook bij LEZEN filteren: een legacy-NaN die de pre-fix code ooit
+            # wegschreef zou anders elke rebuild opnieuw de BOM vergiftigen.
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return False
+            return math.isfinite(f) and f > 0 and f != 1
         return {
             'overrides': {str(k): float(v) for k, v in (store.get('overrides') or {}).items()
-                          if v not in (None, 0)},
+                          if _valid_factor(v)},
             'dismissed': {str(k): True for k in (store.get('dismissed') or {})},
         }
     except Exception as exc:
@@ -140,7 +159,9 @@ def record_decisions(decisions) -> dict:
                 factor = float(raw if raw is not None else 0.001)
             except (TypeError, ValueError):
                 continue
-            if factor <= 0 or factor == 1:
+            # isfinite: NaN glipt door <=0-checks (NaN <= 0 is False) en zou
+            # via quantity_per *= NaN de hele planning vergiftigen.
+            if not math.isfinite(factor) or factor <= 0 or factor == 1:
                 continue
             overrides.pop(component, None)
             dismissed.pop(component, None)
@@ -154,4 +175,9 @@ def record_decisions(decisions) -> dict:
             dismissed.pop(component, None)
     new_record = {'overrides': overrides, 'dismissed': dismissed}
     _save_record(new_record)
+    # Generatie pas NA de voltooide save ophogen: een achtergrondbouwer die
+    # de nieuwe generatie sampelt maar het oude bestand nog las, zou anders
+    # de guard passeren met een engine op oude factoren.
+    global _generation
+    _generation += 1
     return new_record

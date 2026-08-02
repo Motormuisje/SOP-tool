@@ -345,14 +345,33 @@ def create_master_data_blueprint(
         existing = next((m for m in materials if m.get('material_number') == number), None)
         if existing is not None:
             if existing.get('is_active'):
-                # Idempotent: de promote-flow en een dubbelklik op de
-                # banner-knop mogen geen rode foutmelding opleveren.
-                payload = _status_payload(record)
-                payload.update({'success': True, 'action': 'already_active',
-                                'material': number, 'requires_recalculate': False})
-                return jsonify(payload)
-            existing['is_active'] = True
-            action = 'reactivated'
+                # Idempotent, maar niet doof: als de aanroep (bv. de
+                # productwizard-promotie) velden meestuurt die afwijken,
+                # worden die bijgewerkt — stil negeren terwijl de UI
+                # 'opgenomen in masterdata' meldt was misleidend.
+                updates = {}
+                for field_name in ('name', 'product_type', 'product_family'):
+                    value = str(body.get(field_name) or '').strip()
+                    if value and value != str(existing.get(field_name) or ''):
+                        updates[field_name] = value
+                if not updates:
+                    payload = _status_payload(record)
+                    payload.update({'success': True, 'action': 'already_active',
+                                    'material': number, 'requires_recalculate': False})
+                    return jsonify(payload)
+                existing.update(updates)
+                action = 'updated'
+            else:
+                existing['is_active'] = True
+                # Heractivering neemt meegestuurde velden ook mee (zelfde
+                # eerlijkheid als de update-branch hierboven): de wizard
+                # meldt 'opgenomen in masterdata' en dan moeten naam/type/
+                # familie niet stil op de oude waarden blijven staan.
+                for field_name in ('name', 'product_type', 'product_family'):
+                    value = str(body.get(field_name) or '').strip()
+                    if value:
+                        existing[field_name] = value
+                action = 'reactivated'
         else:
             materials.append({
                 'material_number': number,

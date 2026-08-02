@@ -312,3 +312,57 @@ def test_small_genuine_bulk_survives_unresolvable_recipe():
     assert 'BULK' not in flagged
     assert flagged == {'WATER', 'ADDITIVE'}
     assert len(warnings) == 1  # recept blijft eerlijk gemarkeerd als onopgelost
+
+
+def test_multi_small_kg_imbalance_flags_all_offenders():
+    """Codereview 2026-08-02: de bulk-veto blokkeerde ELKE kandidaat zodra
+    de scheefstand over 2+ kleine kg-regels verdeeld was (elk item alleen
+    lost het recept niet op) — nul verdachten voor precies de doelklasse.
+    De veto geldt nu alleen als ook de resterende kandidaten samen het
+    recept niet plausibel krijgen."""
+    bom = [
+        _item('P1', 'BULK', 0.9),
+        _item('P1', 'ADD-A', 1.2),
+        _item('P1', 'ADD-B', 1.1),
+    ]
+    suspects, warnings = analyze_bom(bom)
+    flagged = {s.component_material for s in suspects}
+    assert flagged == {'ADD-A', 'ADD-B'}
+    assert 'BULK' not in flagged
+    assert warnings == []
+
+
+def test_override_never_touches_piece_uom_rows():
+    """Codereview: de heroverride-vrijstelling gold alleen voor massa-
+    eenheden; een als kg bevestigd component dat later met PC-regels
+    terugkomt werd alsnog x0.001 gedaan. Elke autoritatieve eenheid is
+    vrijgesteld."""
+    bom = [_item('P1', 'COMP', 2.0, uom='PC')]
+    applied = apply_uom_overrides(bom, {'COMP': 0.001})
+    assert applied == [('COMP', 0.001, 0)]
+    assert bom[0].quantity_per == pytest.approx(2.0)
+
+
+class TestUomStoreHardening:
+    @pytest.fixture(autouse=True)
+    def _store(self, tmp_path):
+        from ui import uom_store
+        uom_store.set_store_path(tmp_path / 'uom.json')
+        yield
+
+    def test_nan_and_inf_factors_rejected(self):
+        """Codereview: NaN glipte door de <=0-check (NaN <= 0 is False) en
+        vergiftigde via quantity_per *= NaN de hele planning."""
+        from ui import uom_store
+        uom_store.record_decisions([{'component': 'A', 'action': 'convert', 'factor': 0.001}])
+        uom_store.record_decisions([
+            {'component': 'A', 'action': 'convert', 'factor': float('nan')},
+            {'component': 'B', 'action': 'convert', 'factor': float('inf')},
+        ])
+        assert uom_store.get_confirmed_overrides() == {'A': 0.001}
+
+    def test_generation_bumps_on_decisions(self):
+        from ui import uom_store
+        g0 = uom_store.generation()
+        uom_store.record_decisions([{'component': 'A', 'action': 'convert', 'factor': 0.001}])
+        assert uom_store.generation() == g0 + 1

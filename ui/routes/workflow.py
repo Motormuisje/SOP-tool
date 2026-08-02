@@ -105,7 +105,7 @@ def create_workflow_blueprint(
                     try:
                         months_actuals = int(float(req_data.get('months_actuals', 0) or 0))
                         months_forecast = int(float(req_data.get('months_forecast', 12) or 12))
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError, OverflowError):
                         return jsonify({'error': 'Ongeldige waarde voor months_actuals/months_forecast.'}), 400
 
                     print("\nUser Input Parameters:")

@@ -389,13 +389,17 @@ def test_save_config_settings_structural_change_rebuilds_engine(config_engine_ap
 def test_save_config_settings_structural_change_rebuild_fails_returns_400(config_engine_app):
     config_engine_app.state.clean_engine = None
 
+    site_before = config_engine_app.global_config.get("site")
     response = config_engine_app.client.post(
         "/api/config/settings",
         json={"site": "NLX2"},
     )
 
     assert response.status_code == 400
-    assert "Could not rebuild" in response.get_json()["error"]
+    assert "teruggedraaid" in response.get_json()["error"]
+    # Review-fix: een mislukte rebuild draait de configuratie terug — de
+    # oude engine mag niet achterblijven met nieuwe parameters.
+    assert config_engine_app.global_config.get("site") == site_before
 
 
 @pytest.mark.no_fixture
@@ -574,3 +578,19 @@ def test_forecast_defaults_invalid_mode_coerced(config_route_app):
         "forecast_defaults": {"mode": "nonsense", "default": 10},
     })
     assert config_route_app.global_config["forecast_defaults"]["mode"] == "fill_empty"
+
+
+@pytest.mark.no_fixture
+def test_combined_pap_and_broken_vp_mutates_nothing(config_route_app):
+    """Codereview: een geldige PAP naast kapotte valuation-params werd al
+    toegepast (incl. herberekening) vóór de 400 — en de hook persisteerde
+    die halve staat. Valideer-dan-pas-toe: 400 zonder enige mutatie."""
+    gc = config_route_app.global_config
+    pap_before = gc.get('purchased_and_produced')
+    response = config_route_app.client.post('/api/config/settings', json={
+        'purchased_and_produced': 'MAT-9:0.9',
+        'valuation_params': {'1': {}},
+    })
+    assert response.status_code == 400
+    assert gc.get('purchased_and_produced') == pap_before
+    assert config_route_app.save_calls == []  # niets gepersisteerd

@@ -87,6 +87,12 @@ def save_master_store(store_path: Path, master: dict, *, source_filename: str = 
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, store_path)
+    # Cache expliciet invalideren: twee saves binnen één (gecoalescede)
+    # mtime-tick lieten de mtime-cache anders het pre-save-record serveren,
+    # waarmee de compare-and-swap in de routes op stale data kon slagen —
+    # precies de lost update die hij moet voorkomen.
+    _cache['mtime'] = None
+    _cache['record'] = None
     return record
 
 

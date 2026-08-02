@@ -3036,6 +3036,7 @@ async function _postUomDecisions(decisions) {
             notify('Besluiten opgeslagen.', 'success');
         }
         state.uomGuard = data.uom || null;
+        loadUomConfigStatus();
         if (!data.rebuilt && state.results) {
             // Afwijzen/verwijderen wijzigt geen cijfers maar wél de
             // markeringen: tabel en banner meteen bijwerken.
@@ -10020,6 +10021,8 @@ async function saveAddedProduct() {
                 });
                 const pdata = await pres.json();
                 if (!pres.ok || pdata.error) notify('Opnemen in masterdata mislukt: ' + (pdata.error || '?'), 'error', 6000);
+                else if (pdata.action === 'already_active') notify(`${product.material_number} stond al ongewijzigd in de masterdata — niets aangepast.`, 'info', 5000);
+                else if (pdata.action === 'updated') notify(`${product.material_number} bijgewerkt in de masterdata (versie ${pdata.version}); het masterwerkboek is bijgewerkt.`, 'success', 6000);
                 else notify(`${product.material_number} opgenomen in de masterdata (versie ${pdata.version}); het masterwerkboek is bijgewerkt.`, 'success', 6000);
             } catch (e) {
                 notify('Opnemen in masterdata mislukt: ' + e, 'error', 6000);
@@ -12356,6 +12359,10 @@ function renderSessionList(groups, activeId) {
 async function switchSession(sessionId) {
     if (isBusy() || _isSwitchingSession) return;
     _isSwitchingSession = true;
+    // Vooraf onthouden of dit een echte wissel is: de clear/refresh hieronder
+    // mag NIET vuren bij een klik op de al-actieve rij, de warming-retry of
+    // een mislukte wissel.
+    const _wasOtherSession = String(state.activeSessionId ?? '') !== String(sessionId);
     status('Switching session...');
     try {
         // Drain in-flight plan edits first so their cascades finish against
@@ -12399,6 +12406,17 @@ async function switchSession(sessionId) {
         _vpMaterialScope = null;
         _applyMaterialGroupsPayload(data.material_groups || [],
                                     data.active_material_group || null, {});
+        // Echte, geslaagde wissel: config-dirty hoort bij de sessie die we
+        // verlaten (laten staan blokkeerde refreshes en kon bij Opslaan de
+        // nieuwe sessie met andermans waarden overschrijven), en de
+        // Config-tab moet de waarden van de NIEUWE sessie tonen.
+        if (_wasOtherSession) {
+            if (_cfgDirty.size) {
+                _cfgClearDirty();
+                notify('Onopgeslagen configuratiewijzigingen verworpen bij sessiewissel.', 'info', 4000);
+            }
+            if (_activeTabName === 'config') loadConfigTab();
+        }
         // Sync valuation param inputs to the switched-to session's values.
         if (data.valuation_params) {
             for (let i = 1; i <= 8; i++) {
@@ -12698,7 +12716,20 @@ function discardConfigChanges() {
 function _renderGenericSettings(meta) {
     const host = document.getElementById('cfgGenericFields');
     if (!host) return;
+    if (host.contains(document.activeElement)) {
+        // Gebruiker typt in een registry-veld: her-renderen zou het element
+        // onder de cursor vervangen. De volgende load ververst alsnog.
+        return;
+    }
     const generic = meta.filter(m => m.handler === 'generic');
+    // Dirty generieke velden behouden hun onopgeslagen waarde over een
+    // her-render heen (per-veld dirty-skip, zie loadConfigTab).
+    const dirtyVals = {};
+    for (const id of _cfgDirty) {
+        if (!id.startsWith('gen_')) continue;
+        const el = document.getElementById(id);
+        if (el) dirtyVals[id] = el.type === 'checkbox' ? el.checked : el.value;
+    }
     host.innerHTML = generic.map(m => {
         const scopeChip = m.scope === 'installation'
             ? ' <span class="text-xs px-1.5 py-0.5 rounded font-normal" style="background:rgba(245,158,11,0.15);color:#fbbf24" title="Geldt voor álle instanties op deze installatie.">alle instanties</span>'
@@ -12719,6 +12750,10 @@ function _renderGenericSettings(meta) {
     for (const m of generic) {
         const el = document.getElementById('gen_' + m.key);
         if (!el) continue;
+        if (('gen_' + m.key) in dirtyVals) {
+            if (el.type === 'checkbox') el.checked = dirtyVals['gen_' + m.key];
+            else el.value = dirtyVals['gen_' + m.key];
+        }
         _CFG_FIELD_EFFECTS['gen_' + m.key] = [m.label, m.effect === 'rebuild' ? 'rebuild' : (m.effect === 'recalc' ? 'recalc' : 'value')];
         const evt = el.type === 'checkbox' ? 'change' : 'input';
         el.addEventListener(evt, () => { _cfgDirty.add('gen_' + m.key); _renderCfgSaveBar(); });
@@ -12832,11 +12867,12 @@ async function loadConfigTab() {
     _cfgInitDirtyTracking();
     if (!_cfgNavBuilt) { _cfgNavBuilt = true; _buildConfigNav(); }
     _cfgNavSticky();
-    // Onopgeslagen wijzigingen overleven een tab-wissel: velden niet
-    // overschrijven met serverwaarden zolang er dirty-state is.
-    const keepEdits = _cfgDirty.size > 0;
-    if (keepEdits) { _renderCfgSaveBar(); }
-    else { _cfgClearDirty(); }
+    // Onopgeslagen wijzigingen overleven een tab-wissel: alleen de DIRTY
+    // velden worden niet overschreven; al het andere ververst gewoon mee
+    // (de blanket-variant bevroor de hele tab en brak de adoptieflow van
+    // het masterbestand).
+    if (_cfgDirty.size) _renderCfgSaveBar();
+    const _skipDirty = id => _cfgDirty.has(id);
     const nameEl = document.getElementById('cfgInstanceName');
     if (nameEl) {
         const src = document.getElementById('fileName');
@@ -12847,35 +12883,34 @@ async function loadConfigTab() {
         const res = await fetch('/api/config');
         const cfg = await res.json();
         _renderConfigStatus(cfg);
-        if (!keepEdits) {
         _renderGenericSettings(cfg.settings_meta || []);
         const fd = cfg.file_defaults || {};
 
-        _cfgSetField('cfgSite', cfg.site, fd.site);
-        _cfgSetField('cfgForecastMonths', cfg.forecast_months, fd.forecast_months);
-        _cfgSetField('cfgUnlimitedMachines', cfg.unlimited_machines, fd.unlimited_machines);
+        if (!_skipDirty('cfgSite')) _cfgSetField('cfgSite', cfg.site, fd.site);
+        if (!_skipDirty('cfgForecastMonths')) _cfgSetField('cfgForecastMonths', cfg.forecast_months, fd.forecast_months);
+        if (!_skipDirty('cfgUnlimitedMachines')) _cfgSetField('cfgUnlimitedMachines', cfg.unlimited_machines, fd.unlimited_machines);
         const papEl = document.getElementById('cfgPapDisplay');
         if (papEl) papEl.textContent = cfg.purchased_and_produced || fd.purchased_and_produced || '— geen —';
 
         // Forecast default volumes (Fase 1.3)
         const fcd = cfg.forecast_defaults || {};
         const fcModeEl = document.getElementById('cfgFcDefMode');
-        if (fcModeEl) fcModeEl.value = fcd.mode || 'fill_empty';
+        if (fcModeEl && !_skipDirty('cfgFcDefMode')) fcModeEl.value = fcd.mode || 'fill_empty';
         const fcDefEl = document.getElementById('cfgFcDefDefault');
-        if (fcDefEl) fcDefEl.value = (fcd.default !== undefined && fcd.default !== null) ? fcd.default : '';
+        if (fcDefEl && !_skipDirty('cfgFcDefDefault')) fcDefEl.value = (fcd.default !== undefined && fcd.default !== null) ? fcd.default : '';
         const fcPerEl = document.getElementById('cfgFcDefPerMat');
-        if (fcPerEl) fcPerEl.value = Object.entries(fcd.per_material || {}).map(([m, v]) => `${m}:${v}`).join(', ');
+        if (fcPerEl && !_skipDirty('cfgFcDefPerMat')) fcPerEl.value = Object.entries(fcd.per_material || {}).map(([m, v]) => `${m}:${v}`).join(', ');
 
         const vp = cfg.valuation_params || {};
         const fdVp = fd.valuation_params || {};
         for (let i = 1; i <= 8; i++) {
+            if (_skipDirty('vp' + i)) continue;
             const key = String(i);
             const override = vp[key];
             const fileVal = fdVp[key];
             _cfgSetField('vp' + i, override, fileVal,
                 v => v !== undefined && v !== null ? Number(v).toLocaleString() : '');
         }
-        } // einde !keepEdits: veldvulling overslaan bij onopgeslagen wijzigingen
 
         // Update multi-upload badge
         _renderMasterBadge(cfg);

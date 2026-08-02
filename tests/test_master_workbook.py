@@ -187,3 +187,21 @@ def test_parse_validations_reject_dangerous_edits(tmp_path):
     parsed, _ = parse_master_workbook(path4)
     assert [m['material_number'] for m in parsed['materials']] == ['M2']
     assert parsed['config']['forecast_align_to_month'] is True
+
+
+def test_store_cache_invalidated_after_save(tmp_path):
+    """Codereview: twee saves binnen één mtime-tick lieten de cache het
+    pre-save-record serveren, waarmee de CAS op stale data kon slagen."""
+    import json as _json
+    from ui import master_store
+    from tests.master_fixtures import fake_master_loader
+    from modules.master_data import serialize_master
+
+    path = tmp_path / 'store.json'
+    master_store.set_store_path(path)
+    master = _json.loads(_json.dumps(serialize_master(fake_master_loader()), default=str))
+    r1 = master_store.save_master_store(path, master)
+    # Direct erna (zelfde tick): de cache moet het nieuwe record zien.
+    assert master_store.get_current_master_record()['version'] == r1['version'] == 1
+    r2 = master_store.save_master_store(path, master, previous=r1, edited=True)
+    assert master_store.get_current_master_record()['version'] == r2['version'] == 2

@@ -26,7 +26,9 @@ def test_add_and_delete_dynamic_product(browser_page):
         page.wait_for_selector("#productModal #prodNumber", timeout=15000)
         page.fill("#prodNumber", MN)
         page.fill("#prodName", "Browsertest product")
+        page.evaluate("() => _wizGoto(2)")  # C4c: volume staat op stap 2
         page.fill("#prodFlatVolume", "150")
+        page.evaluate("() => _wizGoto(4)")  # opslaan staat op stap 4
         with page.expect_response(
                 lambda r: "/api/products/added" in r.url
                 and r.request.method == "POST" and r.ok,
@@ -85,20 +87,30 @@ def test_sourcing_selector_toggles_sections(browser_page):
     page.evaluate("() => openProductModal()")
     page.wait_for_selector("#productModal #prodSourcing", timeout=15000)
 
+    # C4c: sourcing staat op stap 1, de secties op stap 3 — de test vult
+    # dummy-identificatie in en wisselt per keuze naar stap 3 voor de checks.
+    page.fill("#prodNumber", "999999999")
+    page.fill("#prodName", "toggle-test")
+
     # Default: purchased -> purchase fields visible, production sections hidden.
     assert page.locator("#prodSourcing").input_value() == "purchased"
+    page.evaluate("() => _wizGoto(3)")
     assert page.locator("#prodWrapMoq").is_visible()
     assert not page.locator("#prodSectionRouting").is_visible()
     assert not page.locator("#prodSectionBomParent").is_visible()
     assert not page.locator("#prodWrapPap").is_visible()
 
+    page.evaluate("() => _wizGoto(1)")
     page.select_option("#prodSourcing", "produced")
+    page.evaluate("() => _wizGoto(3)")
     assert page.locator("#prodSectionRouting").is_visible()
     assert page.locator("#prodSectionBomParent").is_visible()
     assert not page.locator("#prodWrapMoq").is_visible()
     assert not page.locator("#prodWrapLeadTime").is_visible()
 
+    page.evaluate("() => _wizGoto(1)")
     page.select_option("#prodSourcing", "mix")
+    page.evaluate("() => _wizGoto(3)")
     assert page.locator("#prodSectionRouting").is_visible()
     assert page.locator("#prodWrapMoq").is_visible()
     assert page.locator("#prodWrapPap").is_visible()
@@ -125,9 +137,11 @@ def test_add_produced_product_end_to_end(browser_page):
         page.wait_for_selector("#productModal #prodSourcing", timeout=15000)
         page.fill("#prodNumber", mn)
         page.fill("#prodName", "Browsertest geproduceerd")
-        page.fill("#prodFlatVolume", "90")
-        page.fill("#prodSalesPrice", "10")
         page.select_option("#prodSourcing", "produced")
+        page.evaluate("() => _wizGoto(2)")
+        page.fill("#prodFlatVolume", "90")
+        page.evaluate("() => _wizGoto(3)")
+        page.fill("#prodSalesPrice", "10")
         page.click("#prodSectionBomParent button")
         page.fill("#prodBomParentTbody .prod-link-ref", component)
         page.fill("#prodBomParentTbody .prod-link-qty", "2")
@@ -135,6 +149,7 @@ def test_add_produced_product_end_to_end(browser_page):
         page.fill("#prodRoutingTbody .prod-rout-wc", machine)
         page.fill("#prodRoutingTbody .prod-rout-bq", "1000")
         page.fill("#prodRoutingTbody .prod-rout-st", "8")
+        page.evaluate("() => _wizGoto(4)")
         with page.expect_response(
                 lambda r: "/api/products/added" in r.url
                 and r.request.method == "POST" and r.ok,
