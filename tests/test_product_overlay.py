@@ -314,6 +314,9 @@ def test_apply_forecast_uses_anchor_math():
 
 def test_apply_forecast_fallback_without_first_period():
     data = _fake_data(forecast_first_period=None, actuals=11)
+    # Deze test toetst de POSITIONELE fallback (VBA-validatiemodus); de
+    # default is inmiddels kalender-uitlijning.
+    data.config.forecast_align_to_month = False
     apply_product_overlay(data, [_product(flat_volume=100.0)])
     fdict = data.forecasts['900000001']
     # A zero key 12 months before periods[0] forces the sorted-keys fallback

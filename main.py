@@ -48,7 +48,7 @@ def _print_startup_banner(host: str, port: int) -> None:
         _c('34;1', "|                  | A |  | P |  | E |  | X |                          |"),
         _c('34;1', "|                  +---+  +---+  +---+  +---+                          |"),
         _c('37;1', "|                                                                      |"),
-        _c('35;1', "|              Apex Rainier Planning  v1.0                             |"),
+        _c('35;1', "|              Apex Rainier Planning  v2.0                             |"),
         _c('90',   "|   boot> load modules ... ok  |  init engine ... ok                  |"),
         _c('36;1', "+----------------------------------------------------------------------+"),
         _c('32;1', f"  C:\\APEX> connect http://{public_host}:{port}"),

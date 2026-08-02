@@ -875,7 +875,11 @@ class CapacityEngine:
         fte_hours_per_year = self.data.fte_hours_per_year
         fte_monthly_hours = fte_hours_per_year / 12
         aux2_str = str(round(fte_hours_per_year, 2)) if fte_hours_per_year != int(fte_hours_per_year) else str(int(fte_hours_per_year))
-        fte_coeff = mat.fte_requirements if mat.fte_requirements > 0 else 1.0
+        # No `else 1.0` fallback here: fte_requirements == 0 means this site's control
+        # room needs no FTE, and substituting 1.0 conjures FTE the source data denies
+        # (VBA ControlRoomFormulas yields 0 in that case). NLX1 carries 1.0, so the
+        # reference workbook is unaffected.
+        fte_coeff = mat.fte_requirements
         fte_val = shift_hours * fte_coeff / fte_monthly_hours if fte_monthly_hours > 0 else 0.0
         self.rows_12.append(PlanningRow(
             material_number='ZZZZZ_CONTROLROOM',

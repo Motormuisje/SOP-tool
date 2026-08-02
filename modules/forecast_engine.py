@@ -161,20 +161,34 @@ class ForecastEngine:
         # AUX2: average of months_forecast periods starting from aux2_anchor (months_actuals+1)
         # This is the Config initial_date period onward (e.g. "2025-12".."2026-11")
         aux2_anchor = self._offset_period(first, self.months_actuals + 1)
-        aux2_values = [
-            forecast_data[self._offset_period(aux2_anchor, i)]
-            for i in range(self.months_forecast)
-            if self._offset_period(aux2_anchor, i) in forecast_data
-        ]
+        aligned = getattr(self.data.config, 'forecast_align_to_month', True)
+        if aligned:
+            # Average the periods actually shown on the row, so "Avg Forecast"
+            # summarises the same months the Line 01 cells carry.
+            aux2_values = [forecast_data[p] for p in self.periods if p in forecast_data]
+        else:
+            aux2_values = [
+                forecast_data[self._offset_period(aux2_anchor, i)]
+                for i in range(self.months_forecast)
+                if self._offset_period(aux2_anchor, i) in forecast_data
+            ]
         aux_2 = round(sum(aux2_values) / len(aux2_values), 2) if aux2_values else 0.0
 
         # Monthly values: planning period i → forecast_data[aux2_anchor + i]
         # aux2_anchor = offset("2024-11", 13) = "2025-12" → sorted[13]
         # So planning "2026-01" (i=0) = forecast_data["2025-12"] = 536 ✓ (matches Excel)
-        ordered_vals = [
-            (period, forecast_data.get(self._offset_period(aux2_anchor, i), 0.0))
-            for i, period in enumerate(self.periods)
-        ]
+        #
+        # With forecast_align_to_month the period is used as its own key, so each
+        # planning month carries the forecast of that same calendar month. This
+        # deliberately departs from the VBA's positional block copy — see
+        # PlanningConfig.forecast_align_to_month.
+        if aligned:
+            ordered_vals = [(period, forecast_data.get(period, 0.0)) for period in self.periods]
+        else:
+            ordered_vals = [
+                (period, forecast_data.get(self._offset_period(aux2_anchor, i), 0.0))
+                for i, period in enumerate(self.periods)
+            ]
 
         # FIX 7: return exact float values; #,##0 formatting applied in Excel writer
         return aux_1, aux_2, ordered_vals

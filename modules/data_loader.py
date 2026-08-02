@@ -3,6 +3,8 @@ S&OP Planning Engine - Data Loader
 Reads ONLY raw input sheets (not the Planning sheet).
 """
 
+import re
+
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -15,6 +17,14 @@ from modules.models import (
     SafetyStockConfig, PlanningConfig, ProductType, ShiftSystem,
     ValuationParameters, SalesPriceItem, RawMaterialCost, MachineCost
 )
+
+# Some sites paste their SAP stock export as raw text, so numeric cells arrive
+# carrying a unit or currency and thousands separators:
+#   '2833.768 TO' | '15999 PC' | '27.00 M' | '2,895,386.20    EUR' | '- 93.72    EUR'
+# The minus sign may stand apart from the digits. The whitespace before the unit
+# is mandatory in this pattern: it keeps codes like '054C' (storage location) and
+# dates like '28.01.2027' from being read as numbers.
+_SAP_NUMBER_RE = re.compile(r"^\s*-?\s*[\d,]+(?:\.\d+)?(?:\s+[A-Za-z][A-Za-z0-9]{0,4})?\s*$")
 
 
 class DataLoader:
@@ -66,6 +76,9 @@ class DataLoader:
         # BOM cycles found in the workbook (BUGS.md M6): detected and warned
         # about, never auto-fixed — cascade numbers stay untouched.
         self.bom_cycle_warnings: List[List[str]] = []
+        # Numeric cells that could not be parsed (see _parse_sap_number). Surfaced
+        # rather than silently defaulted, because a silent 0 is silently wrong stock.
+        self.sap_number_warnings: List[Tuple[str, str]] = []
         # UoM guard (modules/uom_guard.py): kg-in-ton suspects found in the
         # loaded BOM, the confirmed conversion factors that were applied, and
         # recipes whose mass balance stays implausible. Populated by
@@ -191,6 +204,75 @@ class DataLoader:
         except (ValueError, TypeError):
             return default
 
+    @staticmethod
+    def _norm_material(value) -> str:
+        """Normalise a material number so it keys consistently across sheets.
+
+        Sheets differ in whether they store material numbers as text or as
+        numbers. When a sheet stores them numerically, pandas hands back
+        600004481.0, and `str()` turns that into '600004481.0' — which matches
+        nothing in the material master ('600004481'), so the row silently joins
+        to nothing. Whole numbers are therefore rendered in integral form.
+        """
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return str(value)
+        if isinstance(value, (int, np.integer)):
+            return str(int(value))
+        if isinstance(value, (float, np.floating)):
+            if pd.isna(value):
+                return ""
+            return str(int(value)) if float(value).is_integer() else str(value)
+        text = str(value).strip()
+        if re.fullmatch(r"-?\d+\.0+", text):  # already stringified as '600004481.0'
+            text = text.split(".")[0]
+        return text
+
+    def _parse_sap_number(self, value, default: float = 0.0, context: str = "") -> float:
+        """Read a numeric cell that may carry SAP unit/currency formatting.
+
+        Real numbers pass straight through, so workbooks that already store
+        numerics (NLX1, Winterswijk) parse exactly as before. Text that does not
+        match the SAP number shape is recorded in `sap_number_warnings` instead of
+        quietly becoming `default`: unlike `_safe_float`, this must never turn an
+        unreadable stock figure into a silent 0.
+        """
+        if value is None:
+            return default
+        if pd.api.types.is_scalar(value) and pd.isna(value):
+            return default
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return float(value)
+
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return default
+        try:
+            return float(text)  # plain numeric string
+        except ValueError:
+            pass
+        if not _SAP_NUMBER_RE.match(text):
+            self.sap_number_warnings.append((context, text))
+            return default
+        cleaned = re.sub(r"[A-Za-z]", "", text).replace(",", "")  # drop unit + thousands
+        cleaned = re.sub(r"\s+", "", cleaned)                     # '- 93.72' -> '-93.72'
+        try:
+            return float(cleaned)
+        except ValueError:
+            self.sap_number_warnings.append((context, text))
+            return default
+
+    def _report_sap_number_warnings(self, where: str):
+        if not self.sap_number_warnings:
+            return
+        print(f"  WARNING: {len(self.sap_number_warnings)} unreadable numeric cell(s) in {where}; "
+              f"treated as 0 — check the export formatting:")
+        for ctx, raw in self.sap_number_warnings[:5]:
+            print(f"    {ctx}: {raw!r}")
+
     def _load_config(self):
         try:
             df = pd.read_excel(self.excel_file, sheet_name='Config')
@@ -199,6 +281,7 @@ class DataLoader:
             forecast_actuals_months = 12
             site = "NLX1"
             unlimited_machine = ["PBA99"]
+            align_to_month = True  # Line 01 carries the forecast of its own month
 
             for col in df.columns:
                 if isinstance(col, datetime):
@@ -216,6 +299,8 @@ class DataLoader:
                     site = str(value)
                 elif param == "MachineUnlimitedCapacity" and value:
                     unlimited_machine = [m.strip() for m in str(value).split(',') if m.strip()]
+                elif param == "ForecastAlignToMonth" and value is not None:
+                    align_to_month = str(value).strip().lower() in ('1', 'true', 'yes', 'ja', 'x')
                 elif param == "PurchasedAndProducedMaterials" and value:
                     for entry in str(value).split(','):
                         parts = entry.strip().split(':')
@@ -224,7 +309,8 @@ class DataLoader:
 
             self.config = PlanningConfig(
                 initial_date=initial_date, forecast_months=forecast_months,
-                site=site, unlimited_capacity_machine=unlimited_machine
+                site=site, unlimited_capacity_machine=unlimited_machine,
+                forecast_align_to_month=align_to_month,
             )
             self.forecast_actuals_months = forecast_actuals_months
             self.periods = self.config.get_periods()
@@ -251,6 +337,8 @@ class DataLoader:
             machines = [m.strip() for m in str(ov['unlimited_machines']).split(',') if m.strip()]
             if machines:
                 self.config.unlimited_capacity_machine = machines
+        if ov.get('forecast_align_to_month') is not None:
+            self.config.forecast_align_to_month = bool(ov['forecast_align_to_month'])
         if ov.get('purchased_and_produced'):
             for entry in str(ov['purchased_and_produced']).split(','):
                 parts = entry.strip().split(':')
@@ -649,8 +737,9 @@ class DataLoader:
         # Record first period in the Forecast sheet for positional anchoring in ForecastEngine
         if period_columns:
             self.forecast_first_period = period_columns[0][1]
+        unmatched = []
         for _, row in df.iterrows():
-            mn = str(row.get('Material number', '')).strip()
+            mn = self._norm_material(row.get('Material number', ''))
             if not mn or mn == 'nan':
                 continue
             fd = {}
@@ -667,11 +756,18 @@ class DataLoader:
             mat = self.materials.get(mn)
             if mat and not mat.is_active:
                 continue  # Always skip inactive materials
+            if mat is None:
+                # Stored anyway (unchanged behaviour), but a forecast that joins to
+                # no material is never planned — surface it instead of losing it quietly.
+                unmatched.append(mn)
             if mat and fd is not None:
                 self.forecasts[mn] = fd if fd else {}
             elif fd:
                 self.forecasts[mn] = fd
         print(f"  Forecasts: {len(self.forecasts)} materials")
+        if unmatched:
+            print(f"  WARNING: {len(unmatched)} forecast row(s) match no material in the material "
+                  f"master — that demand is NOT planned: {unmatched[:5]}")
 
     def _load_stock_levels(self):
         df = pd.read_excel(self.excel_file, sheet_name='Stock level sheet')
@@ -683,11 +779,12 @@ class DataLoader:
             if self.config and self.config.site and plant and plant != self.config.site:
                 continue
             # VBA uses Unrestricted Stock only (not Total Stock which includes blocked)
-            total_qty = float(row.get('Unrestricted Stock', 0)) if pd.notna(row.get('Unrestricted Stock')) else 0
-            total_value = float(row.get('Total Value', 0)) if pd.notna(row.get('Total Value')) else 0
-            total_stock_qty = float(row.get('Total Stock', 0)) if pd.notna(row.get('Total Stock')) else 0
+            total_qty = self._parse_sap_number(row.get('Unrestricted Stock'), 0, f"{mat} Unrestricted Stock")
+            total_value = self._parse_sap_number(row.get('Total Value'), 0, f"{mat} Total Value")
+            total_stock_qty = self._parse_sap_number(row.get('Total Stock'), 0, f"{mat} Total Stock")
             # VBA ValueStartStockLevel uses column 17 = "Value of Unrestricted Stock"
-            value_unrestricted = float(row.get('Value of Unrestricted Stock', 0)) if pd.notna(row.get('Value of Unrestricted Stock')) else 0
+            value_unrestricted = self._parse_sap_number(row.get('Value of Unrestricted Stock'), 0,
+                                                       f"{mat} Value of Unrestricted Stock")
             
             self.stock_levels[mat] = self.stock_levels.get(mat, 0) + total_qty
             
@@ -699,6 +796,7 @@ class DataLoader:
             self.stock[mat]['Value Unrestricted'] += value_unrestricted
             
         print(f"  Stock levels: {len(self.stock_levels)}")
+        self._report_sap_number_warnings("Stock level sheet")
 
     # ===== Extract-file loaders (multi-file upload mode) =====
 
@@ -788,10 +886,11 @@ class DataLoader:
             plant = str(row.get('Plant', '')).strip() if pd.notna(row.get('Plant')) else ''
             if self.config and self.config.site and plant and plant != self.config.site:
                 continue
-            total_qty = float(row.get('Unrestricted Stock', 0)) if pd.notna(row.get('Unrestricted Stock')) else 0
-            total_value = float(row.get('Total Value', 0)) if pd.notna(row.get('Total Value')) else 0
-            total_stock_qty = float(row.get('Total Stock', 0)) if pd.notna(row.get('Total Stock')) else 0
-            value_unrestricted = float(row.get('Value of Unrestricted Stock', 0)) if pd.notna(row.get('Value of Unrestricted Stock')) else 0
+            total_qty = self._parse_sap_number(row.get('Unrestricted Stock'), 0, f"{mat} Unrestricted Stock")
+            total_value = self._parse_sap_number(row.get('Total Value'), 0, f"{mat} Total Value")
+            total_stock_qty = self._parse_sap_number(row.get('Total Stock'), 0, f"{mat} Total Stock")
+            value_unrestricted = self._parse_sap_number(row.get('Value of Unrestricted Stock'), 0,
+                                                       f"{mat} Value of Unrestricted Stock")
 
             self.stock_levels[mat] = self.stock_levels.get(mat, 0) + total_qty
 
@@ -802,6 +901,7 @@ class DataLoader:
             self.stock[mat]['Value Unrestricted'] += value_unrestricted
 
         print(f"  Stock levels (extract): {len(self.stock_levels)}")
+        self._report_sap_number_warnings("SAPUI5 Export")
 
     def _load_forecast_from_extract(self):
         """Load forecast data from extract file (S_OP_MST_Ankersmit_Forecast_extract), sheet 'Blad1'.

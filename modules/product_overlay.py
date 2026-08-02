@@ -509,6 +509,14 @@ def _inject_forecast(data, mn: str, p: dict) -> None:
     actuals = int(getattr(data, 'forecast_actuals_months', 0) or 0)
     first = getattr(data, 'forecast_first_period', None)
     fdict = data.forecasts.setdefault(mn, {})
+    if getattr(data.config, 'forecast_align_to_month', True):
+        # ForecastEngine keys Line 01 by calendar month, so write the added
+        # product's volumes under those same period keys. Using the positional
+        # anchor here would land them on the wrong month (or nowhere).
+        for period in periods:
+            value = volumes.get(period, flat if flat is not None else 0.0)
+            fdict[period] = float(value or 0.0)
+        return
     if first:
         anchor = ForecastEngine._offset_period(str(first), actuals + 1)
     else:

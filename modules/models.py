@@ -191,6 +191,19 @@ class PlanningConfig:
     forecast_months: int = 12
     site: str = "NLX1"
     unlimited_capacity_machine: List[str] = field(default_factory=lambda: ['PBA99'])
+    # Read the demand forecast by calendar month (default) instead of by column
+    # position.
+    #
+    # The VBA copies a fixed block of Forecast-sheet columns onto the Planning
+    # sheet (ForecastStartClmn = ForecastActualStartClmn + ForecastActualsMonths
+    # + 1). Where that block does not begin on the Config initial_date, the whole
+    # demand line lands off its own calendar month — measured at +1 month for
+    # NLX1 and +4 for NLK1, while NLU1 happened to line up. Line 01 must carry the
+    # forecast of the month in its own column, so month keying is the default.
+    #
+    # False restores the VBA's positional copy. Keep that only for reproducing a
+    # client workbook cell-for-cell during validation; it can misalign Line 01.
+    forecast_align_to_month: bool = True
     
     def get_periods(self) -> List[str]:
         periods = []

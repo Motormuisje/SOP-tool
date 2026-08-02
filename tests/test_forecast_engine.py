@@ -27,13 +27,17 @@ def _make_material(mat_num, name="Mat"):
     )
 
 
-def _make_data(forecasts, periods=None, first_period=None, materials=None):
+def _make_data(forecasts, periods=None, first_period=None, materials=None,
+               align_to_month=True):
     mats = materials or {m: _make_material(m) for m in forecasts}
     return SimpleNamespace(
         periods=PERIODS if periods is None else periods,
         forecasts=forecasts,
         materials=mats,
         forecast_first_period=first_period,
+        # forecast_align_to_month leeft op PlanningConfig; de engine leest
+        # hem via data.config met een veilige default.
+        config=SimpleNamespace(forecast_align_to_month=align_to_month),
     )
 
 
