@@ -5787,6 +5787,9 @@ function collectMasterDataset(dataset) {
                     pap[parts[0]] = n;
                 }
                 out[field] = pap;
+            } else if (field === 'site') {
+                if (!raw) return { error: 'Site (plantcode) mag niet leeg zijn.' };
+                out[field] = raw;
             } else if (field === 'forecast_months' || field === 'forecast_actuals_months') {
                 const n = parseLocaleNumber(raw || '0');
                 if (Number.isNaN(n) || n < 1) return { error: `Ongeldig aantal maanden bij ${field}.` };
@@ -13231,6 +13234,9 @@ async function uploadMasterFile(event) {
 
 async function _maybeAdoptUploadConfig(prevCfg, fileDefaults) {
     if (!fileDefaults || !prevCfg) return;
+    // Met een masterstore zijn de masterdata-tabellen de bron van waarheid;
+    // legacy-globals overnemen zou niets doen (gegate) en alleen verwarren.
+    if (prevCfg.master_store_version) return;
     const diffs = [];
     const pushDiff = (label, cur, incoming) => {
         const a = String(cur ?? '').trim();
