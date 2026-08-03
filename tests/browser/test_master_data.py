@@ -272,6 +272,22 @@ def test_master_config_and_fte_forms_round_trip(browser_page, golden_fixture_pat
             q('unlimited_capacity_machine').value = 'BTEST01, BTEST02';
             q('forecast_align_to_month').checked = !q('forecast_align_to_month').checked;
         }""")
+        # NL-invoer: decimale komma in de PAP-fractie parseert goed; een
+        # tikfout wordt afgewezen i.p.v. stil fractie 0,0 te worden.
+        pap_checks = page.evaluate('''() => {
+            const q = document.querySelector(
+                '#masterDatasetBody tr[data-master-field="purchased_and_produced"] .master-edit');
+            const orig = q.value;
+            q.value = 'MAT1:0,45, MAT2:0.8';
+            const ok = collectMasterDataset('config');
+            q.value = 'MAT1=0.45';
+            const bad = collectMasterDataset('config');
+            q.value = orig;
+            return { pap: ok.value && ok.value.purchased_and_produced,
+                     err: bad.error || '' };
+        }''')
+        assert pap_checks["pap"] == {"MAT1": 0.45, "MAT2": 0.8}
+        assert "MATERIAAL:fractie" in pap_checks["err"]
         with page.expect_response(
                 lambda r: "/api/master_data/config" in r.url
                 and r.request.method == "PATCH" and r.ok, timeout=60000):

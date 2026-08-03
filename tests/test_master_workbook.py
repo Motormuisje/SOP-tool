@@ -205,3 +205,35 @@ def test_store_cache_invalidated_after_save(tmp_path):
     assert master_store.get_current_master_record()['version'] == r1['version'] == 1
     r2 = master_store.save_master_store(path, master, previous=r1, edited=True)
     assert master_store.get_current_master_record()['version'] == r2['version'] == 2
+
+
+@pytest.mark.no_fixture
+def test_parse_pap_entries_accepts_decimal_comma_and_rejects_typos():
+    # NL-Excel: 'MAT1:0,45' splitste op de komma en werd stil fractie 0,0
+    # (= stil 100% inkoop). Nu: komma-decimalen goed parsen, tikfouten hard
+    # afwijzen i.p.v. stil overslaan, fractie buiten [0,1] afwijzen.
+    from modules.master_workbook import MasterWorkbookError, _parse_pap_entries
+
+    assert _parse_pap_entries('MAT1:0,45, MAT2:0.8') == {'MAT1': 0.45, 'MAT2': 0.8}
+    assert _parse_pap_entries('MAT1:1, MAT2:0') == {'MAT1': 1.0, 'MAT2': 0.0}
+    assert _parse_pap_entries('') == {}
+    for bad in ('MAT1=0.45', 'MAT1:0.4:5', ':0.4', 'MAT1:abc', 'MAT1:1,5', 'MAT1:-0.1'):
+        with pytest.raises(MasterWorkbookError):
+            _parse_pap_entries(bad)
+
+
+@pytest.mark.no_fixture
+def test_absorb_equivalents_treats_iso_date_forms_as_equal():
+    # Excel maakt van een opnieuw bevestigde datumcel een datetime; de parse
+    # levert dan '...T00:00:00' terwijl de store kaal 'JJJJ-MM-DD' kan
+    # dragen. Semantisch gelijk: geen diff, geen representatie-churn.
+    from modules.master_workbook import absorb_equivalents
+
+    assert absorb_equivalents('2026-01-01', '2026-01-01T00:00:00') == '2026-01-01'
+    assert absorb_equivalents('2026-01-01T00:00:00', '2026-01-01') == '2026-01-01T00:00:00'
+    prev = {'config': {'initial_date': '2026-01-01'}}
+    inc = {'config': {'initial_date': '2026-01-01T00:00:00'}}
+    assert absorb_equivalents(prev, inc)['config']['initial_date'] == '2026-01-01'
+    # Echte wijzigingen blijven wijzigingen.
+    assert absorb_equivalents('2026-01-01', '2026-02-01T00:00:00') == '2026-02-01T00:00:00'
+    assert absorb_equivalents('2026-01-01T12:30:00', '2026-01-01') == '2026-01-01'

@@ -5767,14 +5767,24 @@ function collectMasterDataset(dataset) {
             if (field === 'unlimited_capacity_machine') {
                 out[field] = raw ? raw.split(',').map(x => x.trim()).filter(Boolean) : [];
             } else if (field === 'purchased_and_produced') {
+                // Fragmenten zonder ':' zijn een afgeknipte decimale komma
+                // ('MAT1:0,45' → 'MAT1:0' + '45'): weer aan elkaar plakken.
+                const entries = [];
+                for (const frag of raw.split(',').map(x => x.trim())) {
+                    if (!frag) continue;
+                    if (!frag.includes(':') && entries.length) entries[entries.length - 1] += ',' + frag;
+                    else entries.push(frag);
+                }
                 const pap = {};
-                for (const pair of raw.split(',')) {
-                    const [m, f] = pair.split(':').map(x => (x || '').trim());
-                    if (m && f !== undefined && f !== '') {
-                        const n = parseLocaleNumber(f);
-                        if (Number.isNaN(n)) return { error: `Ongeldige fractie bij ${m}.` };
-                        pap[m] = n;
+                for (const entry of entries) {
+                    const parts = entry.split(':').map(x => x.trim());
+                    if (parts.length !== 2 || !parts[0]) {
+                        return { error: `"${entry}" is geen MATERIAAL:fractie-paar.` };
                     }
+                    const n = parseLocaleNumber(parts[1]);
+                    if (Number.isNaN(n)) return { error: `Ongeldige fractie bij ${parts[0]}.` };
+                    if (n < 0 || n > 1) return { error: `Fractie bij ${parts[0]} moet tussen 0 en 1 liggen.` };
+                    pap[parts[0]] = n;
                 }
                 out[field] = pap;
             } else if (field === 'forecast_months' || field === 'forecast_actuals_months') {

@@ -332,9 +332,9 @@ def create_config_blueprint(
                     if abs(float(old_pap.get(mat, -999999999)) - float(new_pap.get(mat, -999999999))) > 1e-9
                 })
                 # Ook bij een structurele wijziging op de OUDE engine zetten:
-                # de rebuild leest PAP engine-first, dus dit is wat de nieuwe
-                # engine straks meekrijgt. De gerichte herberekening is dan
-                # overbodig (de rebuild dekt alles).
+                # de gerichte (niet-structurele) herberekening leest de
+                # engine-data direct; de rebuild zelf leest sessie-eerst
+                # (het sessieveld hierboven is de bron van waarheid).
                 current_engine.data.purchased_and_produced = new_pap
                 if not structural_config_changed:
                     if changed_mats:

@@ -19,6 +19,7 @@ workbook from another site and detect edits based on a stale export.
 
 import dataclasses
 import math
+import re
 import typing
 from datetime import datetime
 from pathlib import Path
@@ -329,15 +330,50 @@ def _read_table(ws):
         yield _row_dict(headers, row)
 
 
-def _parse_config(raw: dict) -> dict:
+def _parse_pap_entries(raw_value) -> dict:
+    """Parse 'MAT:fractie, MAT:fractie' met NL-tolerantie en harde afwijzing.
+
+    Een decimale komma in de fractie ('MAT1:0,45') splitst op het eerste
+    gezicht in twee fragmenten; fragmenten zonder ':' worden daarom weer aan
+    hun voorganger geplakt. Malformed entries of fracties buiten [0, 1] geven
+    een MasterWorkbookError — stil overslaan maakte van een tikfout een
+    fractie 0,0 (= stil 100% inkoop) of liet de materiaalsplit verdwijnen."""
+    text = str(raw_value or '').strip()
+    if not text:
+        return {}
+    fragments = [f.strip() for f in text.split(',')]
+    entries = []
+    for frag in fragments:
+        if not frag:
+            continue
+        if ':' not in frag and entries:
+            entries[-1] += ',' + frag  # decimale komma weer aan elkaar
+        else:
+            entries.append(frag)
     pap = {}
-    for entry in str(raw.get('purchased_and_produced') or '').split(','):
-        parts = entry.strip().split(':')
-        if len(parts) == 2:
-            try:
-                pap[parts[0].strip()] = float(parts[1].strip())
-            except ValueError:
-                continue
+    for entry in entries:
+        parts = entry.split(':')
+        material = parts[0].strip() if parts else ''
+        if len(parts) != 2 or not material:
+            raise MasterWorkbookError(
+                f'Config: purchased_and_produced-onderdeel "{entry}" is geen '
+                f'"MATERIAAL:fractie"-paar.')
+        try:
+            fraction = float(parts[1].strip().replace(',', '.'))
+        except ValueError:
+            raise MasterWorkbookError(
+                f'Config: productiefractie bij {material} is geen getal '
+                f'("{parts[1].strip()}").')
+        if not 0.0 <= fraction <= 1.0:
+            raise MasterWorkbookError(
+                f'Config: productiefractie bij {material} moet tussen 0 en 1 '
+                f'liggen (was {fraction:g}).')
+        pap[material] = fraction
+    return pap
+
+
+def _parse_config(raw: dict) -> dict:
+    pap = _parse_pap_entries(raw.get('purchased_and_produced'))
     initial_date = raw.get('initial_date')
     if isinstance(initial_date, datetime):
         initial_date = initial_date.isoformat()
@@ -458,6 +494,8 @@ def _parse_purchase(ws) -> dict:
 
 _IDENTITY_KEYS = ('material_number', 'machine_code')
 
+_ISO_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}')
+
 
 def _identity(item):
     if isinstance(item, dict):
@@ -497,6 +535,15 @@ def absorb_equivalents(previous, incoming):
             and not isinstance(incoming, bool) and not isinstance(previous, bool)
             and math.isclose(float(incoming), float(previous),
                              rel_tol=1e-9, abs_tol=1e-12)):
+        return previous
+    if (isinstance(incoming, str) and isinstance(previous, str)
+            and _ISO_DATE_RE.match(incoming) and _ISO_DATE_RE.match(previous)
+            and incoming[:10] == previous[:10]
+            and incoming[10:] in ('', 'T00:00:00')
+            and previous[10:] in ('', 'T00:00:00')):
+        # '2026-01-01' vs '2026-01-01T00:00:00': Excel maakt van een opnieuw
+        # bevestigde datumcel een datetime; semantisch hetzelfde moment, dus
+        # geen diff en geen representatie-churn in de store.
         return previous
     return incoming
 

@@ -102,6 +102,40 @@ def test_get_config_overrides_store_gates_legacy_globals(tmp_path):
     assert overrides["forecast_months"] == 18
 
 
+def test_session_overrides_with_store_drop_engine_snapshots(tmp_path):
+    # Met masterstore: masterdata-tabellen zijn de bron voor VP en de PAP-
+    # default. De engine-snapshot (met de OUDE masterwaarden) mag dus niet
+    # als override terugkomen — anders bereikt een master-wijziging
+    # bestaande sessies nooit en resurrecteert een verwijderde PAP-split.
+    _seed_master_store(tmp_path)
+    sess = {"engine": _engine()}  # engine heeft PAP- en (geen) VP-snapshot
+
+    ov = get_session_config_overrides(sess, {})
+    assert "purchased_and_produced" not in ov
+    assert "valuation_params" not in ov
+
+    # Sessie-eigen wat-als blijft winnen ('' = bewust leeggemaakt).
+    sess["purchased_and_produced"] = "MAT-1:0.9"
+    assert get_session_config_overrides(sess, {})["purchased_and_produced"] == "MAT-1:0.9"
+    sess["purchased_and_produced"] = ""
+    assert get_session_config_overrides(sess, {})["purchased_and_produced"] == ""
+
+    # Global-spiegel (laatst actieve sessie) besmet geen verse sessies.
+    ov = get_session_config_overrides({"engine": None},
+                                      {"purchased_and_produced": "MAT-9:0.1",
+                                       "valuation_params": {"1": "5"}})
+    assert "purchased_and_produced" not in ov
+    assert "valuation_params" not in ov
+
+
+def test_session_overrides_storeless_keep_engine_first_vp():
+    # Storeless (geen record op het geisoleerde pad): gedrag van vanouds —
+    # de engine-snapshot is de beste bron, de global de terugval.
+    sess = {"engine": _engine()}
+    ov = get_session_config_overrides(sess, {"purchased_and_produced": "MAT-9:0.1"})
+    assert ov["purchased_and_produced"] == "MAT-1:0.5"  # engine-snapshot wint
+
+
 def test_resolve_months_forecast_prefers_store_then_global_then_params(tmp_path):
     # Het tweede horizonkanaal (build_clean_engine_for_session) volgt dezelfde
     # bronregel als get_config_overrides: store > legacy global (alleen

@@ -41,11 +41,16 @@ def get_config_overrides(global_config: dict) -> dict:
         _months = ((_record.get('master') or {}).get('config') or {}).get('forecast_months')
         if _months:
             ov['forecast_months'] = int(_months)
-    if global_config.get('purchased_and_produced'):
-        ov['purchased_and_produced'] = global_config['purchased_and_produced']
-    vp = global_config.get('valuation_params')
-    if vp and any(float(v or 0) != 0 for v in vp.values()):
-        ov['valuation_params'] = vp
+    if _record is None:
+        # Idem PAP en VP: de global is een spiegel van de laatst actieve
+        # sessie; mét store zou een verse sessie daar andermans wat-als van
+        # erven en zou de spiegel de masterdefault overschaduwen. Sessie-
+        # overrides reizen via get_session_config_overrides, niet hierlangs.
+        if global_config.get('purchased_and_produced'):
+            ov['purchased_and_produced'] = global_config['purchased_and_produced']
+        vp = global_config.get('valuation_params')
+        if vp and any(float(v or 0) != 0 for v in vp.values()):
+            ov['valuation_params'] = vp
     fc_defaults = global_config.get('forecast_defaults')
     if fc_defaults and (fc_defaults.get('default') not in (None, '') or fc_defaults.get('per_material')):
         ov['forecast_defaults'] = fc_defaults
@@ -78,31 +83,43 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
     if sess is None:
         return ov
     engine_data = getattr(sess.get('engine'), 'data', None)
-    vp_obj = getattr(engine_data, 'valuation_params', None)
-    if vp_obj is not None:
-        ov['valuation_params'] = {
-            '1': vp_obj.direct_fte_cost_per_month,
-            '2': vp_obj.indirect_fte_cost_per_month,
-            '3': vp_obj.overhead_cost_per_month,
-            '4': vp_obj.sga_cost_per_month,
-            '5': vp_obj.depreciation_per_year,
-            '6': vp_obj.net_book_value,
-            '7': vp_obj.days_sales_outstanding,
-            '8': vp_obj.days_payable_outstanding,
-        }
-    elif sess.get('valuation_params'):
-        ov['valuation_params'] = sess['valuation_params']
+    from ui.master_store import get_current_master_record
+    _store_exists = get_current_master_record() is not None
 
-    pap = getattr(engine_data, 'purchased_and_produced', None)
-    if pap is not None:
-        ov['purchased_and_produced'] = format_purchased_and_produced(pap)
-    elif sess.get('purchased_and_produced') is not None:
-        # Cold rebuild (restart/warmup): use the session's persisted PAP
-        # instead of falling through to the last-active session's value in
-        # the shared global config. '' means DELIBERATELY CLEARED and must
-        # override the global value too (parses to an empty dict), so only
-        # None (field never persisted) falls through.
-        ov['purchased_and_produced'] = sess['purchased_and_produced']
+    # VP: mét masterstore zijn de masterdata-tabellen de enige VP-editor.
+    # Geen engine-/sessiesnapshot doorsturen — die bevat de OUDE waarden en
+    # zou elke master-VP-wijziging bij rebuild terugdraaien (hydrate/overlay
+    # leveren de actuele waarden). Storeless: engine-first zoals vanouds.
+    if not _store_exists:
+        vp_obj = getattr(engine_data, 'valuation_params', None)
+        if vp_obj is not None:
+            ov['valuation_params'] = {
+                '1': vp_obj.direct_fte_cost_per_month,
+                '2': vp_obj.indirect_fte_cost_per_month,
+                '3': vp_obj.overhead_cost_per_month,
+                '4': vp_obj.sga_cost_per_month,
+                '5': vp_obj.depreciation_per_year,
+                '6': vp_obj.net_book_value,
+                '7': vp_obj.days_sales_outstanding,
+                '8': vp_obj.days_payable_outstanding,
+            }
+        elif sess.get('valuation_params'):
+            ov['valuation_params'] = sess['valuation_params']
+
+    # PAP: het sessieveld is de wat-als-bron ('' betekent BEWUST leeg; alleen
+    # een nooit-gezet veld (None) valt door). De PAP-editor schrijft sessie
+    # én engine, dus sessie-eerst is ook voor live sessies correct. Mét store
+    # valt een nooit-gezet veld door naar de masterdefault via de overlay —
+    # de engine-snapshot bevat de oude default en zou master-PAP-wijzigingen
+    # (incl. verwijderde splits) bij elke rebuild terugdraaien. Storeless
+    # blijft de snapshot de terugval voor sessies van vóór de sessieveld-era.
+    sess_pap = sess.get('purchased_and_produced')
+    if sess_pap is not None:
+        ov['purchased_and_produced'] = sess_pap
+    elif not _store_exists:
+        pap = getattr(engine_data, 'purchased_and_produced', None)
+        if pap is not None:
+            ov['purchased_and_produced'] = format_purchased_and_produced(pap)
 
     # Forecast defaults are per-session state: the session dict is
     # authoritative, a live engine's own config_overrides is the fallback.
