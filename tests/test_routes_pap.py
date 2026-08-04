@@ -133,3 +133,21 @@ def test_delete_pap_removes_mapping_and_returns_recalculated_payload(pap_route_a
     assert pap_route_app.recalc_calls == [(pap_route_app.engine, "MAT-1")]
     assert pap_route_app.finish_calls == [pap_route_app.engine]
     assert pap_route_app.save_calls
+
+
+def test_pap_edits_persist_on_the_session(pap_route_app):
+    """Het sessieveld is de bron van waarheid voor elke herbouw. Zonder deze
+    write bestond een PAP-wijziging alleen op de warme engine: met een
+    masterstore won de masterdefault bij de eerstvolgende rebuild, dus een
+    toegevoegde split verdween en een verwijderde kwam stil terug."""
+    sess = pap_route_app.sess
+    res = pap_route_app.client.post('/api/pap',
+                                    json={'material_number': 'MAT-2', 'fraction': 0.6})
+    assert res.status_code == 200
+    assert sess['purchased_and_produced'] == pap_route_app.global_config['purchased_and_produced']
+    assert 'MAT-2:0.6' in sess['purchased_and_produced']
+
+    res = pap_route_app.client.delete('/api/pap/MAT-1')
+    assert res.status_code == 200
+    assert 'MAT-1' not in sess['purchased_and_produced']
+    assert 'MAT-2:0.6' in sess['purchased_and_produced']

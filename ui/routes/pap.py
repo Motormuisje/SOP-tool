@@ -19,6 +19,18 @@ def create_pap_blueprint(
 ) -> Blueprint:
     bp = Blueprint('pap', __name__)
 
+    def _persist_session_pap(sess):
+        """Schrijf de nieuwe PAP-set ook naar de SESSIE.
+
+        Het sessieveld is de bron van waarheid voor elke herbouw (rebuild,
+        sessiewissel, herstart-warmup). Zonder deze write bestond de
+        wijziging alleen op de warme engine en in de gedeelde global: met
+        een masterstore won de masterdefault bij de eerstvolgende herbouw,
+        waardoor een toegevoegde split verdween en een verwijderde split
+        stil terugkwam."""
+        if sess is not None:
+            sess['purchased_and_produced'] = global_config['purchased_and_produced']
+
     def _pap_response(current_engine):
         results_dict = {
             line_type: [row.to_dict() for row in rows]
@@ -67,6 +79,7 @@ def create_pap_blueprint(
         global_config['purchased_and_produced'] = format_purchased_and_produced(
             current_engine.data.purchased_and_produced
         )
+        _persist_session_pap(sess)
         recalc_pap_material(current_engine, mat)
         finish_pap_recalc(current_engine)
         save_global_config()
@@ -83,6 +96,7 @@ def create_pap_blueprint(
         global_config['purchased_and_produced'] = format_purchased_and_produced(
             current_engine.data.purchased_and_produced
         )
+        _persist_session_pap(sess)
         recalc_pap_material(current_engine, material_number)
         finish_pap_recalc(current_engine)
         save_global_config()
