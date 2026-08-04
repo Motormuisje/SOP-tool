@@ -355,3 +355,4 @@ def test_full_product_wizard_add_lands_in_all_datasets(md_app):
     assert res.get_json()['action'] == 'updated'
     m = master_store.get_current_master_record()['master']
     assert m['safety_stock']['M9']['safety_stock'] == 60.0
+

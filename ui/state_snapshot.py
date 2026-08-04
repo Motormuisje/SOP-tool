@@ -147,6 +147,10 @@ def snapshot_engine_state(engine, shift_hours_lookup) -> dict:
         'valuation_params': vp_snapshot,
         'purchased_and_produced': pap_snapshot,
         'machines': machines_snapshot,
+        # F2-CF: welke machinecombinaties aan stonden. Zonder dit veld leek
+        # Reset te werken (regels gingen terug) terwijl de werkbank op de
+        # gecombineerde bezetting bleef staan.
+        'active_combinations': list(getattr(engine, 'active_combinations', None) or []),
     }
 
 
@@ -287,6 +291,12 @@ def restore_engine_state(engine, snapshot: dict, global_config: dict) -> None:
             machine.oee = float(snap.get('oee', machine.oee))
             machine.availability_by_period = dict(snap.get('availability_by_period') or {})
             machine.shift_hours_override = snap.get('shift_hours_override')
+
+    # Snapshots van vóór dit veld kennen geen combinaties: dan niets doen in
+    # plaats van naar leeg terugzetten (dat zou een actieve combinatie stil
+    # uitzetten bij een Reset naar een oude baseline).
+    if 'active_combinations' in snapshot:
+        engine.active_combinations = list(snapshot.get('active_combinations') or [])
 
 
 def ensure_reset_baseline(sess, engine, shift_hours_lookup) -> None:

@@ -68,6 +68,48 @@ SHIFT_HOURS = {
 # FTE hours per year
 FTE_HOURS_PER_YEAR = 1492
 
+# F2-CF FTE parameters. `fte_hours_per_year` (the 1492 above) stays the leading
+# number for every calculation; the derivation fields below only document how
+# the client reaches it and are shown as an aid in the workbench. Changing a
+# derivation field therefore never changes a planning number by itself —
+# `utilization_rate` is the one exception: it scales AVAILABLE FTE (supply),
+# not required FTE.
+FTE_PARAM_DEFAULTS = {
+    'utilization_rate': 0.85,
+    'gross_hours_per_year': 2080.0,
+    'leave_hours_per_year': 0.0,
+    'adv_hours_per_year': 0.0,
+    'holiday_hours_per_year': 0.0,
+    'illness_pct': 0.0,
+    'training_pct': 0.0,
+}
+
+
+def derive_effective_fte_hours(params: Dict[str, float]) -> float:
+    """Bruto → effectieve uren per FTE per jaar, zoals het klantmodel rekent.
+
+    base = bruto − verlof − ADV − feestdagen
+    netto = base − base×ziekte% − base×training%  =  base × (1 − ziekte% − training%)
+
+    Let op de vorm: het klantmodel (blad 'FTE' van 'OEE model MTO APEX
+    voorbeeld.xlsx') trekt BEIDE percentages van DEZELFDE basis af; het
+    stapelt ze niet. Met 2080 − 224 − 112 − 48 = 1696 geeft dat
+    1696 − 169,60 − 33,92 = 1492,48 — het getal dat het model als
+    'Working hours per FTE per year' voert. Achtereenvolgens
+    vermenigvuldigen (×0,90 ×0,98) zou 1495,87 geven en dus 3,4 uur per FTE
+    per jaar te veel.
+
+    Puur een afleidingshulp: de aanroeper vergelijkt de uitkomst met het
+    ingestelde eindgetal en toont het verschil. Nooit stil substitueren.
+    """
+    gross = float(params.get('gross_hours_per_year') or 0.0)
+    base = gross - float(params.get('leave_hours_per_year') or 0.0) \
+        - float(params.get('adv_hours_per_year') or 0.0) \
+        - float(params.get('holiday_hours_per_year') or 0.0)
+    deduction = float(params.get('illness_pct') or 0.0) \
+        + float(params.get('training_pct') or 0.0)
+    return max(base * (1.0 - deduction), 0.0)
+
 
 @dataclass
 class Material:
@@ -298,3 +340,141 @@ class MachineCost:
     plant_code: str
     cost_center: str
     variable_cost_per_hour: float  # Activity type 50
+
+
+# ── F2-CF: capacity & FTE workbench master data ─────────────────────────────
+# These are master data in the same sense as Machine/SafetyStockConfig: they
+# are edited in the app and the master workbook, never derived from a monthly
+# extract. The FTE engine (modules/fte_engine.py) is their only consumer, so
+# adding them changes no existing planning line.
+
+
+@dataclass
+class StaffingNorm:
+    """Operators needed per running hour of a machine group or machine.
+
+    Mirrors the '# FTE Staffing' column of the client OEE/FTE model: how many
+    people a group needs while it runs, independent of how many hours it runs.
+    ``scope`` decides whether ``code`` is a machine-group id (the ZZ-material
+    that represents the group) or a single machine code; machine-level norms
+    win over the group norm for that machine.
+    """
+    code: str
+    operators_per_hour: float
+    scope: str = 'group'  # 'group' | 'machine'
+    function_group: str = ''
+    description: str = ''
+
+
+@dataclass
+class LaborRate:
+    """Employer cost of one FTE per year for a function group.
+
+    ``function_group`` is free text shared with StaffingNorm/IndirectActivity;
+    the reserved name 'default' is the site-wide fallback used until the FIN
+    breakdown arrives.
+    """
+    function_group: str
+    cost_per_fte_per_year: float
+    description: str = ''
+
+
+@dataclass
+class MachineCombination:
+    """Machines run together by one shared operator pool.
+
+    A combination is a master-data DEFINITION: which machines can be combined,
+    how many operators the combination then needs, and what sharing an operator
+    does to throughput. Which combinations are ACTIVE is scenario state per
+    session, not master data.
+
+    ``throughput_factor`` applies to every member; ``throughput_factor_by_machine``
+    overrides it per machine code (a slaved machine may lose more than its
+    partner). Factor 1.0 = no throughput effect.
+    """
+    combination_id: str
+    name: str = ''
+    machine_codes: List[str] = field(default_factory=list)
+    operators: float = 0.0
+    throughput_factor: float = 1.0
+    throughput_factor_by_machine: Dict[str, float] = field(default_factory=dict)
+    function_group: str = ''
+    description: str = ''
+    is_active: bool = True
+
+    def factor_for(self, machine_code: str) -> float:
+        return float(self.throughput_factor_by_machine.get(machine_code,
+                                                           self.throughput_factor))
+
+
+@dataclass
+class IndirectActivity:
+    """Labour that is not driven by machine routing hours.
+
+    One row per activity, with an explicit driver so the FTE engine never has
+    to guess how to scale it:
+
+    - ``fixed``       — a standing crew. ``fte_per_shift`` × shifts, or
+                        ``fte_per_period`` when the crew is stated directly.
+    - ``per_ton``     — ``hours_per_unit`` hours per ton of ``volume_source``.
+    - ``per_truck``   — tons ÷ ``tons_per_truck`` = trucks, × ``hours_per_unit``.
+    - ``per_machine`` — ``machine_count`` ÷ ``machines_per_fte`` (maintenance).
+
+    Cost fields are informational for the value cascade (Fase B); the FTE
+    engine only produces hours and FTE.
+    """
+    activity_id: str
+    name: str = ''
+    driver: str = 'fixed'  # 'fixed' | 'per_ton' | 'per_truck' | 'per_machine'
+    fte_per_period: float = 0.0
+    fte_per_shift: float = 0.0
+    shifts: float = 0.0
+    hours_per_unit: float = 0.0
+    tons_per_truck: float = 0.0
+    machines_per_fte: float = 0.0
+    machine_count: float = 0.0
+    cost_per_machine_per_year: float = 0.0
+    opex_pct: float = 0.0
+    function_group: str = ''
+    # Free text describing where this activity and its numbers come from.
+    # Carries the seed's provenance ("klantmodel rij 185: 14.645 t ÷ 22 t/truck
+    # …") so nobody has to reverse-engineer a norm from a bare number.
+    description: str = ''
+    # Which volume feeds a per_ton/per_truck driver: a material number, a
+    # product family, or '' for the site total.
+    volume_source: str = ''
+    # Which planning line that volume is read from. Empty = the demand
+    # forecast (trucks and handling follow what leaves the site). Set it to
+    # '06. Production plan' for an activity that scales with what is made.
+    volume_line: str = ''
+    is_active: bool = True
+
+
+@dataclass
+class ThroughputOverride:
+    """Master-data override of the effective throughput of machine × product.
+
+    SAP routing stays the calculation source; this is the escape hatch for
+    machine/product pairs where the client's MES or PEER norm is authoritative.
+    ``source`` is the provenance label shown in the workbench ('MES', 'PEER',
+    'SAP', or free text).
+    """
+    machine_code: str
+    material_number: str
+    throughput_t_per_hour: float
+    source: str = ''
+    note: str = ''
+
+
+@dataclass
+class BenchmarkThroughput:
+    """Measured / peer throughput shown next to the norm — never calculated with.
+
+    Feeds the workbench's 'actual vs norm' column (MES_OEE Mills, PEER_Capacity).
+    """
+    machine_code: str
+    material_number: str = ''
+    mes_t_per_hour: float = 0.0
+    peer_t_per_hour: float = 0.0
+    mes_oee: float = 0.0
+    note: str = ''

@@ -15,7 +15,9 @@ from collections import defaultdict
 from modules.models import (
     Material, BOMItem, RoutingItem, Machine, MachineGroup,
     SafetyStockConfig, PlanningConfig, ProductType, ShiftSystem,
-    ValuationParameters, SalesPriceItem, RawMaterialCost, MachineCost
+    ValuationParameters, SalesPriceItem, RawMaterialCost, MachineCost,
+    BenchmarkThroughput, FTE_PARAM_DEFAULTS, IndirectActivity, LaborRate,
+    MachineCombination, StaffingNorm, ThroughputOverride,
 )
 
 # Some sites paste their SAP stock export as raw text, so numeric cells arrive
@@ -67,6 +69,17 @@ class DataLoader:
         self.fte_hours_per_year: float = 1492
         self.shift_hours: Dict[str, float] = {}
         self.default_shift_name: str = '3-shift system'  # VBA default: FTE sheet row 4 (second dropdown option)
+        # F2-CF master data. Empty on the xlsm path (the legacy workbook has no
+        # sheets for them); filled by the app-managed master store. The FTE
+        # engine is the only consumer, so an empty set means "no workbench
+        # numbers", never a changed planning number.
+        self.fte_params: Dict[str, float] = dict(FTE_PARAM_DEFAULTS)
+        self.staffing_norms: Dict[str, StaffingNorm] = {}
+        self.labor_rates: Dict[str, LaborRate] = {}
+        self.machine_combinations: Dict[str, MachineCombination] = {}
+        self.indirect_activities: Dict[str, IndirectActivity] = {}
+        self.throughput_overrides: Dict[str, ThroughputOverride] = {}
+        self.benchmark_throughput: Dict[str, BenchmarkThroughput] = {}
         self.purchase_lead_times: Dict[str, int] = {}
         self.purchase_moq: Dict[str, float] = {}
         self.purchase_actuals: Dict[str, Dict[str, float]] = {}

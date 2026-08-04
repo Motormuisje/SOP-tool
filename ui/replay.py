@@ -18,6 +18,19 @@ def get_value_aux_override_values(sess) -> dict:
     return overrides
 
 
+def recalculate_fte_results(engine, sess=None) -> None:
+    """Rebuild the capacity & FTE workbench (F2-CF) for this session.
+
+    The active machine combinations are session state, so they are pushed in
+    on every recalculation rather than kept on the engine — an engine rebuilt
+    after a restart would otherwise start with an empty set while the session
+    still says a combination is on.
+    """
+    if not hasattr(engine, 'recalculate_fte'):
+        return
+    engine.recalculate_fte((sess or {}).get('active_combinations') or [])
+
+
 def recalculate_value_results(engine, sess=None) -> None:
     aux_overrides = get_value_aux_override_values(sess)
     engine.value_engine = ValuePlanningEngine(
@@ -27,6 +40,9 @@ def recalculate_value_results(engine, sess=None) -> None:
     )
     engine.value_results = engine.value_engine.calculate()
     engine._iq_cache = None
+    # The workbench reads the finished rows, so it follows every cascade that
+    # ends here — which is all of them (edits, overrides, replays, rebuilds).
+    recalculate_fte_results(engine, sess)
 
 
 def replay_pending_edits(
@@ -52,6 +68,9 @@ def replay_pending_edits(
             recalculate_value_results(engine, sess)
         if machine_overrides_present and apply_machine_overrides(engine, sess.get('machine_overrides') or {}):
             recalculate_capacity_and_values(engine, sess)
+        # De werkbank hangt aan sessie-staat (combinaties) die een verse run
+        # niet per se meekreeg; altijd bijwerken, ook zonder edits.
+        recalculate_fte_results(engine, sess)
         return
 
     for key, edit in pending.items():
@@ -87,3 +106,4 @@ def replay_pending_edits(
 
     if overrides_present:
         recalculate_value_results(engine, sess)
+    recalculate_fte_results(engine, sess)

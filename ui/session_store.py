@@ -74,6 +74,13 @@ def save_sessions_to_disk(
                 if engine is not None
                 else sess.get('machine_overrides', {})
             ),
+            # Actieve machinecombinaties (F2-CF): per-sessie scenario-staat,
+            # live engine wint (die kreeg de laatste wissel), anders de sessie.
+            'active_combinations': list(
+                getattr(engine, 'active_combinations', None)
+                if engine is not None and getattr(engine, 'active_combinations', None) is not None
+                else (sess.get('active_combinations') or [])
+            ),
             # L4 starting stock (Dict[str, float]) and L7/L9/L11/L12 capacity
             # (Dict[str, Dict[str, Dict[str, float]]]) — both JSON-safe.
             'inventory_overrides': sess.get('inventory_overrides', {}),
@@ -175,6 +182,8 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 'pending_edits': data.get('pending_edits', {}),
                 'value_aux_overrides': data.get('value_aux_overrides', {}),
                 'machine_overrides': data.get('machine_overrides', {}),
+                # [] voor storebestanden van vóór dit veld.
+                'active_combinations': data.get('active_combinations') or [],
                 # Default to {} (not None) for sessions written before these
                 # fields existed — downstream code uses dict.setdefault and
                 # would crash on None.

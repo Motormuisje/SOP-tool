@@ -9,6 +9,8 @@ from typing import Callable
 from flask import Blueprint, jsonify, request, send_file
 
 from modules.models import LineType
+from ui.replay import recalculate_fte_results
+from ui.state_snapshot import apply_machine_overrides
 
 # Line types whose pending edits live in sess['capacity_overrides'] —
 # must match the branches in ui.volume_change.apply_volume_change.
@@ -182,6 +184,13 @@ def create_scenarios_blueprint(
             'value_aux_overrides': json.loads(json.dumps(active_session.get('value_aux_overrides', {}))),
             'valuation_params': {str(k): float(v) for k, v in (global_config.get('valuation_params') or {}).items()},
             'purchased_and_produced': global_config.get('purchased_and_produced', ''),
+            # Machine-overrides (OEE, beschikbaarheid, ploeguren) horen bij de
+            # scenario-staat: zonder dit veld gaven twee scenario's na een
+            # herbouw dezelfde capaciteit, want de overrides bleven van de
+            # sessie. Combinaties (F2-CF) zijn om dezelfde reden scenario-staat.
+            'machine_overrides': json.loads(json.dumps(
+                active_session.get('machine_overrides') or {})),
+            'active_combinations': list(active_session.get('active_combinations') or []),
             # Dynamic products active at save time (Fase 3). Loading does NOT
             # restore them (that would be a structural rebuild) — the list is
             # recorded so load can WARN when it no longer matches the session.
@@ -239,6 +248,21 @@ def create_scenarios_blueprint(
         sess['redo_stack'] = []
         rebuild_volume_caches_from_results(current_engine)
 
+        # Machine-overrides en actieve combinaties horen bij het scenario.
+        # Een scenario van vóór dit veld weet het niet: die overrides dan
+        # WISSEN zou stil capaciteit veranderen bij de eerstvolgende herbouw,
+        # dus behouden we ze en zeggen we het erbij.
+        legacy_scenario_warning = None
+        if 'machine_overrides' in sc:
+            sess['machine_overrides'] = json.loads(json.dumps(sc.get('machine_overrides') or {}))
+            apply_machine_overrides(current_engine, sess['machine_overrides'])
+        elif sess.get('machine_overrides'):
+            legacy_scenario_warning = (
+                'Dit scenario is opgeslagen voordat machine-overrides werden '
+                'meegeschreven. De huidige overrides (OEE, beschikbaarheid, '
+                'ploeguren) blijven actief en kunnen afwijken van het scenario.')
+        sess['active_combinations'] = list(sc.get('active_combinations') or [])
+
         sc_vp = sc.get('valuation_params')
         restored_vp = None
         if sc_vp and getattr(current_engine, 'data', None) is not None:
@@ -251,6 +275,10 @@ def create_scenarios_blueprint(
             pap_dict = parse_purchased_and_produced(sc_pap) if isinstance(sc_pap, str) else dict(sc_pap)
             current_engine.data.purchased_and_produced = pap_dict
             global_config['purchased_and_produced'] = format_purchased_and_produced(pap_dict)
+
+        # De werkbank leest de (nu herstelde) regels; zonder deze herberekening
+        # bleef het tabblad Capaciteit & FTE op de vorige scenario-stand staan.
+        recalculate_fte_results(current_engine, sess)
 
         results_dict = {
             line_type: [row.to_dict() for row in rows]
@@ -299,6 +327,8 @@ def create_scenarios_blueprint(
             'value_aux_overrides': sess.get('value_aux_overrides', {}),
         }
         warnings = _added_products_warnings(sc, sess)
+        if legacy_scenario_warning:
+            warnings.append(legacy_scenario_warning)
         if warnings:
             resp['warnings'] = warnings
         if restored_vp is not None:

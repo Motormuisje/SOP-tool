@@ -21,7 +21,7 @@ _master_mutation_lock = threading.Lock()
 from flask import Blueprint, jsonify, request
 from werkzeug.utils import secure_filename
 
-from modules.master_data import hydrate_loader, serialize_master
+from modules.master_data import FTE_DATASETS, hydrate_loader, serialize_master
 from ui import master_mirror, master_store
 
 # Datasets exposed for view/edit, with their expected container type.
@@ -36,6 +36,8 @@ _DATASETS = {
     'material_costs': dict,
     'machine_costs': dict,
     'valuation_params': (dict, type(None)),
+    # F2-CF (capaciteit & FTE-werkbank): keyed dicts, zelfde PATCH-contract.
+    **dict.fromkeys(FTE_DATASETS, dict),
 }
 
 
@@ -77,7 +79,7 @@ def _workbook_diff(previous: dict, incoming: dict) -> dict:
     dataset_changes = {}
     for key in ('config', 'fte', 'machines', 'safety_stock', 'purchase',
                 'sales_prices', 'material_costs', 'machine_costs',
-                'valuation_params'):
+                'valuation_params', *FTE_DATASETS):
         if (previous.get(key) or None) != (incoming.get(key) or None):
             dataset_changes[key] = True
     return {
@@ -342,6 +344,13 @@ def create_master_data_blueprint(
         incoming['purchase']['actuals'] = dict(
             (previous.get('purchase') or {}).get('actuals') or {})
 
+        # Werkboeken die vóór de F2-CF-bladen zijn geëxporteerd missen die
+        # bladen. De import is een full-replace, dus zonder deze stap wist een
+        # oude kopie stilzwijgend de bemensings-, loon- en combinatiedata.
+        for dataset in FTE_DATASETS:
+            if dataset not in incoming and dataset in previous:
+                incoming[dataset] = previous[dataset]
+
         # Excel-precisieverlies ('' vs None, 15-cijferige floats) terugzetten
         # naar de exacte store-waarde: een ongewijzigde round-trip geeft een
         # lege diff en muteert de store niet.
@@ -501,7 +510,6 @@ def create_master_data_blueprint(
         expected = _DATASETS[dataset]
         if not isinstance(value, expected):
             return jsonify({'error': f'Ongeldig type voor "{dataset}".'}), 400
-
         candidate = dict(record.get('master') or {})
         candidate[dataset] = value
         try:

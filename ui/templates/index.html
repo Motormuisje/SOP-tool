@@ -834,6 +834,7 @@
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('planning',this)">Planning</button>
             <button id="valuesTabBtn" class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('values',this)">Values Planning <span id="valuesTabBadge" class="tab-count-badge">0</span></button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('capacity',this)">Machines</button>
+            <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('fte',this)">Capaciteit &amp; FTE</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('inventory',this)">Inventory</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" id="momTabBtn" onclick="showTab('mom',this)">MoM</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('log',this)">Log</button>
@@ -1292,6 +1293,78 @@
                     </div>
                 </div>
                 <div class="overflow-auto"><table class="data-table w-full"><thead id="capHead"></thead><tbody id="capBody"><tr><td class="text-center p-4 text-slate-500">Run calculations</td></tr></tbody></table></div>
+            </div>
+        </div>
+
+        <!-- Capaciteit & FTE Tab (F2-CF werkbank) -->
+        <div id="fte-tab" class="tab-content hidden">
+            <div id="fteEmpty" class="card rounded-xl p-6 text-slate-400 text-sm">Run calculations</div>
+
+            <div id="fteBody" class="hidden">
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">FTE benodigd</p><p class="text-2xl font-bold" id="fteKpiTotal">0</p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">waarvan indirect</p><p class="text-2xl font-bold text-slate-300" id="fteKpiIndirect">0</p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Bij bezettingsdoel</p><p class="text-2xl font-bold text-blue-400" id="fteKpiStaffed">0</p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Benutting</p><p class="text-2xl font-bold" id="fteKpiUtilization">0%</p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Loonkosten</p><p class="text-2xl font-bold" id="fteKpiCost">&euro;0</p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Ton per FTE</p><p class="text-2xl font-bold" id="fteKpiTonsPerFte">0</p></div>
+                </div>
+
+                <div id="fteWarnings" class="hidden card rounded-xl p-4 mb-4 border border-amber-500/40">
+                    <p class="text-amber-400 text-sm font-semibold mb-1">Let op</p>
+                    <ul id="fteWarningList" class="text-xs text-amber-200 list-disc pl-5 space-y-1"></ul>
+                </div>
+
+                <div class="card rounded-xl p-6 mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h3 class="font-semibold">Machinecombinaties</h3>
+                        <button onclick="compareFteCombinations()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1.5">Vergelijk varianten</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-3">Een combinatie deelt &eacute;&eacute;n operatorpool over meerdere machines. De
+                        definitie staat in de masterdata; welke combinaties aanstaan is een wat-als van deze instantie en gaat mee in
+                        het scenario.</p>
+                    <div id="fteCombinations" class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm"></div>
+                </div>
+
+                <div id="fteComparePanel" class="hidden card rounded-xl p-6 mb-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-semibold">Vergelijking combinatievarianten</h3>
+                        <button onclick="document.getElementById('fteComparePanel').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-200">sluiten</button>
+                    </div>
+                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteCompareHead"></thead><tbody id="fteCompareBody"></tbody></table></div>
+                </div>
+
+                <div class="card rounded-xl p-6 mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h3 class="font-semibold">Werkbank &mdash; capaciteit, bemensing en kosten</h3>
+                        <div class="flex flex-wrap items-center gap-3 text-xs">
+                            <label class="flex items-center gap-1 text-slate-400">Periode
+                                <select id="ftePeriod" onchange="renderFteWorkbench()" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"></select>
+                            </label>
+                            <label class="flex items-center gap-1 text-slate-400">
+                                <input id="fteShowMachines" type="checkbox" checked onchange="renderFteWorkbench()" class="accent-blue-500"> machinedetail
+                            </label>
+                        </div>
+                    </div>
+                    <div id="fteDirtyBar" class="hidden mb-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/40 rounded-lg px-3 py-2">
+                        <span class="text-xs text-amber-200"><span id="fteDirtyCount">0</span> gewijzigde bemensingsnorm(en) &mdash; nog niet opgeslagen.</span>
+                        <span class="flex gap-2">
+                            <button onclick="revertFteNorms()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Ongedaan maken</button>
+                            <button onclick="saveFteNorms()" class="text-xs bg-blue-600 hover:bg-blue-500 rounded px-3 py-1">Opslaan in masterdata</button>
+                        </span>
+                    </div>
+                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteWbHead"></thead><tbody id="fteWbBody"></tbody></table></div>
+                    <p class="text-xs text-slate-500 mt-2">Machinerijen zijn detail achter hun groep en tellen niet mee in het totaal
+                        (een molengroep is het maximum van zijn machines, geen som). Doorzet-overrides en benchmarks beheer je in de
+                        masterdata-tabellen.</p>
+                </div>
+
+                <div id="fteValuePanel" class="card rounded-xl p-6">
+                    <h3 class="font-semibold mb-1">Doorwerking in de waardeketen</h3>
+                    <p class="text-xs text-slate-500 mb-3">De 20 consolidatieregels blijven ongewijzigd; hieronder staat dezelfde
+                        rekenwijze met de loonkosten van de werkbank in plaats van de vaste directe-FTE-kost.</p>
+                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteValueHead"></thead><tbody id="fteValueBody"></tbody></table></div>
+                </div>
             </div>
         </div>
 
@@ -2301,6 +2374,7 @@ function showTab(name, btn) {
     if (name === 'planning') { _flushPendingRender('planning'); filterTable(); }
     if (name === 'values') _flushPendingRender('values');
     if (name === 'capacity') loadCapacityData();
+    if (name === 'fte') loadFteWorkbench();
     if (name === 'inventory') loadInventoryData();
     if (name === 'config') loadConfigTab();
     if (name === 'mom') loadMoMTab();
@@ -5229,7 +5303,68 @@ const _MASTER_DATASETS = {
     valuation_params: { label: 'Valuatieparameters', kind: 'form' },
     config: { label: 'Config', kind: 'config' },
     fte: { label: 'FTE', kind: 'fte' },
+    // F2-CF — capaciteits- en FTE-werkbank. Keyed datasets zonder bron in de
+    // maandextracts: ze worden hier of in het masterwerkboek ingevuld, dus
+    // rijen toevoegen moet vanuit de app kunnen (addable).
+    staffing_norms: { label: 'Bemensingsnormen', kind: 'dict',
+        addable: 'Machinegroep (ZZ…) of machinecode',
+        identity: key => ({ code: key }),
+        cols: [['operators_per_hour', 'Operators per draaiuur', 'number'],
+               ['scope', 'Bereik', 'select:group|machine'],
+               ['function_group', 'Functiegroep', 'text'],
+               ['description', 'Omschrijving', 'text']] },
+    labor_rates: { label: 'Loonkosten per functiegroep', kind: 'dict',
+        addable: 'Functiegroep (of "default")',
+        identity: key => ({ function_group: key }),
+        cols: [['cost_per_fte_per_year', 'Kost per FTE per jaar', 'number'],
+               ['description', 'Omschrijving', 'text']] },
+    machine_combinations: { label: 'Machinecombinaties', kind: 'dict',
+        addable: 'Combinatie-ID',
+        identity: key => ({ combination_id: key }),
+        cols: [['name', 'Naam', 'text'],
+               ['machine_codes', 'Machines', 'csv'],
+               ['operators', 'Operators (samen)', 'number'],
+               ['throughput_factor', 'Doorzetfactor', 'number'],
+               ['throughput_factor_by_machine', 'Factor per machine', 'map'],
+               ['function_group', 'Functiegroep', 'text'],
+               ['description', 'Herkomst/toelichting', 'text'],
+               ['is_active', 'Beschikbaar', 'bool']] },
+    indirect_activities: { label: 'Indirecte activiteiten', kind: 'dict',
+        addable: 'Activiteit-ID',
+        identity: key => ({ activity_id: key }),
+        cols: [['name', 'Naam', 'text'],
+               ['driver', 'Driver', 'select:fixed|per_ton|per_truck|per_machine'],
+               ['fte_per_period', 'FTE/periode', 'number'],
+               ['fte_per_shift', 'FTE/ploeg', 'number'],
+               ['shifts', 'Ploegen', 'number'],
+               ['hours_per_unit', 'Uren per eenheid', 'number'],
+               ['tons_per_truck', 'Ton per truck', 'number'],
+               ['machines_per_fte', 'Machines per FTE', 'number'],
+               ['machine_count', 'Aantal machines', 'number'],
+               ['volume_source', 'Volumebron', 'text'],
+               ['volume_line', 'Volumeregel', 'text'],
+               ['function_group', 'Functiegroep', 'text'],
+               ['description', 'Herkomst/toelichting', 'text'],
+               ['is_active', 'Actief', 'bool']] },
+    throughput_overrides: { label: 'Doorzet-overrides', kind: 'dict',
+        addable: 'MACHINE|MATERIAAL',
+        identity: key => _splitPairKey(key, 'machine_code', 'material_number'),
+        cols: [['throughput_t_per_hour', 'Doorzet (t/u)', 'number'],
+               ['source', 'Herkomst', 'text'],
+               ['note', 'Notitie', 'text']] },
+    benchmark_throughput: { label: 'Benchmark doorzet', kind: 'dict',
+        addable: 'MACHINE|MATERIAAL',
+        identity: key => _splitPairKey(key, 'machine_code', 'material_number'),
+        cols: [['mes_t_per_hour', 'MES (t/u)', 'number'],
+               ['peer_t_per_hour', 'PEER (t/u)', 'number'],
+               ['mes_oee', 'MES-OEE', 'number'],
+               ['note', 'Notitie', 'text']] },
 };
+
+function _splitPairKey(key, firstField, secondField) {
+    const parts = String(key).split('|');
+    return { [firstField]: (parts[0] || '').trim(), [secondField]: (parts[1] || '').trim() };
+}
 
 // ===== Masterdata-productwizard ==================================================
 // Voegt een product toe aan de STORE (enige bron van waarheid): één POST
@@ -5636,7 +5771,20 @@ function _masterInput(kind, value) {
     if (kind === 'bool') {
         return `<input type="checkbox" class="master-edit accent-blue-500" ${value ? 'checked' : ''}>`;
     }
-    return `<input type="text" value="${escapeHtml(value === null || value === undefined ? '' : String(value))}" class="master-edit bg-slate-700 rounded px-2 py-1 w-28 ${kind === 'number' ? 'text-right' : ''}">`;
+    if (String(kind).startsWith('select:')) {
+        const current = value === null || value === undefined ? '' : String(value);
+        const options = String(kind).slice('select:'.length).split('|');
+        if (current && !options.includes(current)) options.unshift(current);
+        return `<select class="master-edit bg-slate-700 rounded px-2 py-1">`
+            + options.map(o => `<option value="${escapeHtml(o)}" ${o === current ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')
+            + '</select>';
+    }
+    // csv: ['PBA01','PBA02'] ↔ 'PBA01, PBA02'  ·  map: {PBA02: 0.75} ↔ 'PBA02:0.75'
+    let text = value;
+    if (kind === 'csv') text = (value || []).join(', ');
+    else if (kind === 'map') text = Object.entries(value || {}).map(([k, v]) => `${k}:${v}`).join(', ');
+    const wide = (kind === 'csv' || kind === 'map') ? 'w-48' : 'w-28';
+    return `<input type="text" value="${escapeHtml(text === null || text === undefined ? '' : String(text))}" class="master-edit bg-slate-700 rounded px-2 py-1 ${wide} ${kind === 'number' ? 'text-right' : ''}">`;
 }
 
 function _masterDatasetHtml(spec, value) {
@@ -5678,6 +5826,24 @@ function _masterDatasetHtml(spec, value) {
             + `<tr data-master-field="default_shift_name"><td class="p-2 text-slate-300">Standaard ploegensysteem</td><td class="p-2">${_masterInput('text', v.default_shift_name)}</td></tr>`;
         for (const [shift, hours] of Object.entries(v.shift_hours || {})) {
             html += `<tr data-master-shift="${escapeHtml(shift)}"><td class="p-2 text-slate-400 pl-6">Uren/maand — ${escapeHtml(shift)}</td><td class="p-2">${_masterInput('number', hours)}</td></tr>`;
+        }
+        // F2-CF-parameters. Alleen de bezettingsgraad rekent mee (hij schaalt
+        // het FTE-AANBOD); de bruto→netto-velden documenteren hoe de klant aan
+        // de FTE-uren per jaar komt en veranderen op zichzelf geen enkel getal.
+        const paramLabels = {
+            utilization_rate: ['Bezettingsgraad', 'schaalt het beschikbare FTE-aanbod'],
+            gross_hours_per_year: ['Bruto uren per jaar', 'afleidingshulp'],
+            leave_hours_per_year: ['Verlofuren per jaar', 'afleidingshulp'],
+            adv_hours_per_year: ['ADV-uren per jaar', 'afleidingshulp'],
+            holiday_hours_per_year: ['Feestdaguren per jaar', 'afleidingshulp'],
+            illness_pct: ['Ziekteverzuim (fractie)', 'afleidingshulp'],
+            training_pct: ['Training (fractie)', 'afleidingshulp'],
+        };
+        const params = v.params || {};
+        html += '<tr><td colspan="2" class="pt-4 pb-1 text-slate-400 text-xs uppercase tracking-wide">FTE-parameters</td></tr>';
+        for (const [field, [label, note]] of Object.entries(paramLabels)) {
+            html += `<tr data-master-param="${field}"><td class="p-2 text-slate-300 pl-6">${label}<div class="text-xs text-slate-500">${note}</div></td>`
+                + `<td class="p-2">${_masterInput('number', params[field])}</td></tr>`;
         }
         return html + '</tbody></table>';
     }
@@ -5721,14 +5887,45 @@ function _masterDatasetHtml(spec, value) {
     const rows = spec.kind === 'list'
         ? (value || []).map(item => [item[spec.key], item])
         : Object.entries(value || {});
-    return `<table class="w-full text-xs"><thead><tr class="text-slate-400">
+    const addBar = spec.addable
+        ? `<div class="mb-2"><button type="button" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-2 py-1"
+             onclick="addMasterDatasetRow()">+ rij toevoegen</button>
+           <span class="text-xs text-slate-500 ml-2">sleutel: ${escapeHtml(spec.addable)}</span></div>`
+        : '';
+    return addBar + `<table class="w-full text-xs"><thead><tr class="text-slate-400">
         <th class="text-left p-1">${spec.kind === 'list' ? 'Sleutel' : 'Materiaal/Code'}</th>
         ${spec.cols.map(c => `<th class="text-right p-1">${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>`
-        + rows.map(([key, item]) => `<tr data-master-key="${escapeHtml(String(key))}">
-            <td class="p-1 font-mono">${escapeHtml(String(key))}</td>
-            ${spec.cols.map(c => `<td class="p-1 text-right" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
-        </tr>`).join('')
+        + rows.map(([key, item]) => _masterDatasetRowHtml(spec, key, item)).join('')
         + '</tbody></table>';
+}
+
+function _masterDatasetRowHtml(spec, key, item) {
+    return `<tr data-master-key="${escapeHtml(String(key))}">
+        <td class="p-1 font-mono">${escapeHtml(String(key))}</td>
+        ${spec.cols.map(c => `<td class="p-1 text-right" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
+    </tr>`;
+}
+
+// Rijen toevoegen vanuit de app: de F2-CF-datasets (bemensing, loonkosten,
+// combinaties, indirecte activiteiten, doorzet) hebben geen bron in de
+// maandextracts, dus er is niets om ze uit te vullen — zonder deze knop kon
+// je ze alleen via het masterwerkboek aanmaken.
+function addMasterDatasetRow() {
+    const dataset = _activeMasterDataset;
+    const spec = _MASTER_DATASETS[dataset];
+    if (!spec || !spec.addable) return;
+    const key = (prompt(`Sleutel voor de nieuwe rij (${spec.addable}):`) || '').trim();
+    if (!key) return;
+    const body = document.getElementById('masterDatasetBody');
+    const tbody = body && body.querySelector('tbody');
+    if (!tbody) return;
+    if (tbody.querySelector(`tr[data-master-key="${CSS.escape(key)}"]`)) {
+        notify(`"${key}" staat al in de tabel.`, 'warning', 4000);
+        return;
+    }
+    const defaults = spec.identity ? spec.identity(key) : {};
+    tbody.insertAdjacentHTML('beforeend', _masterDatasetRowHtml(spec, key, defaults));
+    tbody.lastElementChild.querySelector('.master-edit')?.focus();
 }
 
 function _masterCellValue(cell, kind) {
@@ -5740,6 +5937,22 @@ function _masterCellValue(cell, kind) {
         if (raw === '') return 0;
         const parsed = parseLocaleNumber(raw);
         return Number.isNaN(parsed) ? null : parsed;
+    }
+    if (kind === 'csv') {
+        return raw ? raw.split(',').map(x => x.trim()).filter(Boolean) : [];
+    }
+    if (kind === 'map') {
+        // Komma is hier de scheider, dus een decimale komma kan niet: 'PBA02:0,75'
+        // zou 'PBA02:0' + '75' worden. Punt afdwingen i.p.v. stil halveren.
+        const out = {};
+        for (const frag of raw.split(',').map(x => x.trim()).filter(Boolean)) {
+            const parts = frag.split(':').map(x => x.trim());
+            if (parts.length !== 2 || !parts[0]) return null;
+            const n = Number(parts[1]);
+            if (!Number.isFinite(n)) return null;
+            out[parts[0]] = n;
+        }
+        return out;
     }
     return raw;
 }
@@ -5821,6 +6034,13 @@ function collectMasterDataset(dataset) {
             if (parsed === null) return { error: `Ongeldig getal bij ploeg ${row.dataset.masterShift}.` };
             out.shift_hours[row.dataset.masterShift] = parsed;
         }
+        out.params = { ...((original || {}).params || {}) };
+        for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-param]')) {
+            const field = row.dataset.masterParam;
+            const parsed = _masterCellValue(row.cells[1], 'number');
+            if (parsed === null) return { error: `Ongeldig getal bij ${field}.` };
+            out.params[field] = parsed;
+        }
         return { value: out };
     }
     if (spec.kind === 'sales_prices') {
@@ -5870,7 +6090,7 @@ function collectMasterDataset(dataset) {
         for (const col of spec.cols) {
             const cell = row.querySelector(`[data-master-col="${col[0]}"]`);
             const parsed = _masterCellValue(cell, col[2]);
-            if (parsed === null) return { error: `Ongeldig getal bij ${row.dataset.masterKey}.` };
+            if (parsed === null) return { error: `Ongeldige waarde bij ${row.dataset.masterKey} (${col[1]}).` };
             patch[col[0]] = parsed;
         }
         byKey[row.dataset.masterKey] = patch;
@@ -5886,6 +6106,13 @@ function collectMasterDataset(dataset) {
     Object.entries(original || {}).forEach(([key, item]) => {
         const patch = byKey[String(key)];
         value[key] = patch ? { ...item, ...patch } : item;
+    });
+    // In de app toegevoegde rijen staan niet in `original`; hun identiteits-
+    // velden komen uit de sleutel, anders belandt er een record zonder code
+    // in de store en faalt de hydratie-validatie pas bij opslaan.
+    Object.entries(byKey).forEach(([key, patch]) => {
+        if (value[key] !== undefined) return;
+        value[key] = { ...(spec.identity ? spec.identity(key) : {}), ...patch };
     });
     return { value };
 }
@@ -11666,6 +11893,345 @@ async function resetMachineEdits() {
         _machineResetInFlight = false;
     }
 }
+// ===== Capaciteit & FTE-werkbank (F2-CF) =======================================
+// Leest /api/fte (de motor rekent de werkbank al mee in elke cascade). Twee
+// dingen zijn hier bewerkbaar: welke machinecombinaties aanstaan (wat-als van
+// deze instantie, gaat mee in het scenario) en de bemensingsnorm per groep of
+// machine (masterdata — opslaan gaat via de gewone masterdata-PATCH, zodat er
+// per getal precies één eigenaar blijft).
+
+let _fteState = { data: null, combinations: [], active: [], dirtyNorms: {} };
+
+async function loadFteWorkbench() {
+    try {
+        const res = await fetch('/api/fte');
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            document.getElementById('fteEmpty').textContent = data.error || 'Werkbank niet beschikbaar.';
+            document.getElementById('fteEmpty').classList.remove('hidden');
+            document.getElementById('fteBody').classList.add('hidden');
+            return;
+        }
+        _fteState.data = data.fte;
+        _fteState.combinations = data.combinations || [];
+        _fteState.active = data.active_combinations || [];
+        _fteState.dirtyNorms = {};
+        document.getElementById('fteEmpty').classList.add('hidden');
+        document.getElementById('fteBody').classList.remove('hidden');
+        _renderFtePeriodOptions();
+        renderFteWorkbench();
+    } catch (err) {
+        notify('Werkbank laden mislukt: ' + err, 'error', 5000);
+    }
+}
+
+function _renderFtePeriodOptions() {
+    const sel = document.getElementById('ftePeriod');
+    if (!sel) return;
+    const previous = sel.value;
+    const periods = (_fteState.data && _fteState.data.periods) || [];
+    sel.innerHTML = '<option value="">Alle periodes</option>'
+        + periods.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+    if (previous && [...sel.options].some(o => o.value === previous)) sel.value = previous;
+}
+
+// Eén periode of het totaal over de horizon. Uren en kosten sommeren, FTE en
+// benutting middelen — een gesommeerde bezettingsgraad zou 300% "zijn".
+function _fteAgg(values, mode) {
+    const periods = (_fteState.data && _fteState.data.periods) || [];
+    const period = document.getElementById('ftePeriod')?.value || '';
+    if (period) return Number((values || {})[period] || 0);
+    const total = periods.reduce((sum, p) => sum + Number((values || {})[p] || 0), 0);
+    return mode === 'avg' && periods.length ? total / periods.length : total;
+}
+
+function _fteOperators(line) {
+    const key = `${line.category}:${line.key}`;
+    return key in _fteState.dirtyNorms ? _fteState.dirtyNorms[key] : line.operators_per_hour;
+}
+
+function renderFteWorkbench() {
+    const data = _fteState.data;
+    if (!data) return;
+    const showMachines = document.getElementById('fteShowMachines')?.checked;
+
+    const fteAvg = _fteAgg(data.totals.fte, 'avg');
+    document.getElementById('fteKpiTotal').textContent = _fmtNlNum(fteAvg, 2);
+    document.getElementById('fteKpiIndirect').textContent = _fmtNlNum(_fteAgg(data.totals.indirect_fte, 'avg'), 2);
+    document.getElementById('fteKpiStaffed').textContent = _fmtNlNum(_fteAgg(data.totals.staffed_fte, 'avg'), 2);
+    const hours = _fteAgg(data.totals.hours);
+    const available = _fteAgg(data.totals.available_hours);
+    document.getElementById('fteKpiUtilization').textContent =
+        available > 0 ? _fmtNlNum(hours / available * 100, 1) + '%' : '—';
+    document.getElementById('fteKpiCost').textContent = '€ ' + _fmtNlNum(_fteAgg(data.totals.cost), 0);
+    const volume = _fteAgg(data.totals.volume);
+    document.getElementById('fteKpiTonsPerFte').textContent =
+        fteAvg > 0 ? _fmtNlNum(volume / fteAvg, 0) : '—';
+
+    const warnBox = document.getElementById('fteWarnings');
+    const warnList = document.getElementById('fteWarningList');
+    if ((data.warnings || []).length) {
+        warnList.innerHTML = data.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
+        warnBox.classList.remove('hidden');
+    } else {
+        warnBox.classList.add('hidden');
+    }
+
+    _renderFteCombinations();
+    _renderFteTable(showMachines);
+    _renderFteValuePanel();
+    _updateFteDirtyBar();
+}
+
+function _renderFteCombinations() {
+    const host = document.getElementById('fteCombinations');
+    if (!host) return;
+    if (!_fteState.combinations.length) {
+        host.innerHTML = '<p class="text-slate-500 text-xs">Nog geen combinaties in de masterdata. '
+            + 'Voeg ze toe onder Config &rarr; Masterdata-tabellen &rarr; Machinecombinaties.</p>';
+        return;
+    }
+    host.innerHTML = _fteState.combinations.map(c => {
+        const disabled = c.is_active ? '' : 'disabled';
+        const checked = _fteState.active.includes(c.combination_id) ? 'checked' : '';
+        const factors = Object.entries(c.throughput_factor_by_machine || {})
+            .map(([m, f]) => `${escapeHtml(m)}:${f}`).join(', ');
+        // Sleutel via data-attribuut, niet geïnterpoleerd in de handler: een
+        // apostrof in een ID zou de inline JS-string breken na HTML-decodering.
+        return `<label class="flex items-start gap-2 bg-slate-800/60 rounded-lg px-3 py-2 ${c.is_active ? '' : 'opacity-50'}">
+            <input type="checkbox" class="accent-blue-500 mt-0.5" ${checked} ${disabled}
+                   data-combo="${escapeHtml(c.combination_id)}"
+                   onchange="toggleFteCombination(this.dataset.combo, this.checked)">
+            <span>
+                <span class="font-medium">${escapeHtml(c.name)}</span>
+                <span class="block text-xs text-slate-400">${escapeHtml((c.machine_codes || []).join(' + ') || '—')}
+                    &middot; ${_fmtNlNum(c.operators, 2)} operators &middot; doorzetfactor ${_fmtNlNum(c.throughput_factor, 2)}${factors ? ' (' + factors + ')' : ''}</span>
+            </span>
+        </label>`;
+    }).join('');
+}
+
+async function toggleFteCombination(id, on) {
+    const active = new Set(_fteState.active);
+    if (on) active.add(id); else active.delete(id);
+    try {
+        const res = await fetch('/api/fte/combinations', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active_combinations: [...active] }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) { notify(data.error || 'Combinatie schakelen mislukt.', 'error', 5000); loadFteWorkbench(); return; }
+        _fteState.data = data.fte;
+        _fteState.active = data.active_combinations || [];
+        renderFteWorkbench();
+    } catch (err) {
+        notify('Combinatie schakelen mislukt: ' + err, 'error', 5000);
+    }
+}
+
+const _FTE_COLUMNS = [
+    ['Regel', 'left'], ['Groep', 'left'], ['Operators/uur', 'right'], ['Bron', 'left'],
+    ['Uren', 'right'], ['Beschikbaar', 'right'], ['Benutting', 'right'],
+    ['FTE', 'right'], ['Loonkosten', 'right'], ['MES t/u', 'right'], ['PEER t/u', 'right'],
+];
+
+function _renderFteTable(showMachines) {
+    const head = document.getElementById('fteWbHead');
+    const body = document.getElementById('fteWbBody');
+    if (!head || !body) return;
+    head.innerHTML = '<tr>' + _FTE_COLUMNS.map(c =>
+        `<th class="text-${c[1]} p-1">${escapeHtml(c[0])}</th>`).join('') + '</tr>';
+
+    const lines = (_fteState.data.lines || [])
+        .filter(l => showMachines || l.category !== 'machine');
+    const order = { group: 0, indirect: 1, machine: 2 };
+    lines.sort((a, b) => (order[a.category] - order[b.category])
+        || String(a.machine_group || '').localeCompare(String(b.machine_group || ''))
+        || String(a.key).localeCompare(String(b.key)));
+
+    body.innerHTML = lines.map(line => {
+        const hours = _fteAgg(line.hours);
+        const available = _fteAgg(line.available_hours);
+        const util = available > 0 ? hours / available : null;
+        const utilClass = util === null ? 'text-slate-500'
+            : (util > 0.95 ? 'text-red-400' : (util > 0.8 ? 'text-yellow-400' : 'text-green-400'));
+        const editable = line.category !== 'indirect' && !line.combination_id;
+        const operators = _fteOperators(line);
+        const dirty = `${line.category}:${line.key}` in _fteState.dirtyNorms;
+        const opCell = editable
+            ? `<input type="text" value="${escapeHtml(String(operators))}"
+                 class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${dirty ? 'ring-1 ring-amber-400' : ''}"
+                 data-fte-cat="${escapeHtml(line.category)}" data-fte-key="${escapeHtml(line.key)}"
+                 onchange="onFteNormEdit(this)">`
+            : _fmtNlNum(operators, 3);
+        const sourceLabel = { staffing_norms: 'norm', line12_coefficient: 'L12-coëff.',
+                              combination: 'combinatie', default: 'default' }[line.operators_source]
+                              || line.operators_source || '';
+        return `<tr class="${line.category === 'machine' ? 'text-slate-400' : ''}">
+            <td class="p-1">${escapeHtml(line.label)}<span class="text-slate-500"> · ${escapeHtml(line.key)}</span>${
+                line.combination_id ? ` <span class="text-blue-400">[${escapeHtml(line.combination_id)}]</span>` : ''}</td>
+            <td class="p-1">${escapeHtml(line.machine_group || '')}</td>
+            <td class="p-1 text-right">${opCell}</td>
+            <td class="p-1 text-slate-500">${escapeHtml(sourceLabel)}</td>
+            <td class="p-1 text-right">${_fmtNlNum(hours, 0)}</td>
+            <td class="p-1 text-right">${available > 0 ? _fmtNlNum(available, 0) : '—'}</td>
+            <td class="p-1 text-right ${utilClass}">${util === null ? '—' : _fmtNlNum(util * 100, 1) + '%'}</td>
+            <td class="p-1 text-right">${_fmtNlNum(_fteAgg(line.fte, 'avg'), 2)}</td>
+            <td class="p-1 text-right">${_fmtNlNum(_fteAgg(line.cost), 0)}</td>
+            <td class="p-1 text-right">${line.throughput_mes ? _fmtNlNum(line.throughput_mes, 1) : '—'}</td>
+            <td class="p-1 text-right">${line.throughput_peer ? _fmtNlNum(line.throughput_peer, 1) : '—'}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="11" class="text-center p-4 text-slate-500">Geen regels</td></tr>';
+}
+
+function onFteNormEdit(input) {
+    const category = input.dataset.fteCat;
+    const key = input.dataset.fteKey;
+    const parsed = parseLocaleNumber(String(input.value).trim());
+    if (Number.isNaN(parsed) || parsed < 0) {
+        notify('Operators per uur moet een getal ≥ 0 zijn.', 'error', 4000);
+        renderFteWorkbench();
+        return;
+    }
+    const line = (_fteState.data.lines || []).find(l => l.category === category && l.key === key);
+    const id = `${category}:${key}`;
+    if (line && Math.abs(parsed - line.operators_per_hour) < 1e-9) delete _fteState.dirtyNorms[id];
+    else _fteState.dirtyNorms[id] = parsed;
+    _updateFteDirtyBar();
+    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+}
+
+function _updateFteDirtyBar() {
+    const count = Object.keys(_fteState.dirtyNorms).length;
+    document.getElementById('fteDirtyCount').textContent = count;
+    document.getElementById('fteDirtyBar').classList.toggle('hidden', count === 0);
+}
+
+function revertFteNorms() {
+    _fteState.dirtyNorms = {};
+    renderFteWorkbench();
+}
+
+async function saveFteNorms() {
+    const edits = Object.entries(_fteState.dirtyNorms);
+    if (!edits.length) return;
+    try {
+        const res = await fetch('/api/master_data/staffing_norms');
+        const current = await res.json();
+        if (!res.ok || current.error) { notify(current.error || 'Bemensingsnormen laden mislukt.', 'error', 5000); return; }
+        const value = { ...(current.value || {}) };
+        for (const [id, operators] of edits) {
+            const [category, key] = id.split(/:(.+)/);
+            const scope = category === 'machine' ? 'machine' : 'group';
+            value[key] = { ...(value[key] || {}), code: key, scope,
+                           operators_per_hour: operators };
+        }
+        const patch = await fetch('/api/master_data/staffing_norms', {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value }),
+        });
+        const saved = await patch.json();
+        if (!patch.ok || saved.error) { notify(saved.error || 'Opslaan mislukt.', 'error', 6000); return; }
+        // De draaiende engine houdt de datasets vast waarmee hij gebouwd is;
+        // deze refresh leest ze opnieuw uit de store zodat de werkbank meteen
+        // de opgeslagen norm toont in plaats van pas na een herberekening.
+        const refreshed = await fetch('/api/fte/refresh', { method: 'POST' });
+        const data = await refreshed.json();
+        if (refreshed.ok && data.fte) {
+            _fteState.data = data.fte;
+            _fteState.combinations = data.combinations || _fteState.combinations;
+        }
+        _fteState.dirtyNorms = {};
+        renderFteWorkbench();
+        notify(`Bemensingsnormen opgeslagen (masterdata versie ${saved.version}).`, 'success', 4000);
+    } catch (err) {
+        notify('Opslaan mislukt: ' + err, 'error', 6000);
+    }
+}
+
+function _renderFteValuePanel() {
+    const impact = (_fteState.data || {}).value_impact || {};
+    const head = document.getElementById('fteValueHead');
+    const body = document.getElementById('fteValueBody');
+    if (!head || !body) return;
+    if (!impact.available) {
+        head.innerHTML = '';
+        body.innerHTML = '<tr><td class="p-3 text-slate-500 text-xs">Geen doorwerking te tonen: er zijn geen '
+            + 'valuatieparameters of geen loontarieven per functiegroep ingesteld.</td></tr>';
+        return;
+    }
+    head.innerHTML = '<tr><th class="text-left p-1">Regel</th><th class="text-right p-1">Basis</th>'
+        + '<th class="text-right p-1">Met werkbank</th><th class="text-right p-1">Verschil</th></tr>';
+    const rows = [
+        ['Loonkosten (directe FTE)', impact.baseline_labor_cost, impact.workbench_labor_cost],
+        ['Kostprijs verkopen', impact.baseline['ZZZZZZ_COST OF GOODS'], impact.cost_of_goods],
+        ['Brutomarge', impact.baseline['ZZZZZZ_GROSS MARGIN'], impact.gross_margin],
+        ['EBITDA', impact.baseline['ZZZZZZ_EBITDA'], impact.ebitda],
+        ['EBIT', impact.baseline['ZZZZZZ_EBIT'], impact.ebit],
+        ['Operationele kasstroom', impact.baseline['ZZZZZZ_OPERATIONAL CASHFLOW'], impact.operational_cashflow],
+    ];
+    body.innerHTML = rows.map(([label, base, adjusted]) => {
+        const b = _fteAgg(base);
+        const a = _fteAgg(adjusted);
+        const diff = a - b;
+        const cls = Math.abs(diff) < 0.5 ? 'text-slate-400' : (diff > 0 ? 'text-red-400' : 'text-green-400');
+        return `<tr><td class="p-1">${escapeHtml(label)}</td>
+            <td class="p-1 text-right">${_fmtNlNum(b, 0)}</td>
+            <td class="p-1 text-right">${_fmtNlNum(a, 0)}</td>
+            <td class="p-1 text-right ${cls}">${diff >= 0 ? '+' : ''}${_fmtNlNum(diff, 0)}</td></tr>`;
+    }).join('');
+}
+
+async function compareFteCombinations() {
+    // Elke beschikbare combinatie als eigen variant, plus "geen combinaties".
+    // De route zet de huidige instelling als eerste rij (de basis waartegen
+    // de verschillen gemeten worden).
+    const variants = [{ label: 'Geen combinaties', active_combinations: [] }];
+    for (const c of _fteState.combinations.filter(c => c.is_active)) {
+        variants.push({ label: c.name, active_combinations: [c.combination_id] });
+    }
+    if (_fteState.combinations.filter(c => c.is_active).length > 1) {
+        variants.push({ label: 'Alle combinaties',
+                        active_combinations: _fteState.combinations.filter(c => c.is_active).map(c => c.combination_id) });
+    }
+    try {
+        const res = await fetch('/api/fte/compare', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ variants }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) { notify(data.error || 'Vergelijking mislukt.', 'error', 5000); return; }
+        _renderFteComparison(data.variants || []);
+        document.getElementById('fteComparePanel').classList.remove('hidden');
+    } catch (err) {
+        notify('Vergelijking mislukt: ' + err, 'error', 5000);
+    }
+}
+
+function _renderFteComparison(variants) {
+    const columns = [
+        ['FTE (gem.)', 'fte_avg', 2], ['Bij bezettingsdoel', 'staffed_fte_avg', 2],
+        ['Uren', 'hours_total', 0], ['Benutting', 'utilization', 'pct'],
+        ['Loonkosten', 'labor_cost_total', 0], ['Ton/FTE', 'tons_per_fte', 0],
+        ['Brutomarge', 'gross_margin_total', 0], ['EBITDA', 'ebitda_total', 0],
+    ];
+    document.getElementById('fteCompareHead').innerHTML = '<tr><th class="text-left p-1">Variant</th>'
+        + columns.map(c => `<th class="text-right p-1">${escapeHtml(c[0])}</th>`).join('') + '</tr>';
+    document.getElementById('fteCompareBody').innerHTML = variants.map((v, i) => {
+        const cells = columns.map(([, key, dec]) => {
+            const value = v.summary[key];
+            if (value === null || value === undefined) return '<td class="p-1 text-right text-slate-500">—</td>';
+            const shown = dec === 'pct' ? _fmtNlNum(value * 100, 1) + '%' : _fmtNlNum(value, dec);
+            const delta = v.delta ? v.delta[key] : undefined;
+            const deltaHtml = (delta === undefined || Math.abs(delta) < 1e-9) ? ''
+                : `<span class="block text-xs ${delta > 0 ? 'text-red-400' : 'text-green-400'}">${
+                    delta > 0 ? '+' : ''}${dec === 'pct' ? _fmtNlNum(delta * 100, 1) + '%' : _fmtNlNum(delta, dec)}</span>`;
+            return `<td class="p-1 text-right">${shown}${deltaHtml}</td>`;
+        }).join('');
+        return `<tr class="${i === 0 ? 'font-semibold' : ''}"><td class="p-1">${escapeHtml(v.label)}</td>${cells}</tr>`;
+    }).join('');
+}
+
 async function loadInventoryData() {
     try {
         const res = await fetch('/api/inventory'); const data = await res.json();

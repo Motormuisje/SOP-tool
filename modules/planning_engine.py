@@ -79,6 +79,17 @@ class PlanningEngine:
         self.value_results: Dict[str, List[PlanningRow]] = {}
         self.value_engine: Optional[ValuePlanningEngine] = None
 
+        # F2-CF capacity & FTE workbench. A separate result set, deliberately
+        # NOT part of self.results: it adds no line type, so EXPECTED_LINE_TYPES,
+        # the Excel export and the golden reference stay untouched.
+        self.fte_results = None
+        self.fte_engine = None
+        # Machine combinations active in this session (scenario state). Comes
+        # in through config_overrides so a COLD rebuild already runs with the
+        # session's combinations instead of an empty set.
+        self.active_combinations: List[str] = list(
+            self.config_overrides.get('active_combinations') or [])
+
     def run(self) -> 'PlanningEngine':
         """Run the complete planning pipeline."""
         print("\n" + "=" * 70)
@@ -375,6 +386,9 @@ class PlanningEngine:
         self.value_engine = ValuePlanningEngine(self.data, self.results)
         self.value_results = self.value_engine.calculate()
 
+        # ===== STEP 7: Capacity & FTE workbench (F2-CF) =====
+        self.recalculate_fte()
+
         # ===== Compile and validate =====
         self._compile_all_rows()
         self._validate_output()
@@ -473,6 +487,21 @@ class PlanningEngine:
         for lt in self.EXPECTED_LINE_TYPES:
             count = self.summary['line_types'].get(lt, 0)
             print(f"  {lt}: {count}")
+
+    def recalculate_fte(self, active_combinations=None) -> None:
+        """(Re)build the capacity & FTE workbench result from current results.
+
+        Cheap aggregation over the finished planning rows, so every cascade
+        can call it. Never touches self.results — the workbench is additive.
+        """
+        from modules.fte_engine import FteEngine
+
+        if active_combinations is not None:
+            self.active_combinations = list(active_combinations)
+        self.fte_engine = FteEngine(self.data, self.results,
+                                    active_combinations=self.active_combinations,
+                                    value_results=self.value_results)
+        self.fte_results = self.fte_engine.calculate()
 
     # ===== Export methods =====
     def get_all_rows(self) -> List[PlanningRow]:

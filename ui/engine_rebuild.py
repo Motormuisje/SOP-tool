@@ -147,6 +147,20 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
         ov['added_products'] = ap
     else:
         ov.pop('added_products', None)
+
+    # Actieve machinecombinaties (F2-CF) zijn per-sessie scenario-staat, met
+    # dezelfde regel: de sessie is de bron, de live engine de terugval, en een
+    # sessie zonder combinaties erft ze NOOIT uit de gedeelde global config.
+    # Zonder dit veld startte een verse engine-run met een lege set terwijl de
+    # sessie zei dat een combinatie aan stond — de werkbank stond dan één
+    # herberekening lang op de verkeerde bezetting.
+    ac = sess.get('active_combinations')
+    if ac is None:
+        ac = getattr(sess.get('engine'), 'active_combinations', None)
+    if ac:
+        ov['active_combinations'] = list(ac)
+    else:
+        ov.pop('active_combinations', None)
     return ov
 
 
@@ -222,6 +236,13 @@ def install_clean_engine_baseline(
     sess['machine_undo'] = []
     if clear_machine_overrides:
         sess['machine_overrides'] = {}
+        # Actieve combinaties (F2-CF) zijn dezelfde soort wat-als-capaciteit
+        # als machine-overrides en volgen dezelfde vlag: een Reset zet ze uit,
+        # een configwijziging (clear_machine_overrides=False) laat ze staan.
+        sess['active_combinations'] = []
+        engine.active_combinations = []
+        if hasattr(engine, 'recalculate_fte'):
+            engine.recalculate_fte([])
     # inventory_overrides (L4 starting stock) and capacity_overrides
     # (L7/L9/L11/L12) are session-scoped edit stores. A clean engine baseline
     # implies no edits have been applied yet — reset both stores so Reset

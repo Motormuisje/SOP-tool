@@ -98,7 +98,9 @@ def save_master_store(store_path: Path, master: dict, *, source_filename: str = 
 
 def master_counts(master: dict) -> dict:
     """Dataset sizes for status displays and import diffs."""
-    return {
+    from modules.master_data import FTE_DATASETS
+
+    counts = {
         'materials': len(master.get('materials') or []),
         'machines': len(master.get('machines') or []),
         'safety_stock': len(master.get('safety_stock') or {}),
@@ -108,3 +110,5 @@ def master_counts(master: dict) -> dict:
         'machine_costs': len(master.get('machine_costs') or {}),
         'valuation_params': 1 if master.get('valuation_params') else 0,
     }
+    counts.update({name: len(master.get(name) or {}) for name in FTE_DATASETS})
+    return counts

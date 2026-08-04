@@ -25,8 +25,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from modules.master_data import FTE_DATASETS
 from modules.models import (
+    FTE_PARAM_DEFAULTS,
     Machine,
+    MachineCombination,
     MachineCost,
     Material,
     RawMaterialCost,
@@ -49,8 +52,28 @@ SHEET_MATERIAL_COSTS = 'Grondstofkosten'
 SHEET_MACHINE_COSTS = 'Machinekosten'
 SHEET_VALUATION = 'Waardering'
 
+# F2-CF workbench datasets. Sheet per dataset, same keyed-table shape as the
+# rest. These sheets are OPTIONAL on import: a workbook exported by an older
+# build has none of them, and refusing it would strand every existing copy.
+SHEET_STAFFING = 'Bemensing'
+SHEET_LABOR_RATES = 'Loonkosten'
+SHEET_COMBINATIONS = 'Machinecombinaties'
+SHEET_INDIRECT = 'Indirecte activiteiten'
+SHEET_THROUGHPUT = 'Doorzet-overrides'
+SHEET_BENCHMARK = 'Benchmark doorzet'
+
+FTE_DATASET_SHEETS = {
+    'staffing_norms': SHEET_STAFFING,
+    'labor_rates': SHEET_LABOR_RATES,
+    'machine_combinations': SHEET_COMBINATIONS,
+    'indirect_activities': SHEET_INDIRECT,
+    'throughput_overrides': SHEET_THROUGHPUT,
+    'benchmark_throughput': SHEET_BENCHMARK,
+}
+
 _KEY_COLUMN = 'sleutel'
 _AVAILABILITY_PREFIX = 'beschikbaarheid '
+_FTE_PARAM_PREFIX = 'params.'
 
 
 def _field_names(dc) -> List[str]:
@@ -66,8 +89,15 @@ def _casters(dc) -> Dict[str, callable]:
     strings here — hydration converts them.
     """
     hints = typing.get_type_hints(dc)
-    defaults = {f.name: f.default for f in dataclasses.fields(dc)
-                if f.default is not dataclasses.MISSING}
+    defaults = {}
+    for f in dataclasses.fields(dc):
+        if f.default is not dataclasses.MISSING:
+            defaults[f.name] = f.default
+        elif f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+            # list/dict fields (machine_codes, throughput_factor_by_machine)
+            # carry their default through a factory; without this an empty
+            # cell fell through to '' and hydration raised on the wrong type.
+            defaults[f.name] = f.default_factory()  # type: ignore[misc]
     casters = {}
     for name, hint in hints.items():
         origin = typing.get_origin(hint)
@@ -81,33 +111,85 @@ def _casters(dc) -> Dict[str, callable]:
     return casters
 
 
+def _empty_value(inner, origin, optional, default):
+    """What an empty cell means: the dataclass default, else the type's zero."""
+    if default is not dataclasses.MISSING:
+        # Copy: a shared mutable default would let two rows of the same sheet
+        # alias one list.
+        if isinstance(default, list):
+            return list(default)
+        if isinstance(default, dict):
+            return dict(default)
+        return default.value if hasattr(default, 'value') else default
+    if optional:
+        return None
+    if inner is bool:
+        return False
+    if inner is int:
+        return 0
+    if inner is float:
+        return 0.0
+    if origin in (list, set, tuple):
+        return []
+    if origin is dict:
+        return {}
+    return ''
+
+
 def _make_caster(inner, optional, default):
+    origin = typing.get_origin(inner)
+    args = typing.get_args(inner)
+
     def cast(value):
-        empty = value is None or (isinstance(value, str) and not value.strip())
-        if empty:
-            # An empty cell means "the default", exactly like an absent value
-            # in the dataclass — is_active must default to True, not False.
-            if default is not dataclasses.MISSING:
-                return default.value if hasattr(default, 'value') else default
-            if optional:
-                return None
-            if inner is bool:
-                return False
-            if inner is int:
-                return 0
-            if inner is float:
-                return 0.0
-            return ''
-        if inner is bool:
-            return _to_bool(value)
-        if inner is int:
-            return int(float(value))
-        if inner is float:
-            return float(value)
-        if inner is str:
-            return str(value).strip()
-        return value  # enums-as-strings, dicts — passed through
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return _empty_value(inner, origin, optional, default)
+        if inner in (bool, int, float, str):
+            return _scalar(inner, value)
+        if origin in (list, set, tuple):
+            return [_scalar(args[0] if args else str, part)
+                    for part in _split_cells(value)]
+        if origin is dict:
+            return _parse_pairs(value, args[1] if len(args) > 1 else str)
+        return value  # enums-as-strings — passed through
     return cast
+
+
+def _split_cells(value) -> List[str]:
+    return [part.strip() for part in str(value).split(',') if part.strip()]
+
+
+def _scalar(item_type, text):
+    """Cell/fragment -> scalar. Deliberately as strict as the pre-F2-CF caster:
+    a decimal comma stays an error, because inside a list/map cell the comma is
+    the separator and '0,8' cannot mean both."""
+    if item_type is float:
+        return float(text)
+    if item_type is int:
+        return int(float(text))
+    if item_type is bool:
+        return _to_bool(text)
+    return str(text).strip()
+
+
+def _parse_pairs(value, value_type) -> dict:
+    """'PBA01:0.8, PBA02:1' -> {'PBA01': 0.8, 'PBA02': 1.0}.
+
+    A malformed fragment is a typo in a hand-edited sheet and must be rejected,
+    not silently dropped: a dropped per-machine factor reads as 'no effect'.
+    """
+    out = {}
+    for fragment in _split_cells(value):
+        parts = fragment.split(':')
+        if len(parts) != 2 or not parts[0].strip():
+            raise MasterWorkbookError(
+                f'"{fragment}" is geen "SLEUTEL:waarde"-paar.')
+        try:
+            out[parts[0].strip()] = _scalar(value_type, parts[1])
+        except ValueError as exc:
+            raise MasterWorkbookError(
+                f'Waarde bij "{parts[0].strip()}" is geen getal '
+                f'("{parts[1].strip()}").') from exc
+    return out
 
 
 def _to_bool(value) -> bool:
@@ -163,6 +245,10 @@ def export_master_workbook(master: dict, path, site: str,
     ]
     for shift_name, hours in sorted((fte.get('shift_hours') or {}).items()):
         fte_rows.append((f'shift_hours.{shift_name}', hours))
+    params = fte.get('params') or {}
+    for name in sorted(set(FTE_PARAM_DEFAULTS) | set(params)):
+        fte_rows.append((f'{_FTE_PARAM_PREFIX}{name}',
+                         params.get(name, FTE_PARAM_DEFAULTS.get(name))))
     _write_kv(wb, SHEET_FTE, fte_rows)
 
     _write_table(wb, SHEET_MATERIALS, _field_names(Material),
@@ -211,6 +297,8 @@ def export_master_workbook(master: dict, path, site: str,
     _write_kv(wb, SHEET_VALUATION,
               [(name, vp.get(name)) for name in _field_names(ValuationParameters)])
 
+    _write_fte_dataset_sheets(wb, master)
+
     path = Path(path)
     tmp = path.with_name(path.name + '.tmp')
     wb.save(str(tmp))
@@ -237,7 +325,26 @@ def _write_keyed_table(wb, sheet, fields, keyed: dict):
     ws.append(headers)
     for key in sorted(keyed):
         item = keyed[key]
-        ws.append([key] + [item.get(f) for f in fields])
+        ws.append([key] + [_cell_value(item.get(f)) for f in fields])
+
+
+def _cell_value(value):
+    """Excel-safe rendering of the container fields the F2-CF datasets carry.
+
+    A machine list becomes 'PBA01,PBA02'; a per-machine factor map becomes
+    'PBA01:0.8,PBA02:1'. Everything else passes through untouched.
+    """
+    if isinstance(value, (list, tuple, set)):
+        return ','.join(str(v) for v in value)
+    if isinstance(value, dict):
+        return ','.join(f'{k}:{v}' for k, v in value.items())
+    return value
+
+
+def _write_fte_dataset_sheets(wb, master: dict) -> None:
+    for name, dc in FTE_DATASETS.items():
+        _write_keyed_table(wb, FTE_DATASET_SHEETS[name], _field_names(dc),
+                           master.get(name) or {})
 
 
 # ------------------------------------------------------------------- parse
@@ -306,6 +413,14 @@ def parse_master_workbook(path) -> Tuple[dict, dict]:
                 sheets[SHEET_MACHINE_COSTS], MachineCost)),
             'valuation_params': guarded(SHEET_VALUATION, lambda: _parse_valuation(vp_raw)),
         }
+        # F2-CF sheets are optional: a workbook exported before they existed
+        # must still import, and an absent sheet means "leave this dataset as
+        # the store has it" — the import route merges, it does not clear.
+        for name, dc in FTE_DATASETS.items():
+            sheet = FTE_DATASET_SHEETS[name]
+            if sheet in sheets:
+                master[name] = guarded(
+                    sheet, lambda ws=sheets[sheet], dc=dc: _parse_keyed_table(ws, dc))
         return master, meta
     finally:
         wb.close()
@@ -399,13 +514,17 @@ def _parse_config(raw: dict) -> dict:
 
 def _parse_fte(raw: dict) -> dict:
     shift_hours = {}
+    params = dict(FTE_PARAM_DEFAULTS)
     for key, value in raw.items():
         if key.startswith('shift_hours.') and value is not None:
             shift_hours[key[len('shift_hours.'):]] = float(value)
+        elif key.startswith(_FTE_PARAM_PREFIX) and value is not None:
+            params[key[len(_FTE_PARAM_PREFIX):]] = float(value)
     return {
         'fte_hours_per_year': float(raw.get('fte_hours_per_year') or 1492),
         'shift_hours': shift_hours,
         'default_shift_name': str(raw.get('default_shift_name') or '3-shift system'),
+        'params': params,
     }
 
 
