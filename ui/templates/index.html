@@ -6027,11 +6027,20 @@ function collectMasterDataset(dataset) {
             const kind = field === 'default_shift_name' ? 'text' : 'number';
             const parsed = _masterCellValue(row.cells[1], kind);
             if (parsed === null) return { error: `Ongeldig getal bij ${field}.` };
+            // Een leeg veld werd 0 en hydrate maakte daar stil 1492 van:
+            // de tabel toonde 0, de berekening rekende met 1492.
+            if (field === 'fte_hours_per_year' && !(parsed > 0)) {
+                return { error: 'FTE-uren per jaar moet groter dan 0 zijn.' };
+            }
+            if (field === 'default_shift_name' && !String(parsed || '').trim()) {
+                return { error: 'Standaard ploegensysteem mag niet leeg zijn.' };
+            }
             out[field] = parsed;
         }
         for (const row of document.querySelectorAll('#masterDatasetBody tr[data-master-shift]')) {
             const parsed = _masterCellValue(row.cells[1], 'number');
             if (parsed === null) return { error: `Ongeldig getal bij ploeg ${row.dataset.masterShift}.` };
+            if (!(parsed > 0)) return { error: `Uren/maand bij ploeg ${row.dataset.masterShift} moet groter dan 0 zijn.` };
             out.shift_hours[row.dataset.masterShift] = parsed;
         }
         out.params = { ...((original || {}).params || {}) };
@@ -6124,13 +6133,19 @@ async function saveMasterDataset(dataset) {
     if (statusEl) statusEl.textContent = 'Opslaan...';
     const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
+        // base_version: de versie waarop dit grid geladen is. Een PATCH
+        // vervangt de hele dataset, dus zonder deze controle draait een
+        // tweede tabblad de wijziging van het eerste stil terug.
+        body: JSON.stringify({ value, base_version: _masterDatasetCache ? _masterDatasetCache.version : undefined }),
     });
     const data = await res.json();
     if (!res.ok || data.error) {
         alert(data.error || 'Opslaan mislukt');
         if (statusEl) statusEl.textContent = '';
         return;
+    }
+    if (data.warnings && data.warnings.length) {
+        notify(data.warnings.join(' · '), 'warning', 8000);
     }
     _renderMasterDataStatus(data);
     if (statusEl) statusEl.textContent = '';

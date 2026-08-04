@@ -354,13 +354,15 @@ def overlay_master_data(loader, master: dict) -> None:
     if 'purchased_and_produced' in cfg:
         # Masterdefault vervangt de werkboekbasis. De overlay draait NÁ
         # _apply_config_overrides in load_all, dus de sessie-PAP-override
-        # (wat-als) moet hier expliciet opnieuw gemerged worden — anders
-        # clobbert de store de override bij elke rebuild.
+        # (wat-als) moet hier expliciet opnieuw worden toegepast — anders
+        # clobbert de store de override bij elke rebuild. Vervangend, niet
+        # mergend: de override is de volledige PAP-set van de sessie, dus
+        # een verwijderde split moet ook echt weg blijven.
         loader.purchased_and_produced = {
             str(mat): float(val)
             for mat, val in (cfg.get('purchased_and_produced') or {}).items()
         }
-        loader._apply_pap_override()
+        loader._apply_pap_override(replace=True)
     finalize_shift_systems(loader)
     loader._extend_machine_availability_to_periods()
 

@@ -312,12 +312,25 @@ def test_overlay_pap_respects_session_override():
                         config_overrides={'purchased_and_produced': 'MAT-X:0.9'})
     with contextlib.redirect_stdout(io.StringIO()):
         hydrate_loader(loader, master)
-    loader._apply_pap_override()  # zoals _apply_config_overrides in load_all
+    loader._apply_pap_override(replace=True)  # zoals load_all op het storepad
     assert loader.purchased_and_produced['MAT-X'] == 0.9
 
     store = json.loads(json.dumps(master))
     store['config']['purchased_and_produced'] = {'MAT-X': 0.4, 'MAT-Y': 0.2}
     with contextlib.redirect_stdout(io.StringIO()):
         overlay_master_data(loader, store)
-    # Masterdefault levert MAT-Y; de sessie-override op MAT-X blijft winnen.
-    assert loader.purchased_and_produced == {'MAT-X': 0.9, 'MAT-Y': 0.2}
+    # De override is de VOLLEDIGE PAP-set van de sessie: MAT-X wint met 0.9
+    # en het via de editor verwijderde MAT-Y komt niet terug uit de store.
+    assert loader.purchased_and_produced == {'MAT-X': 0.9}
+
+    # Alles gewist ('' = bewust leeg) blijft ook echt leeg.
+    loader.config_overrides['purchased_and_produced'] = ''
+    with contextlib.redirect_stdout(io.StringIO()):
+        overlay_master_data(loader, store)
+    assert loader.purchased_and_produced == {}
+
+    # Zonder override (nooit gezet) geldt de masterdefault onverkort.
+    loader.config_overrides.pop('purchased_and_produced')
+    with contextlib.redirect_stdout(io.StringIO()):
+        overlay_master_data(loader, store)
+    assert loader.purchased_and_produced == {'MAT-X': 0.4, 'MAT-Y': 0.2}

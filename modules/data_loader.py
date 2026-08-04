@@ -126,7 +126,10 @@ class DataLoader:
         if self.master_data is not None and self.excel_file is None:
             from modules.master_data import finalize_shift_systems, hydrate_loader
             hydrate_loader(self, self.master_data)
-            self._apply_config_overrides()
+            # pap_replace: de store levert de masterdefault, de sessie-
+            # override is de volledige PAP-set van deze sessie (zie
+            # _apply_pap_override) — mergen zou verwijderingen negeren.
+            self._apply_config_overrides(pap_replace=True)
             finalize_shift_systems(self)
             self._apply_valuation_overrides()
             self._extend_machine_availability_to_periods()
@@ -336,7 +339,7 @@ class DataLoader:
             self.config = PlanningConfig(initial_date=datetime(2025, 12, 1))
             self.periods = self.config.get_periods()
 
-    def _apply_config_overrides(self):
+    def _apply_config_overrides(self, pap_replace: bool = False):
         """Apply global config overrides on top of what was read from the xlsm Config sheet."""
         ov = self.config_overrides
         if not ov or self.config is None:
@@ -352,26 +355,40 @@ class DataLoader:
                 self.config.unlimited_capacity_machine = machines
         if ov.get('forecast_align_to_month') is not None:
             self.config.forecast_align_to_month = bool(ov['forecast_align_to_month'])
-        self._apply_pap_override()
+        self._apply_pap_override(replace=pap_replace)
         if ov.get('site'):
             print(f"  [config override] site={self.config.site}, unlimited={self.config.unlimited_capacity_machine}")
 
-    def _apply_pap_override(self):
-        """Merge de sessie-PAP-override (wat-als) over de huidige basis.
+    def _apply_pap_override(self, replace: bool = False):
+        """Pas de sessie-PAP-override (wat-als) toe op de huidige basis.
 
         Apart aanroepbaar omdat de master-store-overlay de basis LATER kan
         vervangen (masterdefault); de sessie-override moet daarna opnieuw
-        winnen."""
+        winnen.
+
+        De override-string is een VOLLEDIGE opgave van de PAP-set van deze
+        sessie (de editor schrijft altijd de hele lijst weg), geen delta.
+        Met de masterstore als basis vervangt hij die basis daarom
+        (``replace=True``): anders kon een via de editor VERWIJDERDE split
+        nooit verdwijnen — de masterdefault zette hem bij elke herbouw stil
+        terug. Op het werkboekpad blijft het een merge over de
+        werkboekbasis (historisch gedrag, golden-relevant). Een lege string
+        betekent BEWUST leeg en is dus iets anders dan 'geen override'."""
         ov = self.config_overrides or {}
-        if not ov.get('purchased_and_produced'):
+        if 'purchased_and_produced' not in ov:
             return
-        for entry in str(ov['purchased_and_produced']).split(','):
+        parsed = {}
+        for entry in str(ov.get('purchased_and_produced') or '').split(','):
             parts = entry.strip().split(':')
             if len(parts) == 2:
                 try:
-                    self.purchased_and_produced[parts[0].strip()] = float(parts[1].strip())
+                    parsed[parts[0].strip()] = float(parts[1].strip())
                 except ValueError:
                     pass
+        if replace:
+            self.purchased_and_produced = parsed
+        else:
+            self.purchased_and_produced.update(parsed)
 
     def _apply_valuation_overrides(self):
         """Override valuation parameters with values from global config."""

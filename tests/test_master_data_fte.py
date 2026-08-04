@@ -86,7 +86,7 @@ def test_overlay_merges_onto_workbook_loader():
     """Werkboeksessie: de store vult de F2-CF-datasets aan, wist niets."""
     loader = _Loader()
     hydrate_loader(loader, _master())
-    loader._apply_pap_override = lambda: None
+    loader._apply_pap_override = lambda replace=False: None
     loader._extend_machine_availability_to_periods = lambda: None
     existing = loader.staffing_norms['G1']
 

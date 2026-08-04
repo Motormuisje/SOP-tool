@@ -578,6 +578,10 @@ _SESSION_SAVE_PATHS = {
     '/api/comments/delete',
     '/api/config/settings',
     '/api/uom/decisions',
+    # PAP-editor: schrijft het sessieveld dat elke herbouw leest, dus moet
+    # het ook de herstart overleven (zonder deze regel viel de sessie na een
+    # herstart terug op de masterdefault uit de store).
+    '/api/pap',
 }
 
 _SESSION_SAVE_METHODS = {'POST', 'DELETE'}
@@ -590,6 +594,7 @@ def _after_request_save(response):
         request.path in _SESSION_SAVE_PATHS
         or (request.method == 'DELETE' and request.path.startswith('/api/sessions/'))
         or (request.method == 'DELETE' and request.path.startswith('/api/scenarios/'))
+        or (request.method == 'DELETE' and request.path.startswith('/api/pap/'))
     ):
         if response.status_code < 500:
             _save_sessions_to_disk()

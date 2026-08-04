@@ -10,6 +10,7 @@ the store version. Edits apply at the NEXT calculation — no auto-rebuild.
 import contextlib
 import io
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -110,6 +111,87 @@ def _save_with_version_check(previous, candidate: dict, *, source_filename: str 
 
 _VERSION_CONFLICT_ERROR = ('De masterdata is intussen door iemand anders gewijzigd. '
                            'Ververs de pagina en probeer het opnieuw.')
+
+
+def _as_number(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _validate_config_values(value: dict, candidate: dict):
+    """Waarden die de hydratie STIL zou repareren, hier hard afwijzen.
+
+    Validatie-door-hydratie keurt goed wat hydrate aankan, maar hydrate
+    vervangt falsy/onzinnige waarden door defaults (0 uur → 1492, 0 maanden
+    → 12, lege site → 'NLX1'). De tabel en het masterwerkboek toonden dan de
+    ingevoerde waarde terwijl de berekening met iets anders rekende."""
+    warnings = []
+    if not str(value.get('site') or '').strip():
+        return 'Site (plantcode) mag niet leeg zijn.', warnings
+    for field, label in (('forecast_months', 'Forecast horizon'),
+                         ('forecast_actuals_months', 'Actuals-maanden')):
+        if field in value:
+            months = _as_number(value.get(field))
+            if months is None or months < 1 or months != int(months):
+                return f'{label} moet een geheel getal van minimaal 1 zijn.', warnings
+    initial_date = str(value.get('initial_date') or '').strip()
+    if not initial_date:
+        return 'Startmaand (anker) mag niet leeg zijn.', warnings
+    try:
+        datetime.fromisoformat(initial_date)
+    except ValueError:
+        return f'Startmaand "{initial_date}" is geen geldige datum (JJJJ-MM-DD).', warnings
+    for mat, fraction in (value.get('purchased_and_produced') or {}).items():
+        number = _as_number(fraction)
+        if number is None:
+            return f'Productiefractie bij {mat} is geen getal.', warnings
+        if not 0.0 <= number <= 1.0:
+            return (f'Productiefractie bij {mat} moet tussen 0 en 1 liggen '
+                    f'(was {number:g}).'), warnings
+    # Onbekende machinecodes zijn géén fout: op werkboeksessies komen de
+    # machines uit het maandwerkboek en staan ze (nog) niet in de store.
+    # Stil negeren mag ook niet — de tabel belooft "nooit bottleneck".
+    known = {str(m.get('machine_code')) for m in (candidate.get('machines') or [])}
+    if known:
+        unknown = [code for code in (value.get('unlimited_capacity_machine') or [])
+                   if str(code) not in known]
+        if unknown:
+            warnings.append(
+                'Onbekende machinecode(s) bij unlimited capacity: '
+                + ', '.join(map(str, unknown))
+                + ' — deze regel doet niets zolang de code niet bestaat.')
+    return None, warnings
+
+
+def _validate_fte_values(value: dict):
+    hours = _as_number(value.get('fte_hours_per_year'))
+    if hours is None or hours <= 0:
+        return 'FTE-uren per jaar moet groter dan 0 zijn.', []
+    shift_hours = value.get('shift_hours') or {}
+    for shift, shift_value in shift_hours.items():
+        number = _as_number(shift_value)
+        if number is None or number <= 0:
+            return f'Uren/maand bij ploeg "{shift}" moet groter dan 0 zijn.', []
+    default_shift = str(value.get('default_shift_name') or '').strip()
+    if not default_shift:
+        return 'Standaard ploegensysteem mag niet leeg zijn.', []
+    # hydrate_loader vult '3-shift system' altijd aan; een andere naam die
+    # niet bestaat, viel stil terug op 520 uur in de capaciteitsberekening.
+    if default_shift not in set(shift_hours) | {'3-shift system'}:
+        return (f'Standaard ploegensysteem "{default_shift}" bestaat niet in '
+                f'de ploegenuren.'), []
+    return None, []
+
+
+def _validate_dataset_values(dataset: str, value, candidate: dict):
+    """Retourneer (foutmelding|None, waarschuwingen)."""
+    if dataset == 'config' and isinstance(value, dict):
+        return _validate_config_values(value, candidate)
+    if dataset == 'fte' and isinstance(value, dict):
+        return _validate_fte_values(value)
+    return None, []
 
 
 def _restore_derived_machine_fields(previous: dict, incoming: dict) -> None:
@@ -510,8 +592,21 @@ def create_master_data_blueprint(
         expected = _DATASETS[dataset]
         if not isinstance(value, expected):
             return jsonify({'error': f'Ongeldig type voor "{dataset}".'}), 400
+        # De PATCH vervangt de HELE dataset, dus een bewerking die op een
+        # oudere versie is gebaseerd zou een tussentijdse wijziging van een
+        # ander tabblad volledig terugdraaien — met een 200 en een
+        # versiebump, zonder dat iemand het merkt. De client stuurt daarom
+        # de versie waarop zijn grid geladen is (oudere clients laten het
+        # veld weg en houden het oude gedrag).
+        base_version = body.get('base_version')
+        if base_version is not None and base_version != record.get('version'):
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
+
         candidate = dict(record.get('master') or {})
         candidate[dataset] = value
+        error, warnings = _validate_dataset_values(dataset, value, candidate)
+        if error:
+            return jsonify({'error': f'Wijziging geweigerd: {error}'}), 400
         try:
             _validate_master(candidate)
         except Exception as exc:
@@ -525,6 +620,8 @@ def create_master_data_blueprint(
         master_mirror.refresh_mirror()
         payload = _status_payload(new_record)
         payload.update({'success': True, 'requires_recalculate': True})
+        if warnings:
+            payload['warnings'] = warnings
         return jsonify(payload)
 
     return bp

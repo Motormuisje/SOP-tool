@@ -356,3 +356,69 @@ def test_full_product_wizard_add_lands_in_all_datasets(md_app):
     m = master_store.get_current_master_record()['master']
     assert m['safety_stock']['M9']['safety_stock'] == 60.0
 
+
+def test_patch_rejects_stale_base_version(md_app):
+    """Twee tabbladen op dezelfde versie: de tweede opslag vervangt de hele
+    dataset en zou de eerste stil terugdraaien. Met de basisversie erbij
+    krijgt de tweede een 409 in plaats van een geruisloze overschrijving."""
+    _seed_store(md_app.store)
+    fte = md_app.client.get('/api/master_data/fte').get_json()
+    base = fte['version']
+    value_a = dict(fte['value'])
+    value_a['fte_hours_per_year'] = 1500.0
+    first = md_app.client.patch('/api/master_data/fte',
+                                json={'value': value_a, 'base_version': base})
+    assert first.status_code == 200, first.get_json()
+
+    value_b = dict(fte['value'])  # nog op de OUDE stand geladen
+    value_b['default_shift_name'] = '3-shift system'
+    second = md_app.client.patch('/api/master_data/fte',
+                                 json={'value': value_b, 'base_version': base})
+    assert second.status_code == 409
+    after = md_app.client.get('/api/master_data/fte').get_json()['value']
+    assert after['fte_hours_per_year'] == 1500.0  # eerste bewerking staat er nog
+
+
+def test_patch_config_rejects_values_hydrate_would_silently_repair(md_app):
+    """Waarden die hydrate stil naar een default zou repareren, worden
+    afgewezen: anders toont de tabel iets anders dan de berekening doet."""
+    _seed_store(md_app.store)
+    cfg = md_app.client.get('/api/master_data/config').get_json()['value']
+    for field, bad in (('site', ''), ('forecast_months', 0),
+                       ('forecast_actuals_months', 0), ('initial_date', '')):
+        payload = dict(cfg)
+        payload[field] = bad
+        res = md_app.client.patch('/api/master_data/config', json={'value': payload})
+        assert res.status_code == 400, (field, res.get_json())
+    bad_pap = dict(cfg)
+    bad_pap['purchased_and_produced'] = {'MAT-1': 1.5}
+    res = md_app.client.patch('/api/master_data/config', json={'value': bad_pap})
+    assert res.status_code == 400
+    assert 'tussen 0 en 1' in res.get_json()['error']
+
+
+def test_patch_fte_rejects_zero_hours_and_unknown_default_shift(md_app):
+    _seed_store(md_app.store)
+    fte = md_app.client.get('/api/master_data/fte').get_json()['value']
+    zero = dict(fte); zero['fte_hours_per_year'] = 0
+    res = md_app.client.patch('/api/master_data/fte', json={'value': zero})
+    assert res.status_code == 400 and 'groter dan 0' in res.get_json()['error']
+
+    typo = dict(fte); typo['default_shift_name'] = '3-shift systeem'
+    res = md_app.client.patch('/api/master_data/fte', json={'value': typo})
+    assert res.status_code == 400 and 'bestaat niet' in res.get_json()['error']
+
+
+def test_patch_config_warns_about_unknown_unlimited_machine(md_app):
+    """Onbekende machinecode is geen fout (werkboekmachines bestaan niet in
+    de store), maar mag ook niet stil niets doen."""
+    _seed_store(md_app.store)
+    cfg = md_app.client.get('/api/master_data/config').get_json()['value']
+    payload = dict(cfg)
+    payload['unlimited_capacity_machine'] = ['ZZZ-BESTAAT-NIET']
+    res = md_app.client.patch('/api/master_data/config', json={'value': payload})
+    body = res.get_json()
+    assert res.status_code == 200, body
+    machines = md_app.client.get('/api/master_data/machines').get_json()['value']
+    if machines:  # zonder machines in de store is er niets om tegen te toetsen
+        assert any('ZZZ-BESTAAT-NIET' in w for w in body.get('warnings', []))

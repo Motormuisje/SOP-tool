@@ -229,7 +229,9 @@ def test_locale_parser_rejects_malformed_numbers(browser_page, golden_fixture_pa
             row.querySelector('[data-master-col="lot_size"] .master-edit').value = '3000,5,6';
             return (collectMasterDataset('safety_stock').error || '');
         }""")
-    assert "Ongeldig getal" in error
+    # Bewoording mag evolueren (de grid noemt inmiddels rij en kolom); wat
+    # telt is dat het veld wordt geweigerd en er niets wordt opgeslagen.
+    assert error.startswith("Ongeldig"), error
     page.evaluate("() => { const m = document.getElementById('masterDatasetInline'); if (m) m.style.display = 'none'; }")
     status = requests.get(base_url + "/api/master_data", timeout=60).json()
     assert status["version"] == version_before
