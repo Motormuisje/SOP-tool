@@ -394,6 +394,27 @@ def overlay_master_data(loader, master: dict) -> None:
     forecast_actuals_months — month-specific) and purchase ACTUALS (monthly
     data living in the Purchase sheet's date columns).
     """
+    # Sitepoort. Eén installatie draagt de masterdata van precies één site;
+    # een werkboek van een ándere site overlayen zou machines van twee sites
+    # mengen (PML01-03 bestaan op meerdere sites: de store-machine VERVANGT
+    # dan de werkboekmachine, met de OEE en groepsindeling van de verkeerde
+    # site) en de bemensingsnormen van de ene site stil op de groepen van de
+    # andere loslaten. Overslaan, luid melden, en de sessie rekent op zijn
+    # werkboek alleen. Een werkboek zonder expliciete Site-regel krijgt van de
+    # loader de defaultsite en passeert dus; dat is niet te onderscheiden van
+    # een echt sitegelijk werkboek en faalt in de veilige richting van de
+    # bestaande praktijk (alle huidige werkboeken dragen een Site-regel).
+    store_site = str(((master.get('config') or {}).get('site')) or '').strip()
+    workbook_site = str(getattr(loader.config, 'site', '') or '').strip() if loader.config else ''
+    if store_site and workbook_site and store_site != workbook_site:
+        loader.master_overlay_skipped = {'store_site': store_site,
+                                         'workbook_site': workbook_site}
+        print(f"  [master] WARNING: app-masterdata is van site {store_site}, "
+              f"het werkboek van site {workbook_site} — overlay overgeslagen; "
+              f"deze sessie rekent uitsluitend op zijn werkboek")
+        return
+    loader.master_overlay_skipped = None
+
     for item in master.get('materials') or []:
         fields = dict(item)
         fields['product_type'] = ProductType(fields['product_type'])

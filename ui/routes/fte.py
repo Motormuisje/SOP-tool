@@ -19,8 +19,41 @@ from typing import Callable
 from flask import Blueprint, jsonify, request
 
 from modules.fte_engine import FteEngine
+from ui import master_store
 
 _NO_ENGINE = 'Nog geen berekening uitgevoerd.'
+
+_SITE_MISMATCH = ('De FTE-werkbank is uitgeschakeld voor deze sessie: het werkboek '
+                  'is van site {workbook_site}, maar de masterdata van deze '
+                  'installatie is van site {store_site}. Bemensingsnormen en '
+                  'machines van {store_site} op een {workbook_site}-planning '
+                  'loslaten zou stil verkeerde cijfers geven.')
+
+
+def _site_mismatch(engine):
+    """Werkbank alleen op de site van de eigen masterdata.
+
+    Twee controles, allebei nodig. De overlay-vlag dekt sessies die met de
+    sitepoort zijn herbouwd; de live vergelijking dekt sessies die uit een
+    OUDER snapshot zijn hersteld — die zijn vóór de poort gebouwd, dragen de
+    vlag niet, maar hun config.site komt van het werkboek en verraadt de
+    menging alsnog. Zonder store (of zonder site) is er geen site-identiteit
+    om tegen te toetsen en blijft de werkbank gewoon beschikbaar.
+    """
+    data = getattr(engine, 'data', None)
+    if data is None:
+        return None
+    skipped = getattr(data, 'master_overlay_skipped', None)
+    if skipped:
+        return skipped
+    record = master_store.get_current_master_record()
+    if record is None:
+        return None
+    store_site = str((((record.get('master') or {}).get('config') or {}).get('site')) or '').strip()
+    session_site = str(getattr(getattr(data, 'config', None), 'site', '') or '').strip()
+    if store_site and session_site and store_site != session_site:
+        return {'store_site': store_site, 'workbook_site': session_site}
+    return None
 
 
 def _master_version(engine):
@@ -122,6 +155,9 @@ def create_fte_blueprint(
         sess, engine = get_active()
         if engine is None:
             return jsonify({'error': _NO_ENGINE}), 400
+        mismatch = _site_mismatch(engine)
+        if mismatch:
+            return jsonify({'error': _SITE_MISMATCH.format(**mismatch), **mismatch}), 409
         result = _result(engine)
         if result is None:
             return jsonify({'error': 'De FTE-werkbank is niet beschikbaar voor deze sessie.'}), 400
@@ -143,6 +179,9 @@ def create_fte_blueprint(
         sess, engine = get_active()
         if engine is None:
             return jsonify({'error': _NO_ENGINE}), 400
+        mismatch = _site_mismatch(engine)
+        if mismatch:
+            return jsonify({'error': _SITE_MISMATCH.format(**mismatch), **mismatch}), 409
         body = request.get_json(silent=True) or {}
         requested = body.get('active_combinations')
         if not isinstance(requested, list):
@@ -181,12 +220,14 @@ def create_fte_blueprint(
         source, so nothing can drift.
         """
         from modules.master_data import hydrate_fte_datasets
-        from ui.master_store import get_current_master_record
 
         sess, engine = get_active()
         if engine is None or getattr(engine, 'data', None) is None:
             return jsonify({'error': _NO_ENGINE}), 400
-        record = get_current_master_record()
+        mismatch = _site_mismatch(engine)
+        if mismatch:
+            return jsonify({'error': _SITE_MISMATCH.format(**mismatch), **mismatch}), 409
+        record = master_store.get_current_master_record()
         if record is None:
             return jsonify({'error': 'Geen masterdata in de app.'}), 400
         hydrate_fte_datasets(engine.data, record.get('master') or {},
@@ -211,6 +252,9 @@ def create_fte_blueprint(
         sess, engine = get_active()
         if engine is None:
             return jsonify({'error': _NO_ENGINE}), 400
+        mismatch = _site_mismatch(engine)
+        if mismatch:
+            return jsonify({'error': _SITE_MISMATCH.format(**mismatch), **mismatch}), 409
         body = request.get_json(silent=True) or {}
         variants = body.get('variants')
         if not isinstance(variants, list) or not variants:

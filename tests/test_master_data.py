@@ -242,6 +242,77 @@ def test_overlay_keeps_workbook_machine_availability():
 
 
 @pytest.mark.no_fixture
+def test_overlay_refuses_a_store_from_another_site():
+    """De sitepoort. Zonder deze poort mengde de overlay machines van twee
+    sites (PML01-03 bestaan op meerdere sites: de store-machine VERVING de
+    werkboekmachine, met de OEE en groepsindeling van de verkeerde site) en
+    liet hij Maastricht-bemensingsnormen stil op de groepen van een andere
+    site los. Gezien in het echt: een NLK1-werkboeksessie in de gedeelde
+    datamap, gebouwd tegen de NLX1-store (v109)."""
+    from modules.master_data import overlay_master_data
+
+    base = fake_master_loader()
+    master = json.loads(json.dumps(serialize_master(base), default=str))
+
+    loader = DataLoader(master_data=master)
+    with contextlib.redirect_stdout(io.StringIO()):
+        hydrate_loader(loader, master)
+    loader.config.site = 'NLK1'  # het werkboek verklaart een andere site
+    machines_before = {code: machine.name for code, machine in loader.machines.items()}
+    norms_before = dict(getattr(loader, 'staffing_norms', None) or {})
+
+    store = json.loads(json.dumps(master))
+    store['config']['site'] = 'NLX1'
+    store['machines'][0]['name'] = 'Vreemde-site-machine'
+    store['machines'].append({**store['machines'][0],
+                              'machine_id': 'PZZ99', 'machine_code': 'PZZ99',
+                              'name': 'Machine van de andere site'})
+    store['staffing_norms'] = {'ZZ_GROUP01': {
+        'code': 'ZZ_GROUP01', 'operators_per_hour': 3.0, 'scope': 'group'}}
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        overlay_master_data(loader, store)
+
+    assert loader.master_overlay_skipped == {'store_site': 'NLX1',
+                                             'workbook_site': 'NLK1'}
+    assert 'overlay overgeslagen' in output.getvalue()
+    # Niets van de vreemde store is binnengekomen: geen vervangen naam, geen
+    # extra machine, geen normen.
+    assert {c: m.name for c, m in loader.machines.items()} == machines_before
+    assert 'PZZ99' not in loader.machines
+    assert dict(getattr(loader, 'staffing_norms', None) or {}) == norms_before
+
+
+@pytest.mark.no_fixture
+def test_overlay_applies_when_sites_match_and_clears_the_flag():
+    """Dezelfde site (of een store zonder site: geen identiteit om tegen te
+    toetsen) moet gewoon blijven overlayen — de poort mag het normale pad
+    niet raken, en een eerder gezette vlag moet worden gewist."""
+    from modules.master_data import overlay_master_data
+
+    base = fake_master_loader()
+    master = json.loads(json.dumps(serialize_master(base), default=str))
+
+    for store_site in (master['config'].get('site') or 'NLX1', ''):
+        loader = DataLoader(master_data=master)
+        with contextlib.redirect_stdout(io.StringIO()):
+            hydrate_loader(loader, master)
+        loader.master_overlay_skipped = {'store_site': 'X', 'workbook_site': 'Y'}
+
+        store = json.loads(json.dumps(master))
+        store['config']['site'] = store_site
+        store['machines'][0]['name'] = 'App-naam'
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            overlay_master_data(loader, store)
+
+        first = store['machines'][0]['machine_code']
+        assert loader.machines[first].name == 'App-naam', f'store_site={store_site!r}'
+        assert loader.master_overlay_skipped is None
+
+
+@pytest.mark.no_fixture
 def test_forecast_align_flag_survives_store_round_trip():
     """forecast_align_to_month ontbrak in de serialisatie: werkboek-vrij viel
     de vlag altijd terug op de default en was de parallelle-run-validatie
@@ -281,7 +352,10 @@ def test_overlay_applies_structural_config_from_store():
     store['config']['unlimited_capacity_machine'] = ['PBA01']
     store['config']['forecast_align_to_month'] = False
     store['config']['purchased_and_produced'] = {'MAT-X': 0.4}
-    store['config']['site'] = 'XXX9'
+    # Site blijft die van het werkboek. Een AFWIJKENDE site testen kan hier
+    # niet meer: sinds de sitepoort weigert de overlay dan integraal (zie
+    # test_overlay_refuses_a_store_from_another_site) — een strikt sterkere
+    # garantie dan alleen het siteveld met rust laten.
     store['config']['forecast_actuals_months'] = 3
     original_anchor = loader.config.initial_date
     original_site = loader.config.site
@@ -294,7 +368,7 @@ def test_overlay_applies_structural_config_from_store():
     assert loader.config.forecast_align_to_month is False
     assert loader.purchased_and_produced == {'MAT-X': 0.4}
     assert loader.config.initial_date == original_anchor  # anker onaangetast
-    assert loader.config.site == original_site  # site stuurde de load zelf al
+    assert loader.config.site == original_site
     assert loader.forecast_actuals_months == original_actuals  # anker idem
 
 

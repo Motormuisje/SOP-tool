@@ -817,6 +817,28 @@ def build_seed(workbook_path: Path, sap_machines: dict | None = None) -> tuple[d
 # ── store bijwerken ─────────────────────────────────────────────────────────
 
 
+def workbook_site(workbook: Path):
+    """De site die het werkboek ZELF declareert, of None.
+
+    Niet loader.config.site gebruiken: de loader vult daar een defaultsite in
+    als de Config-sheet geen Site-regel heeft, en dan zou een werkboek van een
+    andere site zonder Site-regel de sitecontrole passeren. De aanroeper
+    behandelt None als weigering, niet als vrijbrief.
+    """
+    import pandas as pd
+
+    try:
+        config_sheet = pd.read_excel(str(workbook), sheet_name='Config')
+    except Exception:
+        return None
+    for _, row in config_sheet.iterrows():
+        label = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ''
+        value = row.iloc[1] if len(row) > 1 and pd.notna(row.iloc[1]) else None
+        if label == 'Site' and value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
 def load_machines(workbook: Path):
     """Machines uit een MS_RECONC-werkboek, in store-formaat."""
     import contextlib
@@ -831,7 +853,7 @@ def load_machines(workbook: Path):
         item = asdict(machine)
         item['shift_system'] = machine.shift_system.value
         machines.append(item)
-    return machines, loader.config.site
+    return machines, workbook_site(workbook)
 
 
 def _merge_dataset(existing: dict, seeded: dict, overwrite: bool):
@@ -929,12 +951,21 @@ def apply_seed(store_path: Path, datasets: dict, machines, verify_only: bool,
 
     # Sitecontrole: met SOP_APP_DATA_DIR gezet wijst de default store naar een
     # ZUSTERSITE. Maastricht-normen daar inschrijven is stille datavervuiling.
+    # Fail-closed: ook een store ZONDER site wordt geweigerd — "we weten niet
+    # welke site dit is" is geen reden om er dan maar in te schrijven (een
+    # legacy of handbewerkte store mist het config-blok juist het vaakst).
     store_site = str((master.get('config') or {}).get('site') or '').strip()
-    if expected_site and store_site and store_site != expected_site:
-        raise SystemExit(
-            f'Doelstore is site {store_site}, maar deze seed hoort bij '
-            f'{expected_site} ({store_path}). Gebruik --force-site als dit '
-            f'toch de bedoeling is.')
+    if expected_site:
+        if not store_site:
+            raise SystemExit(
+                f'Doelstore op {store_path} heeft geen site in zijn config; '
+                f'niet vast te stellen of dit de {expected_site}-store is. '
+                'Gebruik --force-site als dit toch de bedoeling is.')
+        if store_site != expected_site:
+            raise SystemExit(
+                f'Doelstore is site {store_site}, maar deze seed hoort bij '
+                f'{expected_site} ({store_path}). Gebruik --force-site als dit '
+                f'toch de bedoeling is.')
 
     fte = dict(master.get('fte') or {})
     old_hours = float(fte.get('fte_hours_per_year') or 0.0)
@@ -1145,8 +1176,14 @@ def main() -> int:
     site = None
     if args.machines_workbook:
         machines, site = load_machines(args.machines_workbook)
-        if site and not args.force_site and site != EXPECTED_SITE:
-            print(f'Weigering: {args.machines_workbook.name} is van site {site}, '
+        # Fail-closed: 'site is None' betekent dat de Config-sheet geen
+        # Site-regel heeft. Dat was eerder een vrijbrief (de loader-default
+        # maakte er stil NLX1 van), terwijl juist een vreemd of verminkt
+        # werkboek die regel mist.
+        if not args.force_site and site != EXPECTED_SITE:
+            beschrijving = (f'is van site {site}' if site
+                            else 'heeft geen Site-regel in de Config-sheet')
+            print(f'Weigering: {args.machines_workbook.name} {beschrijving}, '
                   f'maar deze seed hoort bij {EXPECTED_SITE}. Gebruik --force-site '
                   f'als dit toch de bedoeling is.')
             return 1

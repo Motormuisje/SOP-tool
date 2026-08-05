@@ -328,3 +328,78 @@ class TestMasterVersion:
         body = client.post('/api/fte/combinations',
                            json={'active_combinations': ['C1']}).get_json()
         assert 'master_version' in body
+
+
+class TestSitePoort:
+    """De werkbank is uitgeschakeld zodra sessie en masterdata van
+    verschillende sites zijn.
+
+    Gezien in het echt: een NLK1-werkboeksessie in de gedeelde datamap naast
+    de NLX1-store. Zonder poort toonde en berekende de werkbank machines van
+    twee sites door elkaar, met de bemensingsnormen van de verkeerde site.
+    """
+
+    def _store_with_site(self, tmp_path, site):
+        from ui import master_store
+
+        previous = master_store.get_store_path()
+        path = tmp_path / 'master_store.json'
+        master_store.set_store_path(path)
+        master_store.save_master_store(path, {'config': {'site': site},
+                                              'staffing_norms': {}},
+                                       source_filename='x')
+        master_store.set_store_path(path)
+        return previous
+
+    def test_all_four_endpoints_refuse_a_cross_site_session(self, tmp_path):
+        from ui import master_store
+
+        previous = self._store_with_site(tmp_path, 'NLX1')
+        try:
+            client, _, engine, saved = _env()
+            engine.data.config = SimpleNamespace(site='NLK1')
+
+            calls = [
+                ('GET', '/api/fte', None),
+                ('POST', '/api/fte/combinations', {'active_combinations': ['C1']}),
+                ('POST', '/api/fte/refresh', {}),
+                ('POST', '/api/fte/compare',
+                 {'variants': [{'label': 'x', 'active_combinations': []}]}),
+            ]
+            for method, url, payload in calls:
+                resp = (client.get(url) if method == 'GET'
+                        else client.post(url, json=payload))
+                assert resp.status_code == 409, (url, resp.status_code)
+                body = resp.get_json()
+                assert 'NLK1' in body['error'] and 'NLX1' in body['error'], (url, body)
+                assert body['workbook_site'] == 'NLK1'
+                assert body['store_site'] == 'NLX1'
+            # De weigering mag niets hebben aangeraakt of weggeschreven.
+            assert saved == []
+            assert engine.active_combinations == []
+        finally:
+            if previous:
+                master_store.set_store_path(previous)
+
+    def test_the_overlay_skip_flag_alone_is_enough(self):
+        """Sessies die met de sitepoort zijn herbouwd dragen de vlag; die moet
+        ook zonder (bereikbare) store volstaan — anders valt de bescherming weg
+        zodra iemand de store verwijdert terwijl de sessie nog draait."""
+        client, _, engine, _ = _env()
+        engine.data.master_overlay_skipped = {'store_site': 'NLX1',
+                                              'workbook_site': 'NLK1'}
+        resp = client.get('/api/fte')
+        assert resp.status_code == 409
+        assert 'NLK1' in resp.get_json()['error']
+
+    def test_matching_sites_pass(self, tmp_path):
+        from ui import master_store
+
+        previous = self._store_with_site(tmp_path, 'NLX1')
+        try:
+            client, _, engine, _ = _env()
+            engine.data.config = SimpleNamespace(site='NLX1')
+            assert client.get('/api/fte').status_code == 200
+        finally:
+            if previous:
+                master_store.set_store_path(previous)

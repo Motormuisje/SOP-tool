@@ -194,8 +194,9 @@ class DataLoader:
             if self.master_data is not None:
                 from modules.master_data import overlay_master_data
                 overlay_master_data(self, self.master_data)
-                print(f"  Master store overlay: {len(self.master_data.get('materials') or [])} "
-                      f"materialen (app is bron van waarheid)")
+                if getattr(self, 'master_overlay_skipped', None) is None:
+                    print(f"  Master store overlay: {len(self.master_data.get('materials') or [])} "
+                          f"materialen (app is bron van waarheid)")
             self._apply_valuation_overrides()
 
         # UoM-guard en masterdata-consistentie draaien op de DEFINITIEVE

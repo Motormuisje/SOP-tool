@@ -410,3 +410,60 @@ def test_every_mapped_machine_has_a_unique_purpose():
     for name, (code, label) in MODEL_TO_SAP.items():
         assert code and code.isalnum(), f'{name} heeft geen bruikbare SAP-code'
         assert label, f'{name} heeft geen omschrijving'
+
+
+class TestSiteGuardFailClosed:
+    """De twee fail-open-gaten in de sitecontrole, dichtgezet.
+
+    Een store ZONDER site en een werkboek ZONDER Site-regel waren allebei een
+    vrijbrief: de eerste sloeg de controle stil over, de tweede kreeg van de
+    loader de defaultsite en las dus als NLX1 — precies het soort store/bestand
+    (legacy, handbewerkt, verminkt) waar de controle voor bestaat.
+    """
+
+    def _datasets(self):
+        return {'fte_params': {}, 'fte_hours_per_year': 1492.48, 'shift_hours': {},
+                'staffing_norms': {}, 'indirect_activities': {},
+                'benchmark_throughput': {}}
+
+    def test_a_store_without_site_is_refused(self, tmp_path):
+        from ui import master_store
+
+        previous = master_store.get_store_path()
+        path = tmp_path / 'master_store.json'
+        master_store.set_store_path(path)
+        master_store.save_master_store(path, {'staffing_norms': {}},
+                                       source_filename='legacy')
+        master_store.set_store_path(path)
+        try:
+            with pytest.raises(SystemExit, match='geen site'):
+                apply_seed(path, self._datasets(), None, verify_only=True,
+                           expected_site=EXPECTED_SITE)
+            # --force-site (expected_site='') blijft de bewuste uitweg.
+            _, changes = apply_seed(path, self._datasets(), None, verify_only=True,
+                                    expected_site='')
+            assert changes
+        finally:
+            master_store.set_store_path(previous) if previous else None
+
+    def test_workbook_site_reads_the_config_sheet_not_the_loader_default(self, tmp_path):
+        import pandas as pd
+
+        from tools.seed_fte_masterdata import workbook_site
+
+        with_site = tmp_path / 'met_site.xlsx'
+        pd.DataFrame([['ForecastMonths', 12], ['Site', 'NLK1']]).to_excel(
+            with_site, sheet_name='Config', index=False, header=False)
+        assert workbook_site(with_site) == 'NLK1'
+
+        # Zonder Site-regel: None, niet de loader-default 'NLX1'.
+        without_site = tmp_path / 'zonder_site.xlsx'
+        pd.DataFrame([['ForecastMonths', 12]]).to_excel(
+            without_site, sheet_name='Config', index=False, header=False)
+        assert workbook_site(without_site) is None
+
+        # Zonder Config-sheet (of onleesbaar bestand): eveneens None.
+        no_config = tmp_path / 'geen_config.xlsx'
+        pd.DataFrame([['x']]).to_excel(no_config, sheet_name='Anders', index=False)
+        assert workbook_site(no_config) is None
+        assert workbook_site(tmp_path / 'bestaat_niet.xlsx') is None

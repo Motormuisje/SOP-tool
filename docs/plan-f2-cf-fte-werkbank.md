@@ -198,6 +198,7 @@ plus daar de eigen masterdata vullen) zit er niet in en is apart werk.
 | Wiring + cascade | `modules/planning_engine.py` (`recalculate_fte`), `ui/replay.py` |
 | Werkbank-routes en vergelijking | `ui/routes/fte.py` (`/api/fte`, `/combinations`, `/refresh`, `/compare`) |
 | Tabblad "Capaciteit & FTE" | `ui/templates/index.html` |
+| Sitepoort (NLX1-scope afgedwongen, niet alleen beleefd) | `modules/master_data.py` (`overlay_master_data` slaat een store van een andere site integraal over), `ui/routes/fte.py` (alle vier routes weigeren met 409 zodra werkboeksite ≠ storesite, ook voor sessies uit oudere snapshots), `tools/seed_fte_masterdata.py` (fail-closed bij store zonder site en werkboek zonder Site-regel) |
 | Machine-overrides + combinaties in scenario's | `ui/routes/scenarios.py` |
 | Tests | `tests/test_fte_engine.py`, `test_fte_engine_golden.py`, `test_routes_fte.py`, `test_master_data_fte.py` |
 
