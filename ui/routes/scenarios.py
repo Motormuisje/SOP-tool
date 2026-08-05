@@ -10,7 +10,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from modules.models import LineType
 from ui.replay import recalculate_fte_results
-from ui.state_snapshot import apply_machine_overrides
+from ui.state_snapshot import apply_machine_overrides, restore_machines_from_snapshot
 
 # Line types whose pending edits live in sess['capacity_overrides'] —
 # must match the branches in ui.volume_change.apply_volume_change.
@@ -246,6 +246,12 @@ def create_scenarios_blueprint(
         sess['capacity_overrides'], sess['inventory_overrides'] = derive_override_stores(restored_pending)
         sess['undo_stack'] = []
         sess['redo_stack'] = []
+        # Ook de MACHINE-historie: die verwijst naar waarden van vóór het
+        # laden. Eén klik op machine-undo zette anders een OEE terug die het
+        # geladen scenario juist niet heeft — dezelfde regel die
+        # /api/machines/reset en install_clean_engine_baseline al hanteren.
+        sess['machine_undo'] = []
+        sess['machine_redo'] = []
         rebuild_volume_caches_from_results(current_engine)
 
         # Machine-overrides en actieve combinaties horen bij het scenario.
@@ -255,6 +261,13 @@ def create_scenarios_blueprint(
         legacy_scenario_warning = None
         if 'machine_overrides' in sc:
             sess['machine_overrides'] = json.loads(json.dumps(sc.get('machine_overrides') or {}))
+            # EERST terug naar de schone baseline, dan pas de set van het
+            # scenario toepassen. apply_machine_overrides raakt alleen de
+            # machines die IN de set zitten, dus zonder deze stap bleef een
+            # live verlaagde OEE staan bij een scenario dat 'geen overrides'
+            # zegt — met een sessie die dat ook beweert, en een save die de
+            # oude waarde daarna weer als override wegschrijft.
+            restore_machines_from_snapshot(current_engine, sess.get('reset_baseline') or {})
             apply_machine_overrides(current_engine, sess['machine_overrides'])
         elif sess.get('machine_overrides'):
             legacy_scenario_warning = (

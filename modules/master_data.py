@@ -59,6 +59,70 @@ FTE_DATASETS = {
 # master dict key -> DataLoader attribute holding the hydrated objects.
 FTE_DATASET_ATTRS = {name: name for name in FTE_DATASETS}
 
+# Which field(s) make up the dict key of each F2-CF dataset. The key is what
+# the engine looks records up by, so a record whose identity FIELDS say
+# something else is a trap: editing machine_code in the workbook moved nothing,
+# while the override kept firing on the old machine under the old key. These
+# two must agree, and hydration is where that is enforced.
+FTE_DATASET_KEY_FIELDS = {
+    'staffing_norms': ('code',),
+    'labor_rates': ('function_group',),
+    'machine_combinations': ('combination_id',),
+    'indirect_activities': ('activity_id',),
+    'throughput_overrides': ('machine_code', 'material_number'),
+    'benchmark_throughput': ('machine_code', 'material_number'),
+}
+
+KEY_SEPARATOR = '|'
+
+
+def _reconcile_key(dataset: str, key: str, values: dict) -> str:
+    """Make the identity fields agree with the dict key, or refuse.
+
+    Returns the NORMALISED key — the caller must store the record under that
+    key. Comparing a stripped key but storing the raw one meant a record filed
+    under ' ZZ_GROUP01 ' passed validation and was then never found again: the
+    engine looks up 'ZZ_GROUP01', missed it, and silently fell back to the
+    Line 12 coefficient.
+
+    Empty identity fields are FILLED from the key (the common case: a row
+    added in the workbook where only the key column was typed). A field that
+    contradicts the key is rejected with the expected key in the message —
+    guessing which of the two the user meant would silently move a client norm
+    to the wrong machine.
+
+    Datasets with ONE identity field are never split: function_group,
+    activity_id and combination_id are free text, and a perfectly reasonable
+    'Operatie | Maalderij' would otherwise make the whole store unloadable —
+    not just the workbench, every calculation. Datasets with two fields split
+    at most once, so a '|' inside a material number stays with the material.
+    """
+    fields = FTE_DATASET_KEY_FIELDS.get(dataset)
+    if not fields:
+        return str(key)
+    raw = str(key)
+    if len(fields) == 1:
+        parts = [raw.strip()]
+    else:
+        parts = [part.strip()
+                 for part in raw.split(KEY_SEPARATOR, len(fields) - 1)]
+    if len(parts) != len(fields):
+        shape = KEY_SEPARATOR.join(fields)
+        raise ValueError(f'sleutel "{key}" heeft niet de vorm "{shape}".')
+    for field, part in zip(fields, parts):
+        current = str(values.get(field) or '').strip()
+        if not current:
+            values[field] = part
+        elif current != part:
+            expected = KEY_SEPARATOR.join(
+                str(values.get(f) or '').strip() or p
+                for f, p in zip(fields, parts))
+            raise ValueError(
+                f'sleutel "{key}" past niet bij {field}="{current}". '
+                f'Verwachte sleutel: "{expected}". Pas de sleutel én de '
+                f'kolom samen aan, of laat de kolom leeg.')
+    return KEY_SEPARATOR.join(parts)
+
 
 def _serialize_keyed(mapping) -> dict:
     return {str(key): asdict(item) for key, item in (mapping or {}).items()}
@@ -95,7 +159,7 @@ def _coerce(hint, value):
     return value
 
 
-def _hydrate_keyed(dc, raw) -> dict:
+def _hydrate_keyed(dc, raw, dataset: str = '') -> dict:
     """Build {key: dataclass} from stored dicts, ignoring unknown fields.
 
     Unknown keys are dropped rather than raising: a store written by a newer
@@ -110,9 +174,10 @@ def _hydrate_keyed(dc, raw) -> dict:
             raise TypeError(f'{dc.__name__} "{key}" is geen record.')
         try:
             values = {k: _coerce(hints[k], v) for k, v in item.items() if k in fields}
+            normalised = _reconcile_key(dataset, str(key), values)
         except (TypeError, ValueError) as exc:
             raise ValueError(f'{dc.__name__} "{key}": {exc}') from exc
-        out[str(key)] = dc(**values)
+        out[normalised] = dc(**values)
     return out
 
 
@@ -124,15 +189,24 @@ def serialize_fte_params(loader) -> dict:
     return params
 
 
-def hydrate_fte_datasets(loader, master: dict) -> None:
-    """Put the F2-CF datasets + FTE params onto a loader (replace semantics)."""
+def hydrate_fte_datasets(loader, master: dict, store_version=None) -> None:
+    """Put the F2-CF datasets + FTE params onto a loader (replace semantics).
+
+    ``store_version`` wordt op de loader vastgelegd als de versie waaruit deze
+    normen kómen. De werkbank stuurt die mee als base_version bij het opslaan;
+    de HUIDIGE storeversie melden zou betekenen dat een collega's wijziging —
+    die deze draaiende engine nog niet heeft gezien — stil wordt overschreven
+    zonder 409.
+    """
+    loader.fte_master_version = store_version
     fte = master.get('fte') or {}
     params = dict(FTE_PARAM_DEFAULTS)
     params.update({k: float(v) for k, v in (fte.get('params') or {}).items()
                    if v is not None})
     loader.fte_params = params
     for name, dc in FTE_DATASETS.items():
-        setattr(loader, FTE_DATASET_ATTRS[name], _hydrate_keyed(dc, master.get(name)))
+        setattr(loader, FTE_DATASET_ATTRS[name],
+                _hydrate_keyed(dc, master.get(name), name))
 
 
 def overlay_fte_datasets(loader, master: dict) -> None:
@@ -153,7 +227,7 @@ def overlay_fte_datasets(loader, master: dict) -> None:
             continue
         attr = FTE_DATASET_ATTRS[name]
         current = dict(getattr(loader, attr, None) or {})
-        current.update(_hydrate_keyed(dc, master.get(name)))
+        current.update(_hydrate_keyed(dc, master.get(name), name))
         setattr(loader, attr, current)
 
 

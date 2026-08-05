@@ -132,6 +132,27 @@ def test_workbook_without_fte_sheets_still_parses(tmp_path):
         assert name not in parsed  # afwezig ≠ leeg: de route behoudt de store
 
 
+def test_workbook_rejects_a_duplicate_key(tmp_path):
+    """Een regel dupliceren is de normale manier om er in Excel één bij te
+    maken; de sleutel vergeten aan te passen de normale vergissing. De tweede
+    rij overschreef de eerste stil, dus verdween er een norm zonder dat de
+    importdiff iets liet zien."""
+    import openpyxl
+
+    from modules.master_workbook import MasterWorkbookError
+
+    master = _master()
+    path = tmp_path / 'master.xlsx'
+    export_master_workbook(master, path, site='NLX1', store_version=3)
+    wb = openpyxl.load_workbook(str(path))
+    ws = wb[FTE_DATASET_SHEETS['staffing_norms']]
+    ws.append([ws.cell(row=2, column=c).value for c in range(1, ws.max_column + 1)])
+    wb.save(str(path))
+
+    with pytest.raises(MasterWorkbookError, match='twee keer'):
+        parse_master_workbook(path)
+
+
 def test_workbook_rejects_malformed_factor_map(tmp_path):
     import openpyxl
 
@@ -200,6 +221,149 @@ def test_patch_rejects_invalid_norm(md_app):
         'G2': {'code': 'G2', 'operators_per_hour': 'veel'}}})
     assert res.status_code == 400
     assert 'geweigerd' in res.get_json()['error']
+
+
+class TestKeyMatchesIdentity:
+    """De motor zoekt records op met hun DICT-SLEUTEL; de identiteitsvelden
+    staan er als bewerkbare kolommen naast. Liepen die uiteen, dan werkte een
+    doorzet-override nog steeds op de machine uit de sleutel terwijl het record
+    een andere machine noemde — zonder enige melding."""
+
+    def test_conflicting_identity_field_is_refused(self):
+        master = _master()
+        master['throughput_overrides']['PBA01|M1']['machine_code'] = 'PBA02'
+        with pytest.raises(ValueError, match='PBA01\\|M1'):
+            hydrate_loader(_Loader(), master)
+
+    def test_empty_identity_field_is_filled_from_the_key(self):
+        """De veelvoorkomende typfout: alleen de sleutelkolom ingevuld."""
+        master = _master()
+        master['throughput_overrides']['PBA01|M1']['machine_code'] = ''
+        master['throughput_overrides']['PBA01|M1']['material_number'] = ''
+        loader = _Loader()
+        hydrate_loader(loader, master)
+
+        override = loader.throughput_overrides['PBA01|M1']
+        assert override.machine_code == 'PBA01'
+        assert override.material_number == 'M1'
+
+    def test_machine_level_benchmark_key_keeps_its_empty_half(self):
+        master = _master()
+        master['benchmark_throughput']['PBA07|'] = {
+            'machine_code': '', 'material_number': '', 'mes_t_per_hour': 0.0,
+            'peer_t_per_hour': 6.21, 'mes_oee': 0.0, 'note': ''}
+        loader = _Loader()
+        hydrate_loader(loader, master)
+
+        entry = loader.benchmark_throughput['PBA07|']
+        assert entry.machine_code == 'PBA07'
+        assert entry.material_number == ''
+
+    def test_wrong_key_shape_is_refused(self):
+        master = _master()
+        master['throughput_overrides']['PBA01'] = dict(
+            master['throughput_overrides']['PBA01|M1'])
+        with pytest.raises(ValueError, match='vorm'):
+            hydrate_loader(_Loader(), master)
+
+    @pytest.mark.parametrize('dataset,key,record', [
+        ('labor_rates', 'Operatie | Maalderij',
+         {'function_group': 'Operatie | Maalderij', 'cost_per_fte_per_year': 1.0}),
+        ('indirect_activities', 'Laden|Lossen', {'activity_id': 'Laden|Lossen'}),
+        ('machine_combinations', 'MILL|SIEVE', {'combination_id': 'MILL|SIEVE'}),
+        ('staffing_norms', 'ZZ|G1', {'code': 'ZZ|G1', 'operators_per_hour': 1.0}),
+    ])
+    def test_a_pipe_in_a_free_text_identity_is_allowed(self, dataset, key, record):
+        """Deze datasets hebben ÉÉN identiteitsveld en dat is vrije tekst — de
+        toevoegknop zegt letterlijk 'Functiegroep'. Onvoorwaardelijk op '|'
+        splitsen maakte zo'n sleutel ongeldig en daarmee de HELE store
+        onlaadbaar: niet alleen de werkbank, maar elke berekening."""
+        master = _master()
+        master[dataset] = {key: record}
+
+        loader = _Loader()
+        hydrate_loader(loader, master)
+
+        assert key in getattr(loader, dataset)
+
+    def test_a_pair_key_still_needs_both_halves(self):
+        """Bij twee identiteitsvelden blijft de vorm wél afgedwongen."""
+        master = _master()
+        master['throughput_overrides'] = {'ALLEEN_MACHINE': {
+            'machine_code': 'M', 'material_number': 'P',
+            'throughput_t_per_hour': 1.0}}
+        with pytest.raises(ValueError, match='vorm'):
+            hydrate_loader(_Loader(), master)
+
+    def test_a_material_number_containing_a_pipe_lands_in_the_last_half(self):
+        """Met maxsplit blijft een '|' in het materiaalnummer bij het
+        materiaal horen in plaats van de sleutelvorm te breken."""
+        master = _master()
+        master['throughput_overrides'] = {'PBA01|M|1': {
+            'machine_code': '', 'material_number': '',
+            'throughput_t_per_hour': 1.0}}
+
+        loader = _Loader()
+        hydrate_loader(loader, master)
+
+        entry = loader.throughput_overrides['PBA01|M|1']
+        assert entry.machine_code == 'PBA01'
+        assert entry.material_number == 'M|1'
+
+    def test_a_key_with_surrounding_spaces_is_normalised(self):
+        """De sleutel werd gestript vergeleken maar ONgestript opgeslagen, dus
+        de motor zocht op 'ZZ_GROUP01' en vond ' ZZ_GROUP01 ' niet: de norm
+        werd stil genegeerd en de werkbank viel terug op de L12-coëfficiënt."""
+        master = _master()
+        master['staffing_norms'] = {' ZZ_GROUP01 ': {
+            'code': 'ZZ_GROUP01', 'operators_per_hour': 2.0, 'scope': 'group'}}
+
+        loader = _Loader()
+        hydrate_loader(loader, master)
+
+        assert 'ZZ_GROUP01' in loader.staffing_norms
+        assert loader.staffing_norms['ZZ_GROUP01'].operators_per_hour == 2.0
+
+    def test_combination_key_must_match_its_id(self):
+        master = _master()
+        master['machine_combinations']['C2'] = dict(master['machine_combinations']['C1'])
+        with pytest.raises(ValueError, match='C2'):
+            hydrate_loader(_Loader(), master)
+
+
+class TestDatasetValueValidation:
+    """Waarden die alleen door hydratie gingen: type klopte, betekenis niet."""
+
+    @pytest.mark.parametrize('dataset,value,fragment', [
+        ('staffing_norms',
+         {'G1': {'code': 'G1', 'operators_per_hour': 1.0, 'scope': 'groep'}},
+         'bereik'),
+        ('staffing_norms',
+         {'G1': {'code': 'G1', 'operators_per_hour': -1.0}},
+         '0 of hoger'),
+        ('indirect_activities',
+         {'X': {'activity_id': 'X', 'driver': 'per_moon'}},
+         'driver'),
+        ('throughput_overrides',
+         {'M|P': {'machine_code': 'M', 'material_number': 'P',
+                  'throughput_t_per_hour': 0.0}},
+         'groter dan 0'),
+        ('machine_combinations',
+         {'C': {'combination_id': 'C', 'throughput_factor': 0.0}},
+         'doorzetfactor'),
+    ])
+    def test_nonsense_is_refused_with_a_readable_reason(self, md_app, dataset, value, fragment):
+        res = md_app.client.patch(f'/api/master_data/{dataset}', json={'value': value})
+        assert res.status_code == 400
+        assert fragment in res.get_json()['error']
+
+    def test_a_driver_without_its_divider_warns_instead_of_failing(self, md_app):
+        value = {'T': {'activity_id': 'T', 'driver': 'per_truck',
+                       'hours_per_unit': 0.75, 'tons_per_truck': 0.0}}
+        res = md_app.client.patch('/api/master_data/indirect_activities',
+                                  json={'value': value})
+        assert res.status_code == 200
+        assert any('ton per truck' in w for w in res.get_json().get('warnings', []))
 
 
 def test_status_counts_include_fte_datasets(md_app):

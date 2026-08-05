@@ -42,6 +42,10 @@ CATEGORY_MACHINE = 'machine'
 CATEGORY_GROUP = 'group'
 CATEGORY_INDIRECT = 'indirect'
 
+# The control-room material, treated specially by CapacityEngine (no 1.0
+# fallback on its FTE coefficient) and therefore here too.
+CONTROL_ROOM_MATERIAL = 'ZZZZZ_CONTROLROOM'
+
 DRIVER_FIXED = 'fixed'
 DRIVER_PER_TON = 'per_ton'
 DRIVER_PER_TRUCK = 'per_truck'
@@ -75,6 +79,12 @@ class FteLine:
     operators_source: str = ''       # 'staffing_norms' | 'line12_coefficient' | 'combination'
     combination_id: str = ''
     hours: Dict[str, float] = field(default_factory=dict)
+    # De machineBELASTING achter deze regel. Gelijk aan `hours`, behalve bij
+    # een groep waarvan een combinatie machines overneemt: `hours` daalt dan
+    # (die bemensing zit in de combinatieregel) maar de machines draaien even
+    # hard door. De bezetting hoort naar dit getal te kijken, anders zakt de
+    # KPI zodra je operators combineert.
+    load_hours: Dict[str, float] = field(default_factory=dict)
     available_hours: Dict[str, float] = field(default_factory=dict)
     fte: Dict[str, float] = field(default_factory=dict)
     cost: Dict[str, float] = field(default_factory=dict)
@@ -85,10 +95,17 @@ class FteLine:
     throughput_peer: Optional[float] = None
     throughput_source: str = ''
     counts_in_total: bool = True
+    # Draagt deze regel een ploegvenster bij aan de bezettings-KPI? Een
+    # combinatieregel niet: haar machines brengen hun venster al via hun
+    # groep in.
+    counts_window: bool = True
 
     def utilization(self, period: str) -> float:
         available = self.available_hours.get(period, 0.0)
-        return self.hours.get(period, 0.0) / available if available > 0 else 0.0
+        if available <= 0:
+            return 0.0
+        load = self.load_hours or self.hours
+        return load.get(period, 0.0) / available
 
     def to_dict(self) -> dict:
         return {
@@ -101,6 +118,7 @@ class FteLine:
             'operators_source': self.operators_source,
             'combination_id': self.combination_id,
             'hours': self.hours,
+            'load_hours': self.load_hours or self.hours,
             'available_hours': self.available_hours,
             'fte': self.fte,
             'cost': self.cost,
@@ -110,6 +128,7 @@ class FteLine:
             'throughput_peer': self.throughput_peer,
             'throughput_source': self.throughput_source,
             'counts_in_total': self.counts_in_total,
+            'counts_window': self.counts_window,
         }
 
 
@@ -172,6 +191,12 @@ class FteResult:
     total_cost: Dict[str, float] = field(default_factory=dict)
     total_hours: Dict[str, float] = field(default_factory=dict)
     total_available_hours: Dict[str, float] = field(default_factory=dict)
+    # Uren van UITSLUITEND de regels die een beschikbaarheidsvenster hebben.
+    # De bezettings-KPI deelt hierdoor teller door noemer over dezelfde
+    # regels; met total_hours in de teller telden indirecte activiteiten,
+    # trucks en de controlekamer mee terwijl ze geen venster hebben — en
+    # rapporteerde de werkbank 119% bezetting op machines die op 19% liepen.
+    total_capacity_hours: Dict[str, float] = field(default_factory=dict)
     total_volume: Dict[str, float] = field(default_factory=dict)
     fte_hours_per_year: float = 0.0
     utilization_rate: float = 1.0
@@ -182,7 +207,8 @@ class FteResult:
 
     def utilization(self, period: str) -> float:
         available = self.total_available_hours.get(period, 0.0)
-        return self.total_hours.get(period, 0.0) / available if available > 0 else 0.0
+        return (self.total_capacity_hours.get(period, 0.0) / available
+                if available > 0 else 0.0)
 
     def staffed_fte(self, period: str) -> float:
         """Required FTE grossed up to the planned occupancy (the 85%)."""
@@ -204,6 +230,7 @@ class FteResult:
                 'cost': self.total_cost,
                 'hours': self.total_hours,
                 'available_hours': self.total_available_hours,
+                'capacity_hours': self.total_capacity_hours,
                 'volume': self.total_volume,
                 'utilization': {p: self.utilization(p) for p in self.periods},
                 'staffed_fte': {p: self.staffed_fte(p) for p in self.periods},
@@ -244,6 +271,7 @@ class FteEngine:
         self.throughput_overrides = getattr(data, 'throughput_overrides', None) or {}
         self.benchmarks = getattr(data, 'benchmark_throughput', None) or {}
         self._mill_cache: Optional[Set[str]] = None
+        self._compound_cache: Optional[Dict[str, List[str]]] = None
         combos: Dict[str, MachineCombination] = getattr(data, 'machine_combinations', None) or {}
         requested = set(active_combinations or [])
         self.active_combinations: Dict[str, MachineCombination] = {
@@ -253,6 +281,32 @@ class FteEngine:
             self.warnings.append(
                 f'Combinatie "{cid}" is niet (meer) beschikbaar in de masterdata '
                 f'en is genegeerd.')
+        self._drop_overlapping_combinations()
+
+    def _drop_overlapping_combinations(self) -> None:
+        """Eén machine kan maar door één operatorpool bemenst worden.
+
+        Staan er twee combinaties aan die dezelfde machine claimen, dan pakte
+        _combination_of willekeurig de eerste voor de doorzetfactor terwijl
+        BEIDE combinaties hun operators in rekening brachten — de machine werd
+        dubbel bemenst en de factor van de andere combinatie verdween. Dat is
+        geen geldige wat-als, dus we zetten de latere uit en zeggen het.
+        """
+        claimed: Dict[str, str] = {}
+        for cid in sorted(self.active_combinations):
+            combo = self.active_combinations[cid]
+            clash = [(mc, claimed[mc]) for mc in combo.machine_codes if mc in claimed]
+            if clash:
+                machines = ', '.join(mc for mc, _ in clash)
+                owner = clash[0][1]
+                self.warnings.append(
+                    f'Combinatie "{cid}" is uitgezet: {machines} zit al in '
+                    f'combinatie "{owner}". Eén machine kan maar in één actieve '
+                    f'combinatie zitten.')
+                del self.active_combinations[cid]
+                continue
+            for mc in combo.machine_codes:
+                claimed[mc] = cid
 
     # ── inputs from the planning rows ───────────────────────────────────────
 
@@ -352,6 +406,14 @@ class FteEngine:
         Falls back to the material master's ``fte_requirements`` — the Line 12
         coefficient — so a site that has not entered staffing norms yet sees
         exactly the FTE it saw before, instead of a table full of zeros.
+
+        The 1.0 fallback mirrors CapacityEngine._calculate_fte_requirements and
+        _calculate_truck_fte, which use it for groups and trucks. The control
+        room is the one place where VBA does NOT fall back
+        (_calculate_control_room_fte: "fte_requirements == 0 means this site's
+        control room needs no FTE"), so neither do we — otherwise a site that
+        needs no control-room crew would see 4,18 FTE and the labour cost that
+        comes with it appear out of nowhere, and Line 12 parity would break.
         """
         norm = self._norm_for(group_id, CATEGORY_GROUP)
         if norm is not None:
@@ -360,6 +422,8 @@ class FteEngine:
         coefficient = float(getattr(material, 'fte_requirements', 0.0) or 0.0)
         if coefficient > 0:
             return coefficient, 'line12_coefficient'
+        if group_id == CONTROL_ROOM_MATERIAL:
+            return 0.0, 'line12_coefficient'
         return 1.0, 'default'
 
     def _machine_operators(self, machine_code: str, group_id: str) -> tuple:
@@ -618,6 +682,12 @@ class FteEngine:
             adjustment = self._group_adjustment(group_id, machines, machine_rows,
                                                 effective_hours)
             hours = {p: row.values.get(p, 0.0) + adjustment[p] for p in self.periods}
+            # Zelfde som, maar ZONDER de machines die een combinatie overneemt:
+            # dat is de belasting van de machines zelf.
+            load_adjustment = self._group_adjustment(group_id, machines, machine_rows,
+                                                     effective_hours,
+                                                     exclude_combined=False)
+            load = {p: row.values.get(p, 0.0) + load_adjustment[p] for p in self.periods}
             operators, source = self._group_operators(group_id)
             fte = self._fte_from_hours(hours, operators)
             function_group = self._function_group('', group_id)
@@ -635,6 +705,7 @@ class FteEngine:
                 operators_per_hour=operators,
                 operators_source=source,
                 hours=hours,
+                load_hours=load,
                 available_hours=dict(shift_hours.get(group_id, {})),
                 fte=fte,
                 cost=self._cost(fte, function_group),
@@ -651,8 +722,12 @@ class FteEngine:
                              for mc in combo.machine_codes), default=0.0)
                      for p in self.periods}
             fte = self._fte_from_hours(hours, float(combo.operators or 0.0))
-            # The members run side by side, so the shift window the combination
-            # has to fit in is the widest of the groups it spans — not their sum.
+            # Het ploegvenster van deze machines wordt al door hun GROEPEN
+            # ingebracht; hier nog eens meetellen maakte de noemer van de
+            # bezettings-KPI groter dan het aantal beschikbare uren dat er
+            # werkelijk is. Per regel tonen we het wel (de breedste groep waar
+            # de combinatie overheen loopt), maar counts_window houdt het uit
+            # het totaal.
             member_groups = {(getattr(machines.get(mc), 'machine_group', '') or '')
                              for mc in combo.machine_codes}
             available = {p: max((shift_hours.get(g, {}).get(p, 0.0)
@@ -667,7 +742,9 @@ class FteEngine:
                 operators_source='combination',
                 combination_id=combo.combination_id,
                 hours=hours,
+                load_hours=_zeros(self.periods),
                 available_hours=available,
+                counts_window=False,
                 fte=fte,
                 cost=self._cost(fte, combo.function_group),
             ))
@@ -684,40 +761,138 @@ class FteEngine:
                 lines.append(line)
         return lines
 
-    def _group_adjustment(self, group_id, machines, machine_rows,
-                          effective_hours) -> Dict[str, float]:
-        """How much the group's hours move because of overrides/combinations.
+    def _combined_machines(self) -> Set[str]:
+        """Machines whose operators come from an active combination."""
+        return {mc for combo in self.active_combinations.values()
+                for mc in combo.machine_codes}
 
-        Measured as the aggregate of the member deltas, using the same
-        aggregation the group row itself used: MAX for a mill group (the
-        highest machine sets the group), SUM otherwise.
+    def _group_adjustment(self, group_id, machines, machine_rows,
+                          effective_hours, exclude_combined: bool = True) -> Dict[str, float]:
+        """How much the group's hours move relative to its Line 07 row.
+
+        Two effects, one number:
+
+        1. Throughput overrides and combination throughput factors change what
+           each member needs (``effective_hours`` vs the Line 07 machine row).
+        2. A member that is staffed by an ACTIVE COMBINATION leaves this group:
+           the combination already charges for it, so counting it here too
+           would staff the same machine twice. That is not hypothetical —
+           without this exclusion, switching on a labour-SAVING combination
+           made total FTE go UP.
+
+        Both are expressed against the group's own aggregation — MAX for a mill
+        group (the busiest machine sets the group), SUM otherwise — so the
+        result stays a delta on the Line 07 row and any user override of that
+        row keeps winning.
         """
-        members = [mc for mc, m in machines.items()
-                   if (getattr(m, 'machine_group', '') or '') == group_id
-                   and mc in effective_hours]
-        if not members:
+        base, effective, combined_keys = self._group_aggregation_members(
+            group_id, machines, machine_rows, effective_hours)
+        if not base:
             return _zeros(self.periods)
-        deltas = {}
-        for mc in members:
-            base = machine_rows[mc].values
-            deltas[mc] = {p: effective_hours[mc].get(p, 0.0) - base.get(p, 0.0)
-                          for p in self.periods}
-        if not any(abs(v) > 1e-12 for d in deltas.values() for v in d.values()):
+        keys = list(base)
+        remaining = ([key for key in keys if key not in combined_keys]
+                     if exclude_combined else list(keys))
+        unchanged = all(
+            abs(effective[key].get(p, 0.0) - base[key].get(p, 0.0)) <= 1e-12
+            for key in keys for p in self.periods)
+        if unchanged and len(remaining) == len(keys):
             return _zeros(self.periods)
+
         is_mill = group_id in self._mill_groups()
+
+        def aggregate(source, selected, period):
+            values = [source[key].get(period, 0.0) for key in selected]
+            if not values:
+                return 0.0
+            return max(values) if is_mill else sum(values)
+
         adjustment = _zeros(self.periods)
         for period in self.periods:
-            if is_mill:
-                # The group equals its largest member; re-derive that maximum
-                # from the adjusted member hours and express the difference.
-                base_max = max((machine_rows[mc].values.get(period, 0.0) for mc in members),
-                               default=0.0)
-                new_max = max((effective_hours[mc].get(period, 0.0) for mc in members),
-                              default=0.0)
-                adjustment[period] = new_max - base_max
-            else:
-                adjustment[period] = sum(deltas[mc][period] for mc in members)
+            adjustment[period] = (aggregate(effective, remaining, period)
+                                  - aggregate(base, keys, period))
         return adjustment
+
+    def _group_aggregation_members(self, group_id, machines, machine_rows,
+                                   effective_hours):
+        """De aggregatie-eenheden van een groep, exact zoals CapacityEngine ze
+        opbouwt in ``group_machine_hours``.
+
+        Dat is NIET simpelweg "de machines van de groep": machines van een
+        gegroepeerde productielijn worden daar vervangen door één pseudo-lid
+        met het GEMIDDELDE van de componenten. Wie ze los meetelt — of ze,
+        zoals een eerdere poging, gewoon weglaat — meet de delta tegen een
+        andere basis dan de Line 07-rij zelf. Weglaten was aantoonbaar erger:
+        een groep die alleen uit compound-machines bestaat hield dan haar
+        volledige uren terwijl de combinatie er nog eens bovenop kwam.
+
+        Retourneert (basis, effectief, sleutels die een combinatie bemenst).
+        """
+        combined_machines = self._combined_machines()
+        base: Dict[str, Dict[str, float]] = {}
+        effective: Dict[str, Dict[str, float]] = {}
+        combined_keys: Set[str] = set()
+        handled: Set[str] = set()
+
+        for line, components in self._compound_lines().items():
+            known = [code for code in components if code in machines]
+            handled.update(known)
+            if not known:
+                continue
+            owner = getattr(machines[known[0]], 'machine_group', '') or ''
+            if owner != group_id:
+                continue
+            key = f'__compound_{line}'
+
+            def _average(source, period, components=components):
+                # CapacityEngine deelt door het AANTAL COMPONENTEN, ook als een
+                # component onbekend is (die telt als 0). Exact overnemen.
+                total = sum((source.get(code) or {}).get(period, 0.0)
+                            for code in components)
+                return total / len(components) if components else 0.0
+
+            base[key] = {p: _average({c: machine_rows[c].values for c in known
+                                      if c in machine_rows}, p)
+                         for p in self.periods}
+            effective[key] = {p: _average(effective_hours, p) for p in self.periods}
+            inside = [code for code in known if code in combined_machines]
+            if inside and len(inside) == len(known):
+                combined_keys.add(key)
+            elif inside:
+                self.warnings.append(
+                    f'Groep {group_id}: {", ".join(sorted(inside))} zit in een '
+                    f'combinatie maar de gegroepeerde productielijn "{line}" '
+                    f'draait als geheel; de combinatie is niet uit het '
+                    f'groepstotaal gehaald.')
+
+        for code, machine in machines.items():
+            if (getattr(machine, 'machine_group', '') or '') != group_id:
+                continue
+            if code in handled or code not in effective_hours or code not in machine_rows:
+                continue
+            base[code] = dict(machine_rows[code].values)
+            effective[code] = effective_hours[code]
+            if code in combined_machines:
+                combined_keys.add(code)
+        return base, effective, combined_keys
+
+    def _compound_lines(self) -> Dict[str, List[str]]:
+        """{lijnnaam: [machinecodes]} van elke gegroepeerde productielijn.
+
+        Zelfde afleiding als CapacityEngine: materialen met
+        grouped_production_line == '1' en een production_line als
+        'PML01-PML02-PML03'.
+        """
+        if self._compound_cache is None:
+            lines: Dict[str, List[str]] = {}
+            for material in (getattr(self.data, 'materials', None) or {}).values():
+                if str(getattr(material, 'grouped_production_line', '') or '').strip() != '1':
+                    continue
+                name = str(getattr(material, 'production_line', '') or '').strip()
+                if '-' not in name or name in lines:
+                    continue
+                lines[name] = [part.strip() for part in name.split('-') if part.strip()]
+            self._compound_cache = lines
+        return self._compound_cache
 
     def _mill_groups(self) -> Set[str]:
         if self._mill_cache is None:
@@ -757,36 +932,29 @@ class FteEngine:
 
     def _fill_totals(self, result: FteResult) -> None:
         for bucket in ('total_fte', 'total_direct_fte', 'total_indirect_fte',
-                       'total_cost', 'total_hours', 'total_available_hours'):
+                       'total_cost', 'total_hours', 'total_available_hours',
+                       'total_capacity_hours'):
             setattr(result, bucket, _zeros(self.periods))
-        combined_members = {mc for combo in self.active_combinations.values()
-                            for mc in combo.machine_codes}
-        combined_groups = {
-            (getattr(m, 'machine_group', '') or '')
-            for code, m in (getattr(self.data, 'machines', None) or {}).items()
-            if code in combined_members}
+        # No group-level skipping here: _group_adjustment already removes the
+        # machines an active combination staffs, member by member. Skipping a
+        # whole group instead only worked when a combination covered ALL of it;
+        # a combination spanning part of a group (or two groups) then counted
+        # its machines twice and made a labour-saving combination raise FTE.
         for line in result.lines:
             if not line.counts_in_total:
-                continue
-            # A group whose machines are all inside an active combination is
-            # staffed by that combination; counting both would double the crew.
-            if (line.category == CATEGORY_GROUP and not line.combination_id
-                    and line.key in combined_groups
-                    and self._group_fully_combined(line.key, combined_members)):
                 continue
             for period in self.periods:
                 result.total_fte[period] += line.fte.get(period, 0.0)
                 result.total_cost[period] += line.cost.get(period, 0.0)
                 result.total_hours[period] += line.hours.get(period, 0.0)
-                result.total_available_hours[period] += line.available_hours.get(period, 0.0)
+                available = (line.available_hours.get(period, 0.0)
+                             if line.counts_window else 0.0)
+                result.total_available_hours[period] += available
+                if available > 0:
+                    result.total_capacity_hours[period] += (
+                        (line.load_hours or line.hours).get(period, 0.0))
                 if line.category == CATEGORY_INDIRECT:
                     result.total_indirect_fte[period] += line.fte.get(period, 0.0)
                 else:
                     result.total_direct_fte[period] += line.fte.get(period, 0.0)
         result.total_volume = self._volume(LineType.DEMAND_FORECAST.value, '')
-
-    def _group_fully_combined(self, group_id: str, combined_members: Set[str]) -> bool:
-        machines = getattr(self.data, 'machines', None) or {}
-        members = [code for code, m in machines.items()
-                   if (getattr(m, 'machine_group', '') or '') == group_id]
-        return bool(members) and all(code in combined_members for code in members)

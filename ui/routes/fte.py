@@ -23,18 +23,49 @@ from modules.fte_engine import FteEngine
 _NO_ENGINE = 'Nog geen berekening uitgevoerd.'
 
 
+def _master_version(engine):
+    """Storeversie waaruit de GETOONDE normen komen — niet de huidige.
+
+    De werkbank bewerkt bemensingsnormen via de gewone masterdata-PATCH, die
+    een schrijfactie op een oudere versie met 409 weigert. Meldden we hier de
+    huidige storeversie, dan zou juist het gevaarlijke geval erdoor glippen:
+    een draaiende engine toont nog de oude norm ("edits apply at the NEXT
+    calculation"), de gebruiker corrigeert wat hij ziet, en de tussentijdse
+    wijziging van een collega verdwijnt zonder conflict.
+
+    De engine draagt de versie waaruit hij gebouwd is; alleen als die er niet
+    is (werkboeksessie zonder store) valt hij terug op None, en dan stuurt de
+    frontend geen base_version mee.
+    """
+    version = getattr(getattr(engine, 'data', None), 'fte_master_version', None)
+    if version is not None:
+        return version
+    source = getattr(engine, '_resolved_master_source', None)
+    return getattr(source, 'version', None)
+
+
 def _combination_catalog(engine) -> list:
+    """Catalogus voor de UI, geïdentificeerd op de DICT-SLEUTEL.
+
+    De motor zoekt combinaties op met hun sleutel (FteEngine.__init__ filtert
+    `combos.items()`), dus de checkbox moet diezelfde sleutel terugsturen. Het
+    veld combination_id gebruiken ging mis zodra sleutel en veld uiteenliepen:
+    twee rijen kregen hetzelfde vinkje en de motor activeerde de verkeerde
+    combinatie — met een 200 en zonder waarschuwing. Hydratie dwingt inmiddels
+    af dat ze gelijk zijn; hier houden we het sluitend voor het geval dat een
+    oudere store nog iets anders bevat.
+    """
     combos = getattr(getattr(engine, 'data', None), 'machine_combinations', None) or {}
     return [{
-        'combination_id': combo.combination_id,
-        'name': combo.name or combo.combination_id,
+        'combination_id': key,
+        'name': combo.name or key,
         'machine_codes': list(combo.machine_codes),
         'operators': combo.operators,
         'throughput_factor': combo.throughput_factor,
         'throughput_factor_by_machine': dict(combo.throughput_factor_by_machine),
         'function_group': combo.function_group,
         'is_active': combo.is_active,
-    } for combo in sorted(combos.values(), key=lambda c: c.combination_id)]
+    } for key, combo in sorted(combos.items())]
 
 
 def _summary(result) -> dict:
@@ -56,7 +87,11 @@ def _summary(result) -> dict:
                             if periods else 0.0),
         'hours_total': _sum(result.total_hours),
         'available_hours_total': _sum(result.total_available_hours),
-        'utilization': (_sum(result.total_hours) / _sum(result.total_available_hours)
+        # Bezetting alleen over regels MET een venster (zie
+        # FteResult.total_capacity_hours): anders duwen indirecte activiteiten
+        # en de controlekamer het percentage boven de 100.
+        'capacity_hours_total': _sum(result.total_capacity_hours),
+        'utilization': (_sum(result.total_capacity_hours) / _sum(result.total_available_hours)
                         if _sum(result.total_available_hours) > 0 else 0.0),
         'labor_cost_total': _sum(result.total_cost),
         'volume_total': _sum(result.total_volume),
@@ -95,6 +130,7 @@ def create_fte_blueprint(
             'fte': result.to_dict(),
             'combinations': _combination_catalog(engine),
             'active_combinations': list((sess or {}).get('active_combinations') or []),
+            'master_version': _master_version(engine),
         })
 
     @bp.route('/api/fte/combinations', methods=['POST'])
@@ -116,14 +152,21 @@ def create_fte_blueprint(
         if unknown:
             return jsonify({'error': 'Onbekende combinatie(s): ' + ', '.join(unknown)}), 400
 
-        active = [str(c) for c in requested]
-        sess['active_combinations'] = active
-        engine.recalculate_fte(active)
+        engine.recalculate_fte([str(c) for c in requested])
+        # De motor kan een combinatie weigeren (twee combinaties die dezelfde
+        # machine claimen). Antwoorden met de GEVRAAGDE lijst liet het vinkje
+        # aan staan voor iets wat niet meerekent, en zette dat ook zo in de
+        # sessie — dan zeggen vinkje, sessie en motor drie verschillende
+        # dingen. Neem daarom over wat de motor daadwerkelijk heeft toegepast.
+        applied = list(engine.fte_results.active_combinations)
+        sess['active_combinations'] = applied
         save_sessions_to_disk()
         return jsonify({
             'success': True,
             'fte': engine.fte_results.to_dict(),
-            'active_combinations': active,
+            'active_combinations': applied,
+            'warnings': engine.fte_results.warnings,
+            'master_version': _master_version(engine),
         })
 
     @bp.route('/api/fte/refresh', methods=['POST'])
@@ -146,13 +189,15 @@ def create_fte_blueprint(
         record = get_current_master_record()
         if record is None:
             return jsonify({'error': 'Geen masterdata in de app.'}), 400
-        hydrate_fte_datasets(engine.data, record.get('master') or {})
+        hydrate_fte_datasets(engine.data, record.get('master') or {},
+                             store_version=record.get('version'))
         engine.recalculate_fte()
         return jsonify({
             'success': True,
             'fte': engine.fte_results.to_dict(),
             'combinations': _combination_catalog(engine),
             'active_combinations': list((sess or {}).get('active_combinations') or []),
+            'master_version': record.get('version'),
         })
 
     @bp.route('/api/fte/compare', methods=['POST'])

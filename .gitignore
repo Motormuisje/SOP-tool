@@ -64,3 +64,11 @@ dist/
 
 scratch/
 tmp/
+
+# ===== Lokale referentie en testartefacten =====
+# _oude_code/ is een bewuste back-up-/referentiemap (zie de README erin); de
+# originelen zijn hoe dan ook uit de historie te halen, dus ze horen niet
+# nogmaals in de repo. test-results/ is de standaard uitvoermap van de
+# browsertests.
+_oude_code/
+test-results/

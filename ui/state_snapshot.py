@@ -250,6 +250,29 @@ def engine_has_manual_edits(engine) -> bool:
     return False
 
 
+def restore_machines_from_snapshot(engine, snapshot: dict) -> bool:
+    """Zet OEE, beschikbaarheid en ploeguren terug naar de snapshotwaarden.
+
+    Apart aanroepbaar omdat het laden van een scenario dit ook nodig heeft:
+    apply_machine_overrides past alleen de sleutels toe die IN de set zitten en
+    keert bij een lege set meteen terug, dus een scenario zonder overrides liet
+    een live verlaagde OEE gewoon staan. De sessie zei dan 'geen overrides'
+    terwijl de motor met de oude waarde rekende — en de eerstvolgende
+    sessie-save schreef die waarde weer als override weg.
+    """
+    machines_snap = snapshot.get('machines') if isinstance(snapshot, dict) else None
+    if not machines_snap or getattr(engine, 'data', None) is None:
+        return False
+    for mc_code, snap in machines_snap.items():
+        machine = engine.data.machines.get(mc_code)
+        if machine is None:
+            continue
+        machine.oee = float(snap.get('oee', machine.oee))
+        machine.availability_by_period = dict(snap.get('availability_by_period') or {})
+        machine.shift_hours_override = snap.get('shift_hours_override')
+    return True
+
+
 def restore_engine_state(engine, snapshot: dict, global_config: dict) -> None:
     restored_results = {}
     for lt, snap_rows in (snapshot.get('results') or {}).items():
@@ -282,15 +305,7 @@ def restore_engine_state(engine, snapshot: dict, global_config: dict) -> None:
         engine.data.purchased_and_produced = dict(pap_snap)
         global_config['purchased_and_produced'] = format_purchased_and_produced(pap_snap)
 
-    machines_snap = snapshot.get('machines')
-    if machines_snap and getattr(engine, 'data', None) is not None:
-        for mc_code, snap in machines_snap.items():
-            machine = engine.data.machines.get(mc_code)
-            if machine is None:
-                continue
-            machine.oee = float(snap.get('oee', machine.oee))
-            machine.availability_by_period = dict(snap.get('availability_by_period') or {})
-            machine.shift_hours_override = snap.get('shift_hours_override')
+    restore_machines_from_snapshot(engine, snapshot)
 
     # Snapshots van vóór dit veld kennen geen combinaties: dan niets doen in
     # plaats van naar leeg terugzetten (dat zou een actieve combinatie stil

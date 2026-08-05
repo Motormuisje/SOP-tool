@@ -185,12 +185,144 @@ def _validate_fte_values(value: dict):
     return None, []
 
 
+_STAFFING_SCOPES = ('group', 'machine')
+_INDIRECT_DRIVERS = ('fixed', 'per_ton', 'per_truck', 'per_machine')
+
+
+def _nonneg_error(key, item, field, label):
+    """Een AFWEZIG veld is geen fout — de dataclass heeft er een default voor
+    en een PATCH mag een deelrecord sturen. Alleen een ingevulde waarde die
+    geen getal is, of negatief, wordt geweigerd."""
+    if field not in item or item.get(field) is None:
+        return None
+    number = _as_number(item.get(field))
+    if number is None or number < 0:
+        return f'{key}: {label} moet een getal van 0 of hoger zijn.'
+    return None
+
+
+def _check_staffing_norm(key, item, _known):
+    error = _nonneg_error(key, item, 'operators_per_hour', 'operators per draaiuur')
+    if error:
+        return error, []
+    scope = str(item.get('scope') or 'group').strip()
+    if scope not in _STAFFING_SCOPES:
+        return (f'{key}: bereik "{scope}" bestaat niet — kies '
+                f'{" of ".join(_STAFFING_SCOPES)}.'), []
+    return None, []
+
+
+def _check_labor_rate(key, item, _known):
+    return _nonneg_error(key, item, 'cost_per_fte_per_year', 'kost per FTE per jaar'), []
+
+
+def _check_combination(key, item, known_machines):
+    error = _nonneg_error(key, item, 'operators', 'operators')
+    if error:
+        return error, []
+    factors = dict(item.get('throughput_factor_by_machine') or {})
+    if item.get('throughput_factor') is not None:
+        factors['throughput_factor'] = item['throughput_factor']
+    for name, factor in factors.items():
+        number = _as_number(factor)
+        if number is None or number <= 0:
+            return (f'{key}: doorzetfactor bij {name} moet groter dan 0 zijn '
+                    f'(1 = geen effect).'), []
+    warnings = []
+    codes = [str(c) for c in (item.get('machine_codes') or [])]
+    if not codes:
+        warnings.append(f'Combinatie {key} heeft geen machines en doet niets.')
+    unknown = [c for c in codes if known_machines and c not in known_machines]
+    if unknown:
+        warnings.append(f'Combinatie {key}: onbekende machinecode(s) ' + ', '.join(unknown) + '.')
+    return None, warnings
+
+
+def _check_indirect_activity(key, item, _known):
+    driver = str(item.get('driver') or 'fixed').strip()
+    if driver not in _INDIRECT_DRIVERS:
+        return (f'{key}: driver "{driver}" bestaat niet — kies '
+                f'{", ".join(_INDIRECT_DRIVERS)}.'), []
+    for field, label in (('hours_per_unit', 'uren per eenheid'),
+                         ('tons_per_truck', 'ton per truck'),
+                         ('machines_per_fte', 'machines per FTE'),
+                         ('fte_per_period', 'FTE per periode'),
+                         ('fte_per_shift', 'FTE per ploeg')):
+        error = _nonneg_error(key, item, field, label)
+        if error:
+            return error, []
+    # Een driver zonder zijn deler levert geen uren op. Dat is geen fout (de
+    # regel kan bewust nog leeg staan) maar mag niet stil blijven.
+    warnings = []
+    if driver == 'per_truck' and (_as_number(item.get('tons_per_truck')) or 0) <= 0:
+        warnings.append(f'Activiteit {key} rekent per truck maar heeft geen ton per '
+                        f'truck; er komen geen uren uit.')
+    if driver == 'per_machine' and (_as_number(item.get('machines_per_fte')) or 0) <= 0:
+        warnings.append(f'Activiteit {key} rekent per machine maar heeft geen machines '
+                        f'per FTE; er komt geen FTE uit.')
+    return None, warnings
+
+
+def _check_throughput_override(key, item, _known):
+    number = _as_number(item.get('throughput_t_per_hour'))
+    if number is None or number <= 0:
+        return (f'{key}: doorzet moet groter dan 0 zijn — 0 of negatief zou '
+                f'oneindig veel uren betekenen.'), []
+    return None, []
+
+
+def _check_benchmark(key, item, _known):
+    for field, label in (('mes_t_per_hour', 'MES-doorzet'),
+                         ('peer_t_per_hour', 'PEER-doorzet'),
+                         ('mes_oee', 'MES-OEE')):
+        error = _nonneg_error(key, item, field, label)
+        if error:
+            return error, []
+    return None, []
+
+
+_FTE_DATASET_CHECKS = {
+    'staffing_norms': _check_staffing_norm,
+    'labor_rates': _check_labor_rate,
+    'machine_combinations': _check_combination,
+    'indirect_activities': _check_indirect_activity,
+    'throughput_overrides': _check_throughput_override,
+    'benchmark_throughput': _check_benchmark,
+}
+
+
+def _validate_fte_dataset_values(dataset: str, value: dict, candidate: dict):
+    """Waardecontrole op de zes F2-CF-datasets.
+
+    Hydratie keurt hier alles goed wat naar het juiste TYPE te casten is, dus
+    een bereik 'groep' (Nederlands) of een driver 'per_moon' kwam stil binnen
+    en zorgde pas in de werkbank voor een verkeerd of ontbrekend getal. Hard
+    afwijzen wat aantoonbaar fout is; waarschuwen bij wat de regel alleen
+    uitschakelt.
+    """
+    check = _FTE_DATASET_CHECKS.get(dataset)
+    if check is None:
+        return None, []
+    known_machines = {str(m.get('machine_code')) for m in (candidate.get('machines') or [])}
+    warnings = []
+    for key, item in (value or {}).items():
+        if not isinstance(item, dict):
+            return f'{key}: geen record.', warnings
+        error, item_warnings = check(key, item, known_machines)
+        if error:
+            return error, warnings
+        warnings.extend(item_warnings)
+    return None, warnings
+
+
 def _validate_dataset_values(dataset: str, value, candidate: dict):
     """Retourneer (foutmelding|None, waarschuwingen)."""
     if dataset == 'config' and isinstance(value, dict):
         return _validate_config_values(value, candidate)
     if dataset == 'fte' and isinstance(value, dict):
         return _validate_fte_values(value)
+    if dataset in FTE_DATASETS and isinstance(value, dict):
+        return _validate_fte_dataset_values(dataset, value, candidate)
     return None, []
 
 
@@ -429,9 +561,18 @@ def create_master_data_blueprint(
         # Werkboeken die vóór de F2-CF-bladen zijn geëxporteerd missen die
         # bladen. De import is een full-replace, dus zonder deze stap wist een
         # oude kopie stilzwijgend de bemensings-, loon- en combinatiedata.
+        preserved = set()
         for dataset in FTE_DATASETS:
             if dataset not in incoming and dataset in previous:
                 incoming[dataset] = previous[dataset]
+                preserved.add(dataset)
+        # Zelfde verhaal voor de FTE-parameters: die staan in het FTE-blad als
+        # 'params.*'-regels. Een werkboek van vóór die regels leverde een
+        # fte-dict zonder 'params', waarmee de bezettingsgraad en de hele
+        # bruto→netto-afleiding stilzwijgend naar de defaults terugvielen.
+        previous_params = (previous.get('fte') or {}).get('params')
+        if previous_params and not (incoming.get('fte') or {}).get('params'):
+            incoming.setdefault('fte', {})['params'] = previous_params
 
         # Excel-precisieverlies ('' vs None, 15-cijferige floats) terugzetten
         # naar de exacte store-waarde: een ongewijzigde round-trip geeft een
@@ -441,6 +582,25 @@ def create_master_data_blueprint(
         _restore_derived_machine_fields(previous, incoming)
 
         deactivated = _deactivate_missing_materials(previous, incoming)
+
+        # Dezelfde waardecontrole als de PATCH-route. Zonder deze lus kwam via
+        # het werkboek binnen wat het grid weigert: een lege site (hydratie
+        # maakt er 'NLX1' van, waarna een NLK1/NLU1-installatie élke
+        # extractrij wegfiltert), forecast_months = 0 (wordt stil 12) of een
+        # ploegensysteem dat niet in de ploegenuren staat (Line 11 valt terug
+        # op 520 u en vervalst de kolom 'Beschikbaar' in de werkbank).
+        import_warnings = []
+        for dataset in _DATASETS:
+            # Alleen wat ECHT uit dit werkboek komt. Datasets die we zojuist
+            # uit de store hebben overgenomen (het werkboek miste die bladen)
+            # mogen deze import niet tegenhouden: die stonden er al, en de
+            # gebruiker kan ze hier niet repareren.
+            if dataset not in incoming or dataset in preserved:
+                continue
+            error, warnings = _validate_dataset_values(dataset, incoming[dataset], incoming)
+            if error:
+                return jsonify({'error': f'Werkboek geweigerd: {error}'}), 400
+            import_warnings.extend(warnings)
 
         try:
             _validate_master(incoming)
@@ -467,6 +627,7 @@ def create_master_data_blueprint(
                 'diff': _workbook_diff(previous, incoming),
                 'deactivated': deactivated,
                 'stale_export': stale_export,
+                'warnings': import_warnings,
                 'message': 'Controleer de wijzigingen en bevestig om door te voeren.',
             })
 
@@ -477,7 +638,7 @@ def create_master_data_blueprint(
         master_mirror.refresh_mirror()
         payload = _status_payload(record)
         payload.update({'success': True, 'requires_recalculate': True,
-                        'deactivated': deactivated})
+                        'deactivated': deactivated, 'warnings': import_warnings})
         return jsonify(payload)
 
     @bp.route('/api/master_data/materials/add', methods=['POST'])

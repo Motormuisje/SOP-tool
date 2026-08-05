@@ -4,6 +4,9 @@ Synthetische engine-stub met dezelfde recalculate_fte-semantiek als
 PlanningEngine, zodat de routes zonder klantwerkboek testbaar zijn.
 """
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from flask import Flask
 
@@ -142,3 +145,186 @@ def test_compare_reports_utilization_cost_and_productivity():
 def test_compare_rejects_an_empty_variant_list():
     client, _, _, _ = _env()
     assert client.post('/api/fte/compare', json={'variants': []}).status_code == 400
+
+
+class TestErrorPaths:
+    """De foutpaden van het HTTP-oppervlak. Een 500 met traceback op een lege
+    body is geen acceptabel antwoord in klantsoftware."""
+
+    def test_get_computes_the_workbench_if_it_was_never_built(self):
+        client, _, engine, _ = _env()
+        engine.fte_results = None
+
+        body = client.get('/api/fte').get_json()
+
+        assert body['success'] is True
+        assert engine.fte_results is not None
+
+    def test_get_reports_when_the_workbench_cannot_be_built(self):
+        """Een engine zonder recalculate_fte (oud of gestubd) mag geen 500 geven."""
+        app = Flask(__name__)
+        app.config['TESTING'] = True
+        engine = SimpleNamespace(data=None, results={}, value_results={},
+                                 fte_results=None)
+        app.register_blueprint(create_fte_blueprint(lambda: ({}, engine), lambda: None))
+
+        res = app.test_client().get('/api/fte')
+
+        assert res.status_code == 400
+        assert 'niet beschikbaar' in res.get_json()['error']
+
+    @pytest.mark.parametrize('payload', [
+        {},
+        {'active_combinations': 'C1'},
+        {'active_combinations': {'C1': True}},
+    ])
+    def test_combinations_needs_a_real_list(self, payload):
+        client, _, _, _ = _env()
+        assert client.post('/api/fte/combinations', json=payload).status_code == 400
+
+    def test_the_response_reports_what_the_engine_applied(self):
+        """Twee combinaties die dezelfde machine claimen: de motor zet er één
+        uit. Antwoorden met de GEVRAAGDE lijst liet het vinkje aanstaan voor
+        iets wat niet meerekent — en zette dat ook zo in de sessie."""
+        from modules.models import MachineCombination
+
+        client, sess, engine, _ = _env()
+        engine.data.machine_combinations['C2'] = MachineCombination(
+            combination_id='C2', machine_codes=['MC1'], operators=1.0)
+
+        body = client.post('/api/fte/combinations',
+                           json={'active_combinations': ['C1', 'C2']}).get_json()
+
+        assert body['active_combinations'] == ['C1']
+        assert sess['active_combinations'] == ['C1']
+        assert engine.fte_results.active_combinations == ['C1']
+        assert any('C2' in w for w in body['warnings'])
+
+    def test_combinations_accepts_duplicates_without_double_counting(self):
+        client, _, engine, _ = _env()
+        once = client.post('/api/fte/combinations',
+                           json={'active_combinations': ['C1']}).get_json()
+        twice = client.post('/api/fte/combinations',
+                            json={'active_combinations': ['C1', 'C1']}).get_json()
+
+        assert twice['fte']['totals']['hours'] == once['fte']['totals']['hours']
+
+    def test_refresh_without_a_store_is_a_clean_400(self):
+        from ui import master_store
+
+        previous = master_store.get_store_path()
+        master_store.set_store_path(Path('bestaat-niet') / 'master_store.json')
+        try:
+            client, _, _, _ = _env()
+            res = client.post('/api/fte/refresh')
+            assert res.status_code == 400
+            assert 'masterdata' in res.get_json()['error']
+        finally:
+            master_store.set_store_path(previous) if previous else None
+
+    def test_refresh_without_an_engine_is_a_clean_400(self):
+        app = Flask(__name__)
+        app.config['TESTING'] = True
+        app.register_blueprint(create_fte_blueprint(lambda: (None, None), lambda: None))
+
+        assert app.test_client().post('/api/fte/refresh').status_code == 400
+
+    @pytest.mark.parametrize('variants,fragment', [
+        ('geen lijst', 'niet-lege lijst'),
+        ([], 'niet-lege lijst'),
+        (['geen object'], 'geen object'),
+        ([{'active_combinations': 'C1'}], 'moet een lijst zijn'),
+        ([{'active_combinations': ['NOPE']}], 'onbekende combinatie'),
+    ])
+    def test_compare_rejects_malformed_variants(self, variants, fragment):
+        client, _, _, _ = _env()
+        res = client.post('/api/fte/compare', json={'variants': variants})
+
+        assert res.status_code == 400
+        assert fragment in res.get_json()['error']
+
+    def test_compare_without_an_engine_is_a_clean_400(self):
+        app = Flask(__name__)
+        app.config['TESTING'] = True
+        app.register_blueprint(create_fte_blueprint(lambda: (None, None), lambda: None))
+
+        res = app.test_client().post('/api/fte/compare',
+                                     json={'variants': [{'active_combinations': []}]})
+        assert res.status_code == 400
+
+    def test_compare_handles_missing_margin_without_crashing(self):
+        """gross_margin_total is None zonder valuatieparameters; de
+        delta-berekening moet die overslaan in plaats van te struikelen."""
+        client, _, _, _ = _env()
+        body = client.post('/api/fte/compare', json={'variants': [
+            {'label': 'Met C1', 'active_combinations': ['C1']}]}).get_json()
+
+        variant = body['variants'][1]
+        assert variant['summary']['gross_margin_total'] is None
+        assert 'gross_margin_total' not in variant['delta']
+        assert 'hours_total' in variant['delta']
+
+
+class TestMasterVersion:
+    """De werkbank bewerkt bemensingsnormen via de masterdata-PATCH, die een
+    schrijfactie op een oudere versie met 409 weigert. Daarvoor moet de
+    werkbank de versie meesturen waaruit de GETOONDE normen komen.
+
+    De huidige storeversie melden zou juist het gevaarlijke geval doorlaten:
+    masterdata-edits gelden pas bij de volgende berekening, dus een draaiende
+    engine toont een oudere norm. Stuurt de werkbank dan de nieuwe versie mee,
+    dan is er geen conflict en verdwijnt de wijziging van de collega.
+    """
+
+    def test_version_follows_the_engine_not_the_store(self, tmp_path):
+        from ui import master_store
+
+        previous = master_store.get_store_path()
+        path = tmp_path / 'master_store.json'
+        master_store.set_store_path(path)
+        first = master_store.save_master_store(path, {'staffing_norms': {}},
+                                               source_filename='x')
+        master_store.save_master_store(path, {'staffing_norms': {}},
+                                       previous=first, edited=True)
+        master_store.set_store_path(path)
+        try:
+            client, _, engine, _ = _env()
+            # De engine is gebouwd uit versie 1; de store staat inmiddels op 2.
+            engine.data.fte_master_version = 1
+            assert master_store.get_current_master_record()['version'] == 2
+
+            assert client.get('/api/fte').get_json()['master_version'] == 1
+        finally:
+            master_store.set_store_path(previous) if previous else None
+
+    def test_version_is_none_when_the_engine_has_none(self):
+        """Werkboeksessie zonder store: geen versie om te melden, dus laat de
+        frontend base_version weg in plaats van er een te verzinnen."""
+        client, _, _, _ = _env()
+        for payload in (client.get('/api/fte').get_json(),
+                        client.post('/api/fte/combinations',
+                                    json={'active_combinations': []}).get_json()):
+            assert payload['master_version'] is None
+
+    def test_refresh_stamps_the_version_it_read(self, tmp_path):
+        from ui import master_store
+
+        previous = master_store.get_store_path()
+        path = tmp_path / 'master_store.json'
+        master_store.set_store_path(path)
+        master_store.save_master_store(path, {'staffing_norms': {}}, source_filename='x')
+        master_store.set_store_path(path)
+        try:
+            client, _, engine, _ = _env()
+            body = client.post('/api/fte/refresh').get_json()
+
+            assert body['master_version'] == 1
+            assert engine.data.fte_master_version == 1
+        finally:
+            master_store.set_store_path(previous) if previous else None
+
+    def test_combinations_response_carries_the_version(self):
+        client, _, _, _ = _env()
+        body = client.post('/api/fte/combinations',
+                           json={'active_combinations': ['C1']}).get_json()
+        assert 'master_version' in body

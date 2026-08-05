@@ -155,6 +155,17 @@ def create_sessions_blueprint(
                 if sess.get('engine') is not None
                 else copy.deepcopy(sess.get('machine_overrides', {}))
             ),
+            # Actieve machinecombinaties (F2-CF) zijn dezelfde soort
+            # wat-als-capaciteitsstaat als machine_overrides. Zonder deze regel
+            # startte het duplicaat met een lege set: dezelfde naam, andere FTE,
+            # andere loonkosten en een andere EBITDA dan de instantie waarvan
+            # het een kopie heet te zijn — zonder melding.
+            'active_combinations': list(
+                getattr(sess.get('engine'), 'active_combinations', None)
+                if sess.get('engine') is not None
+                and getattr(sess.get('engine'), 'active_combinations', None) is not None
+                else (sess.get('active_combinations') or [])
+            ),
             'reset_baseline': copy.deepcopy(sess.get('reset_baseline')),
             'forecast_defaults': copy.deepcopy(
                 (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('forecast_defaults')

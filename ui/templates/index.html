@@ -5308,7 +5308,7 @@ const _MASTER_DATASETS = {
     // rijen toevoegen moet vanuit de app kunnen (addable).
     staffing_norms: { label: 'Bemensingsnormen', kind: 'dict',
         addable: 'Machinegroep (ZZ…) of machinecode',
-        identity: key => ({ code: key }),
+        identity: key => ({ code: key, scope: 'group', operators_per_hour: 1 }),
         cols: [['operators_per_hour', 'Operators per draaiuur', 'number'],
                ['scope', 'Bereik', 'select:group|machine'],
                ['function_group', 'Functiegroep', 'text'],
@@ -5320,7 +5320,11 @@ const _MASTER_DATASETS = {
                ['description', 'Omschrijving', 'text']] },
     machine_combinations: { label: 'Machinecombinaties', kind: 'dict',
         addable: 'Combinatie-ID',
-        identity: key => ({ combination_id: key }),
+        // Defaults meegeven: een lege getalcel wordt 0, en doorzetfactor 0
+        // wordt (terecht) geweigerd — zonder deze regel gaf elke nieuwe
+        // combinatie een 400 en was de knop onbruikbaar.
+        identity: key => ({ combination_id: key, throughput_factor: 1,
+                            operators: 1, is_active: true }),
         cols: [['name', 'Naam', 'text'],
                ['machine_codes', 'Machines', 'csv'],
                ['operators', 'Operators (samen)', 'number'],
@@ -5331,7 +5335,7 @@ const _MASTER_DATASETS = {
                ['is_active', 'Beschikbaar', 'bool']] },
     indirect_activities: { label: 'Indirecte activiteiten', kind: 'dict',
         addable: 'Activiteit-ID',
-        identity: key => ({ activity_id: key }),
+        identity: key => ({ activity_id: key, driver: 'fixed', is_active: true }),
         cols: [['name', 'Naam', 'text'],
                ['driver', 'Driver', 'select:fixed|per_ton|per_truck|per_machine'],
                ['fte_per_period', 'FTE/periode', 'number'],
@@ -5670,6 +5674,8 @@ async function importMasterWorkbook(event) {
             msg += _masterDiffLine('Gewijzigd', d.materials_changed);
             msg += _masterDiffLine('Ontbreekt in werkboek (wordt GEDEACTIVEERD, niet verwijderd)', d.materials_removed);
             if ((d.datasets_changed || []).length) msg += `\nOverige datasets gewijzigd: ${d.datasets_changed.join(', ')}`;
+            // Waarschuwingen vóór 'Doorvoeren?', zodat annuleren nog kan.
+            if ((data.warnings || []).length) msg += '\n\nLet op:\n- ' + data.warnings.join('\n- ');
             if (!d.materials_added?.length && !d.materials_changed?.length && !d.materials_removed?.length && !(d.datasets_changed || []).length) {
                 msg += '\n(geen inhoudelijke wijzigingen gevonden)';
             }
@@ -5689,6 +5695,7 @@ async function importMasterWorkbook(event) {
             return;
         }
         _renderMasterDataStatus(data);
+        if ((data.warnings || []).length) notify(data.warnings.join(' · '), 'warning', 9000);
         const deact = (data.deactivated || []).length;
         notify(`Masterwerkboek geïmporteerd (versie ${data.version})`
             + (deact ? `; ${deact} ontbrekend materiaal gedeactiveerd` : '')
@@ -11915,9 +11922,19 @@ async function resetMachineEdits() {
 // machine (masterdata — opslaan gaat via de gewone masterdata-PATCH, zodat er
 // per getal precies één eigenaar blijft).
 
-let _fteState = { data: null, combinations: [], active: [], dirtyNorms: {} };
+// masterVersion: de storeversie waarop de getoonde normen zijn gebaseerd. Die
+// gaat als base_version mee bij het opslaan, zodat een wijziging uit een tweede
+// tabblad een 409 geeft in plaats van stil te worden overschreven.
+let _fteState = { data: null, combinations: [], active: [], dirtyNorms: {}, masterVersion: null };
 
-async function loadFteWorkbench() {
+async function loadFteWorkbench({ force = false } = {}) {
+    // Van tabblad wisselen roept dit opnieuw aan. Onopgeslagen normen mogen
+    // daarbij niet verdwijnen — maar de verversing blokkeren was erger: dan
+    // bleef het tabblad na een herberekening of sessiewissel oude uren,
+    // kosten en EBITDA tonen. We halen dus WEL de nieuwe cijfers op en houden
+    // de getypte normen als overlay (_fteOperators legt ze er bij het
+    // tekenen overheen).
+    const pending = force ? {} : { ...(_fteState.dirtyNorms || {}) };
     try {
         const res = await fetch('/api/fte');
         const data = await res.json();
@@ -11930,11 +11947,16 @@ async function loadFteWorkbench() {
         _fteState.data = data.fte;
         _fteState.combinations = data.combinations || [];
         _fteState.active = data.active_combinations || [];
-        _fteState.dirtyNorms = {};
+        _fteState.masterVersion = data.master_version ?? null;
+        _fteState.dirtyNorms = pending;
         document.getElementById('fteEmpty').classList.add('hidden');
         document.getElementById('fteBody').classList.remove('hidden');
         _renderFtePeriodOptions();
         renderFteWorkbench();
+        if (Object.keys(pending).length) {
+            notify('De werkbank is bijgewerkt; je niet-opgeslagen bemensingsnormen '
+                   + 'staan er nog. Controleer ze voordat je opslaat.', 'warning', 7000);
+        }
     } catch (err) {
         notify('Werkbank laden mislukt: ' + err, 'error', 5000);
     }
@@ -11974,7 +11996,11 @@ function renderFteWorkbench() {
     document.getElementById('fteKpiTotal').textContent = _fmtNlNum(fteAvg, 2);
     document.getElementById('fteKpiIndirect').textContent = _fmtNlNum(_fteAgg(data.totals.indirect_fte, 'avg'), 2);
     document.getElementById('fteKpiStaffed').textContent = _fmtNlNum(_fteAgg(data.totals.staffed_fte, 'avg'), 2);
-    const hours = _fteAgg(data.totals.hours);
+    // Teller: alleen de uren van regels MET een beschikbaarheidsvenster.
+    // Met álle uren telden indirecte activiteiten en de controlekamer mee in
+    // de teller maar niet in de noemer — 119% bezetting op machines die op
+    // 19% liepen.
+    const hours = _fteAgg(data.totals.capacity_hours || data.totals.hours);
     const available = _fteAgg(data.totals.available_hours);
     document.getElementById('fteKpiUtilization').textContent =
         available > 0 ? _fmtNlNum(hours / available * 100, 1) + '%' : '—';
@@ -12037,8 +12063,13 @@ async function toggleFteCombination(id, on) {
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Combinatie schakelen mislukt.', 'error', 5000); loadFteWorkbench(); return; }
         _fteState.data = data.fte;
+        // De motor kan een combinatie weigeren (twee die dezelfde machine
+        // claimen). We nemen over wat hij TOEPASTE, zodat het vinkje niet
+        // aan blijft staan voor iets wat niet meerekent.
         _fteState.active = data.active_combinations || [];
         renderFteWorkbench();
+        const refused = (data.warnings || []).filter(w => w.includes('uitgezet'));
+        if (refused.length) notify(refused.join(' · '), 'warning', 8000);
     } catch (err) {
         notify('Combinatie schakelen mislukt: ' + err, 'error', 5000);
     }
@@ -12068,8 +12099,7 @@ function _renderFteTable(showMachines) {
         const hours = _fteAgg(line.hours);
         const available = _fteAgg(line.available_hours);
         const util = available > 0 ? hours / available : null;
-        const utilClass = util === null ? 'text-slate-500'
-            : (util > 0.95 ? 'text-red-400' : (util > 0.8 ? 'text-yellow-400' : 'text-green-400'));
+        const utilClass = util === null ? 'text-slate-500' : _fteUtilizationClass(util);
         const editable = line.category !== 'indirect' && !line.combination_id;
         const operators = _fteOperators(line);
         const dirty = `${line.category}:${line.key}` in _fteState.dirtyNorms;
@@ -12143,9 +12173,34 @@ async function saveFteNorms() {
         }
         const patch = await fetch('/api/master_data/staffing_norms', {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ value }),
+            // base_version is de versie waarop de GETOONDE normen stoelen, niet
+            // die van de GET hierboven: als iemand anders sinds het openen van
+            // de werkbank een norm heeft gewijzigd, moet dit een 409 geven in
+            // plaats van zijn wijziging stil onder de onze te begraven.
+            body: JSON.stringify({ value, base_version: _fteState.masterVersion ?? undefined }),
         });
         const saved = await patch.json();
+        if (patch.status === 409) {
+            // NIET loadFteWorkbench: die haalt de versie uit de DRAAIENDE
+            // engine, en juist die is verouderd — dat was een gesloten lus
+            // waarin elke volgende poging opnieuw 409 gaf tot de sessie
+            // herberekend werd. /api/fte/refresh leest de store opnieuw in en
+            // stempelt de actuele versie, dus daarna kun je gewoon opslaan.
+            // De getypte normen blijven staan: die zijn nog steeds wat de
+            // gebruiker wil, alleen de basis eronder is verschoven.
+            const recovered = await fetch('/api/fte/refresh', { method: 'POST' });
+            const fresh = await recovered.json();
+            if (recovered.ok && fresh.fte) {
+                _fteState.data = fresh.fte;
+                _fteState.combinations = fresh.combinations || _fteState.combinations;
+                _fteState.masterVersion = fresh.master_version ?? _fteState.masterVersion;
+                renderFteWorkbench();
+            }
+            notify('Iemand anders heeft de bemensingsnormen gewijzigd. De werkbank toont nu '
+                   + 'die versie; jouw wijzigingen staan er nog. Controleer ze en sla opnieuw op.',
+                   'warning', 9000);
+            return;
+        }
         if (!patch.ok || saved.error) { notify(saved.error || 'Opslaan mislukt.', 'error', 6000); return; }
         // De draaiende engine houdt de datasets vast waarmee hij gebouwd is;
         // deze refresh leest ze opnieuw uit de store zodat de werkbank meteen
@@ -12155,13 +12210,49 @@ async function saveFteNorms() {
         if (refreshed.ok && data.fte) {
             _fteState.data = data.fte;
             _fteState.combinations = data.combinations || _fteState.combinations;
+        } else {
+            // De PATCH is wél gelukt; alleen het doorduwen naar de draaiende
+            // engine niet. Dat eerlijk melden in plaats van 'opslaan mislukt'
+            // (dat zou de gebruiker een tweede keer laten opslaan).
+            notify('Opgeslagen in de masterdata, maar de werkbank kon niet worden '
+                   + 'ververst — herbereken de sessie om de nieuwe norm te zien.',
+                   'warning', 7000);
         }
+        // Meebewegen met de zojuist opgeslagen versie, anders geeft de VOLGENDE
+        // bewerking een 409 tegen onze eigen wijziging.
+        _fteState.masterVersion = (refreshed.ok ? data.master_version : undefined) ?? saved.version
+                                  ?? _fteState.masterVersion;
         _fteState.dirtyNorms = {};
         renderFteWorkbench();
-        notify(`Bemensingsnormen opgeslagen (masterdata versie ${saved.version}).`, 'success', 4000);
+        // Alleen juichen als de werkbank ook echt bijgewerkt is; anders staat
+        // de waarschuwing hierboven al en zou een 'opgeslagen'-toast die
+        // meteen overschrijven.
+        if (refreshed.ok && data.fte) {
+            notify(`Bemensingsnormen opgeslagen (masterdata versie ${saved.version}).`,
+                   'success', 4000);
+        }
     } catch (err) {
         notify('Opslaan mislukt: ' + err, 'error', 6000);
     }
+}
+
+// Groen = beter, rood = slechter. Voor kosten en uren is minder beter; voor
+// marge, EBITDA, kasstroom, ton/FTE en benutting is méér beter. Eén functie,
+// zodat het paneel en de vergelijkingstabel niet uit elkaar kunnen lopen.
+// Eén drempeltabel voor benutting, gedeeld door de werkbanktabel en de
+// vergelijkingstabel. Zonder dat stond 112% in de ene tabel groen ('meer is
+// beter') en in de andere rood ('overbelast').
+function _fteUtilizationClass(value) {
+    if (!Number.isFinite(value)) return 'text-slate-500';
+    if (value > 0.95) return 'text-red-400';
+    if (value > 0.8) return 'text-yellow-400';
+    return 'text-green-400';
+}
+
+function _fteDeltaClass(diff, higherIsBetter, epsilon = 1e-9) {
+    if (!Number.isFinite(diff) || Math.abs(diff) < epsilon) return 'text-slate-400';
+    const better = higherIsBetter ? diff > 0 : diff < 0;
+    return better ? 'text-green-400' : 'text-red-400';
 }
 
 function _renderFteValuePanel() {
@@ -12177,23 +12268,26 @@ function _renderFteValuePanel() {
     }
     head.innerHTML = '<tr><th class="text-left p-1">Regel</th><th class="text-right p-1">Basis</th>'
         + '<th class="text-right p-1">Met werkbank</th><th class="text-right p-1">Verschil</th></tr>';
+    // 'higher_is_better' bepaalt de kleur. Zonder dat onderscheid kregen
+    // marge, EBITDA, EBIT en kasstroom dezelfde kleurregel als een KOSTENpost:
+    // een margeverbetering van +50.000 kleurde rood (alsof het slecht nieuws
+    // was) en een margedaling groen.
     const rows = [
-        ['Loonkosten (directe FTE)', impact.baseline_labor_cost, impact.workbench_labor_cost],
-        ['Kostprijs verkopen', impact.baseline['ZZZZZZ_COST OF GOODS'], impact.cost_of_goods],
-        ['Brutomarge', impact.baseline['ZZZZZZ_GROSS MARGIN'], impact.gross_margin],
-        ['EBITDA', impact.baseline['ZZZZZZ_EBITDA'], impact.ebitda],
-        ['EBIT', impact.baseline['ZZZZZZ_EBIT'], impact.ebit],
-        ['Operationele kasstroom', impact.baseline['ZZZZZZ_OPERATIONAL CASHFLOW'], impact.operational_cashflow],
+        ['Loonkosten (directe FTE)', impact.baseline_labor_cost, impact.workbench_labor_cost, false],
+        ['Kostprijs verkopen', impact.baseline['ZZZZZZ_COST OF GOODS'], impact.cost_of_goods, false],
+        ['Brutomarge', impact.baseline['ZZZZZZ_GROSS MARGIN'], impact.gross_margin, true],
+        ['EBITDA', impact.baseline['ZZZZZZ_EBITDA'], impact.ebitda, true],
+        ['EBIT', impact.baseline['ZZZZZZ_EBIT'], impact.ebit, true],
+        ['Operationele kasstroom', impact.baseline['ZZZZZZ_OPERATIONAL CASHFLOW'], impact.operational_cashflow, true],
     ];
-    body.innerHTML = rows.map(([label, base, adjusted]) => {
+    body.innerHTML = rows.map(([label, base, adjusted, higherIsBetter]) => {
         const b = _fteAgg(base);
         const a = _fteAgg(adjusted);
         const diff = a - b;
-        const cls = Math.abs(diff) < 0.5 ? 'text-slate-400' : (diff > 0 ? 'text-red-400' : 'text-green-400');
         return `<tr><td class="p-1">${escapeHtml(label)}</td>
             <td class="p-1 text-right">${_fmtNlNum(b, 0)}</td>
             <td class="p-1 text-right">${_fmtNlNum(a, 0)}</td>
-            <td class="p-1 text-right ${cls}">${diff >= 0 ? '+' : ''}${_fmtNlNum(diff, 0)}</td></tr>`;
+            <td class="p-1 text-right ${_fteDeltaClass(diff, higherIsBetter, 0.5)}">${diff >= 0 ? '+' : ''}${_fmtNlNum(diff, 0)}</td></tr>`;
     }).join('');
 }
 
@@ -12224,26 +12318,38 @@ async function compareFteCombinations() {
 }
 
 function _renderFteComparison(variants) {
+    // Vierde element: is MEER beter? Minder FTE, uren en loonkosten is beter;
+    // meer marge, EBITDA, ton per FTE en benutting is beter. Zonder dat
+    // onderscheid kleurde een variant die de marge verhoogt rood.
     const columns = [
-        ['FTE (gem.)', 'fte_avg', 2], ['Bij bezettingsdoel', 'staffed_fte_avg', 2],
-        ['Uren', 'hours_total', 0], ['Benutting', 'utilization', 'pct'],
-        ['Loonkosten', 'labor_cost_total', 0], ['Ton/FTE', 'tons_per_fte', 0],
-        ['Brutomarge', 'gross_margin_total', 0], ['EBITDA', 'ebitda_total', 0],
+        ['FTE (gem.)', 'fte_avg', 2, false], ['Bij bezettingsdoel', 'staffed_fte_avg', 2, false],
+        ['Uren', 'hours_total', 0, false], ['Benutting', 'utilization', 'pct', null],
+        ['Loonkosten', 'labor_cost_total', 0, false], ['Ton/FTE', 'tons_per_fte', 0, true],
+        ['Brutomarge', 'gross_margin_total', 0, true], ['EBITDA', 'ebitda_total', 0, true],
     ];
     document.getElementById('fteCompareHead').innerHTML = '<tr><th class="text-left p-1">Variant</th>'
         + columns.map(c => `<th class="text-right p-1">${escapeHtml(c[0])}</th>`).join('') + '</tr>';
     document.getElementById('fteCompareBody').innerHTML = variants.map((v, i) => {
-        const cells = columns.map(([, key, dec]) => {
+        const cells = columns.map(([, key, dec, higherIsBetter]) => {
             const value = v.summary[key];
             if (value === null || value === undefined) return '<td class="p-1 text-right text-slate-500">—</td>';
             const shown = dec === 'pct' ? _fmtNlNum(value * 100, 1) + '%' : _fmtNlNum(value, dec);
             const delta = v.delta ? v.delta[key] : undefined;
+            // higherIsBetter === null: benutting is niet monotoon. Meer is
+            // beter tot je over de drempel gaat; daarboven is het
+            // overbelasting. Dezelfde drempels als de rijkleuring hieronder,
+            // anders staat dezelfde grootheid in één tabblad groen én rood.
+            const cls = higherIsBetter === null
+                ? _fteUtilizationClass(value)
+                : _fteDeltaClass(delta, higherIsBetter);
             const deltaHtml = (delta === undefined || Math.abs(delta) < 1e-9) ? ''
-                : `<span class="block text-xs ${delta > 0 ? 'text-red-400' : 'text-green-400'}">${
+                : `<span class="block text-xs ${cls}">${
                     delta > 0 ? '+' : ''}${dec === 'pct' ? _fmtNlNum(delta * 100, 1) + '%' : _fmtNlNum(delta, dec)}</span>`;
-            return `<td class="p-1 text-right">${shown}${deltaHtml}</td>`;
+            const valueCls = higherIsBetter === null ? _fteUtilizationClass(value) : '';
+            return `<td class="p-1 text-right ${valueCls}">${shown}${deltaHtml}</td>`;
         }).join('');
-        return `<tr class="${i === 0 ? 'font-semibold' : ''}"><td class="p-1">${escapeHtml(v.label)}</td>${cells}</tr>`;
+        const badge = i === 0 ? ' <span class="text-xs text-slate-400">(referentie)</span>' : '';
+        return `<tr class="${i === 0 ? 'font-semibold' : ''}"><td class="p-1">${escapeHtml(v.label)}${badge}</td>${cells}</tr>`;
     }).join('');
 }
 

@@ -80,6 +80,9 @@ class DataLoader:
         self.indirect_activities: Dict[str, IndirectActivity] = {}
         self.throughput_overrides: Dict[str, ThroughputOverride] = {}
         self.benchmark_throughput: Dict[str, BenchmarkThroughput] = {}
+        # Storeversie waaruit de F2-CF-datasets hierboven komen (None op het
+        # werkboekpad). De werkbank gebruikt hem als base_version bij opslaan.
+        self.fte_master_version = None
         self.purchase_lead_times: Dict[str, int] = {}
         self.purchase_moq: Dict[str, float] = {}
         self.purchase_actuals: Dict[str, Dict[str, float]] = {}

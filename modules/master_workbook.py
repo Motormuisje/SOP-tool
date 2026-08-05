@@ -435,14 +435,19 @@ def _read_kv(ws):
         yield str(row[0]).strip(), (row[1] if len(row) > 1 else None)
 
 
-def _read_table(ws):
+def _read_table(ws, with_row_numbers: bool = False):
+    """Rijen van een tabelblad als dict. Met with_row_numbers komt het ECHTE
+    bladrijnummer mee: lege scheidingsregels worden overgeslagen, dus de
+    positie in de gefilterde stroom loopt niet meer gelijk met wat de
+    gebruiker in Excel ziet — en een foutmelding die de verkeerde rij aanwijst
+    is erger dan geen rijnummer."""
     rows = ws.iter_rows(values_only=True)
     header = next(rows, None) or ()
     headers = [str(h).strip() if h is not None else '' for h in header]
-    for row in rows:
+    for number, row in enumerate(rows, start=2):
         if _is_empty_row(row):
             continue
-        yield _row_dict(headers, row)
+        yield (number, _row_dict(headers, row)) if with_row_numbers else _row_dict(headers, row)
 
 
 def _parse_pap_entries(raw_value) -> dict:
@@ -575,14 +580,30 @@ def _parse_machines(ws) -> list:
 
 
 def _parse_keyed_table(ws, dc) -> dict:
+    """Blad met een sleutelkolom → {sleutel: record}.
+
+    Twee rijen met dezelfde sleutel zijn een fout, geen keuze: de tweede
+    overschreef de eerste stil, dus de helft van een gekopieerde regel
+    verdween zonder dat de importdiff iets liet zien. Bij handmatig bewerkte
+    werkboeken is dupliceren juist de normale manier om een regel toe te
+    voegen — en dan de sleutel vergeten aan te passen de normale vergissing.
+    """
     casters = _casters(dc)
     fields = _field_names(dc)
     keyed = {}
-    for row in _read_table(ws):
+    seen_rows = {}
+    for number, row in _read_table(ws, with_row_numbers=True):
         key = row.get(_KEY_COLUMN)
         if key is None or str(key).strip() == '':
             continue
-        keyed[str(key).strip()] = {f: casters[f](row.get(f)) for f in fields}
+        key = str(key).strip()
+        if key in keyed:
+            raise MasterWorkbookError(
+                f'Blad "{ws.title}": sleutel "{key}" staat twee keer '
+                f'(rij {seen_rows[key]} en rij {number}). Geef elke rij een '
+                f'eigen sleutel — anders verdwijnt er stil één.')
+        seen_rows[key] = number
+        keyed[key] = {f: casters[f](row.get(f)) for f in fields}
     return keyed
 
 

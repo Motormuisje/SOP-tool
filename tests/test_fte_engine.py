@@ -180,6 +180,69 @@ class TestDirectFte:
         assert group.utilization('2025-01') == pytest.approx(0.5)
 
 
+class TestNonMachineGroupRows:
+    """Line 07 zet de controlekamer en de truckregels neer als 'Machine Group'.
+    De werkbank pikt ze daardoor op als groep — maar ze zijn het niet, en dat
+    liep op twee manieren mis."""
+
+    def _with_control_room(self, fte_requirements):
+        data, plan = _mill_setup(hours_per_period=100.0)
+        data.materials['ZZZZZ_CONTROLROOM'] = _mat(
+            'ZZZZZ_CONTROLROOM', name='Control room operators', control_room=1,
+            fte_requirements=fte_requirements)
+        return data, plan
+
+    def test_control_room_without_crew_stays_zero(self):
+        """CapacityEngine kent bewust GEEN 1,0-terugval voor de controlekamer:
+        fte_requirements = 0 betekent dat deze site er geen bezetting voor
+        nodig heeft. De werkbank deed dat wel en verzon 4,18 FTE inclusief
+        loonkosten die via value_impact de marge verschoven."""
+        data, plan = self._with_control_room(0.0)
+        cap = CapacityEngine(data, plan, {})
+        results = cap.calculate()
+        results[LineType.DEMAND_FORECAST.value] = []
+        l12 = {r.material_number: r for r in results[LineType.FTE_REQUIREMENTS.value]}
+        result = FteEngine(data, results).calculate()
+        line = _line(result, 'ZZZZZ_CONTROLROOM', CATEGORY_GROUP)
+
+        assert l12['ZZZZZ_CONTROLROOM'].values['2025-01'] == pytest.approx(0.0)
+        assert line.operators_per_hour == 0.0
+        assert line.fte['2025-01'] == pytest.approx(0.0)
+
+    def test_control_room_with_crew_matches_line_12(self):
+        data, plan = self._with_control_room(1.0)
+        cap = CapacityEngine(data, plan, {})
+        results = cap.calculate()
+        results[LineType.DEMAND_FORECAST.value] = []
+        l12 = {r.material_number: r for r in results[LineType.FTE_REQUIREMENTS.value]}
+        result = FteEngine(data, results).calculate()
+        line = _line(result, 'ZZZZZ_CONTROLROOM', CATEGORY_GROUP)
+
+        assert line.fte['2025-01'] == pytest.approx(
+            l12['ZZZZZ_CONTROLROOM'].values['2025-01'])
+
+    def test_utilization_only_counts_rows_that_have_a_window(self):
+        """Regressie: de controlekamer en indirecte activiteiten hebben geen
+        ploegvenster. Hun uren in de TELLER en niets in de noemer gaf 119%
+        bezetting op machines die op 19% liepen."""
+        activities = {'M': IndirectActivity(activity_id='M', name='Onderhoud',
+                                            driver='fixed', fte_per_period=6.0)}
+        data, plan = _mill_setup(hours_per_period=100.0,
+                                 indirect_activities=activities)
+        data.materials['ZZZZZ_CONTROLROOM'] = _mat(
+            'ZZZZZ_CONTROLROOM', name='Control room', control_room=1,
+            fte_requirements=1.0)
+        result = _run(data, plan)
+
+        # De molen draait 100 van 520 beschikbare uren.
+        assert result.total_available_hours['2025-01'] == pytest.approx(520.0)
+        assert result.total_capacity_hours['2025-01'] == pytest.approx(100.0)
+        assert result.utilization('2025-01') == pytest.approx(100.0 / 520.0)
+        assert result.utilization('2025-01') <= 1.0
+        # De totale uren blijven wél alles omvatten — dat is een ander getal.
+        assert result.total_hours['2025-01'] > result.total_capacity_hours['2025-01']
+
+
 class TestClientModelReproduction:
     """Ground truth uit 'OEE model MTO APEX voorbeeld.xlsx' (Maastricht/NLX1):
     311.846 t → 4.008 molenuren → 2,69 FTE → 64% benutting."""
@@ -342,6 +405,174 @@ class TestCombinations:
 
         assert any('NOPE' in w for w in result.warnings)
         assert result.active_combinations == []
+
+
+class TestOverlappingCombinations:
+    def test_a_machine_can_only_be_in_one_active_combination(self):
+        """Twee actieve combinaties die dezelfde machine claimen: beide
+        brachten hun operators in rekening terwijl maar één doorzetfactor
+        werd toegepast. De tweede gaat uit, met een melding."""
+        machines = {'MA': _machine('MA', group='ZZ_G1'), 'MB': _machine('MB', group='ZZ_G1'),
+                    'MC': _machine('MC', group='ZZ_G1')}
+        materials = {'ZZ_G1': _mat('ZZ_G1', packaging_machine_group='1', fte_requirements=1.0),
+                     'PA': _mat('PA'), 'PB': _mat('PB'), 'PC': _mat('PC')}
+        groups = {'ZZ_G1': MachineGroup('ZZ_G1', ['MA', 'MB', 'MC'])}
+        routings = {'PA': [_routing('MA')], 'PB': [_routing('MB')], 'PC': [_routing('MC')]}
+        plan = {'PA': dict.fromkeys(PERIODS, 10000.0),
+                'PB': dict.fromkeys(PERIODS, 5000.0),
+                'PC': dict.fromkeys(PERIODS, 2500.0)}
+        combos = {
+            'C1': MachineCombination(combination_id='C1', machine_codes=['MA', 'MB'],
+                                     operators=1.0),
+            'C2': MachineCombination(combination_id='C2', machine_codes=['MB', 'MC'],
+                                     operators=1.0),
+        }
+        data = _data(machines, materials, groups, routings, machine_combinations=combos)
+
+        result = _run(data, plan, active_combinations=['C1', 'C2'])
+
+        assert result.active_combinations == ['C1']
+        assert any('C2' in w and 'MB' in w for w in result.warnings)
+        # C1 bemenst MA+MB (max 100 u), de groep houdt MC (25 u) over.
+        assert result.total_hours['2025-01'] == pytest.approx(125.0)
+
+
+class TestUtilizationIsAboutMachines:
+    """Bezetting meet hoe druk de MACHINES zijn. Een combinatie verandert wie
+    ze bedient, niet hoeveel ze draaien — dus de bezetting hoort gelijk te
+    blijven. Regressie: de combinatieregel bracht een eigen ploegvenster in
+    (dubbel geteld) én de groepsregels vielen op nul terug, waardoor de KPI
+    zakte zodra je een combinatie aanzette."""
+
+    def _setup(self):
+        machines = {'MA': _machine('MA', group='ZZ_G1'), 'MB': _machine('MB', group='ZZ_G2')}
+        materials = {
+            'ZZ_G1': _mat('ZZ_G1', packaging_machine_group='1', fte_requirements=1.0),
+            'ZZ_G2': _mat('ZZ_G2', packaging_machine_group='1', fte_requirements=1.0),
+            'PA': _mat('PA'), 'PB': _mat('PB'),
+        }
+        groups = {'ZZ_G1': MachineGroup('ZZ_G1', ['MA']),
+                  'ZZ_G2': MachineGroup('ZZ_G2', ['MB'])}
+        routings = {'PA': [_routing('MA')], 'PB': [_routing('MB')]}
+        plan = {'PA': dict.fromkeys(PERIODS, 10000.0),   # 100 uur
+                'PB': dict.fromkeys(PERIODS, 5000.0)}    # 50 uur
+        combos = {'C': MachineCombination(combination_id='C', machine_codes=['MA', 'MB'],
+                                          operators=1.0)}
+        return _data(machines, materials, groups, routings,
+                     machine_combinations=combos), plan
+
+    def test_a_combination_does_not_move_the_utilization(self):
+        data, plan = self._setup()
+
+        without = _run(data, plan)
+        with_combo = _run(data, plan, active_combinations=['C'])
+
+        # 150 draaiuren op 2 x 520 beschikbare uren.
+        assert without.total_available_hours['2025-01'] == pytest.approx(1040.0)
+        assert without.utilization('2025-01') == pytest.approx(150.0 / 1040.0)
+        assert with_combo.total_available_hours['2025-01'] == pytest.approx(1040.0), (
+            'de combinatie brengt een derde ploegvenster in dat er niet is')
+        assert with_combo.utilization('2025-01') == pytest.approx(
+            without.utilization('2025-01')), (
+            'combineren verandert wie de machines bedient, niet hoe druk ze zijn')
+
+    def test_but_the_staffing_does_drop(self):
+        """Ter contrast: de FTE gaat wél omlaag — dat is de hele bedoeling."""
+        data, plan = self._setup()
+
+        without = _run(data, plan)
+        with_combo = _run(data, plan, active_combinations=['C'])
+
+        assert with_combo.total_fte['2025-01'] < without.total_fte['2025-01']
+        assert with_combo.total_hours['2025-01'] == pytest.approx(100.0)
+
+
+class TestPartialCombinations:
+    """Een combinatie die maar een DEEL van een groep beslaat.
+
+    Regressie: de groep telde eerst al zijn machines mee terwijl de combinatie
+    dezelfde machines nóg eens bemenste. Gevolg: een arbeidsBESPARENDE
+    combinatie liet het FTE-totaal STIJGEN — een fout getal in klantcijfers.
+    De groep moet de machines die de combinatie bemenst laten vallen, volgens
+    zijn eigen aggregatie (SUM voor verpakken, MAX voor molens).
+    """
+
+    def _setup(self, *, mill: bool, combo_codes, hours_per_machine):
+        group_id = 'ZZ_G1'
+        machines = {code: _machine(code, group=group_id) for code in hours_per_machine}
+        flags = {'mill_machine_group': '1'} if mill else {'packaging_machine_group': '1'}
+        materials = {group_id: _mat(group_id, fte_requirements=1.0, **flags)}
+        routings, plan = {}, {}
+        for code, hours in hours_per_machine.items():
+            product = f'P{code}'
+            materials[product] = _mat(product)
+            routings[product] = [_routing(code)]      # 100 t/u → uren = ton/100
+            plan[product] = dict.fromkeys(PERIODS, hours * 100.0)
+        groups = {group_id: MachineGroup(group_id, list(hours_per_machine))}
+        combos = {'C': MachineCombination(combination_id='C', name='Duo',
+                                          machine_codes=list(combo_codes), operators=1.0)}
+        data = _data(machines, materials, groups, routings, machine_combinations=combos)
+        return data, plan
+
+    @pytest.mark.parametrize('combo_codes,expected', [
+        (['MA'], 175.0),              # combinatie 100 + groep (50+25)
+        (['MA', 'MB'], 125.0),        # combinatie max(100,50) + groep 25
+        (['MA', 'MB', 'MC'], 100.0),  # combinatie 100 + groep leeg
+    ])
+    def test_sum_group_drops_exactly_the_combined_machines(self, combo_codes, expected):
+        hours = {'MA': 100, 'MB': 50, 'MC': 25}
+        data, plan = self._setup(mill=False, combo_codes=combo_codes,
+                                 hours_per_machine=hours)
+
+        without = _run(data, plan)
+        with_combo = _run(data, plan, active_combinations=['C'])
+
+        assert without.total_hours['2025-01'] == pytest.approx(175.0)
+        assert with_combo.total_hours['2025-01'] == pytest.approx(expected)
+
+    @pytest.mark.parametrize('combo_codes,expected', [
+        (['MA'], 150.0),   # combinatie 100 + groep max(50,25) = 50
+        (['MC'], 125.0),   # combinatie 25  + groep max(100,50) = 100
+    ])
+    def test_mill_group_recomputes_its_maximum_over_the_rest(self, combo_codes, expected):
+        """Bij een molengroep dekt één operator de drukste machine; de rest
+        loopt mee. Haal je er één uit in een eigen combinatie, dan zijn het
+        twee bemensingen en gaat het totaal omhoog — dat hoort zo, en het
+        getal moet exact kloppen."""
+        hours = {'MA': 100, 'MB': 50, 'MC': 25}
+        data, plan = self._setup(mill=True, combo_codes=combo_codes,
+                                 hours_per_machine=hours)
+
+        without = _run(data, plan)
+        with_combo = _run(data, plan, active_combinations=['C'])
+
+        assert without.total_hours['2025-01'] == pytest.approx(100.0)
+        assert with_combo.total_hours['2025-01'] == pytest.approx(expected)
+
+    def test_a_labour_saving_combination_lowers_total_fte(self):
+        """De kernbelofte van een combinatie: twee machines uit VERSCHILLENDE
+        groepen samen onder één operator kost minder FTE dan apart."""
+        machines = {'MA': _machine('MA', group='ZZ_G1'), 'MB': _machine('MB', group='ZZ_G2')}
+        materials = {
+            'ZZ_G1': _mat('ZZ_G1', packaging_machine_group='1', fte_requirements=1.0),
+            'ZZ_G2': _mat('ZZ_G2', packaging_machine_group='1', fte_requirements=1.0),
+            'PA': _mat('PA'), 'PB': _mat('PB'),
+        }
+        groups = {'ZZ_G1': MachineGroup('ZZ_G1', ['MA']),
+                  'ZZ_G2': MachineGroup('ZZ_G2', ['MB'])}
+        routings = {'PA': [_routing('MA')], 'PB': [_routing('MB')]}
+        plan = {'PA': dict.fromkeys(PERIODS, 10000.0),   # 100 uur
+                'PB': dict.fromkeys(PERIODS, 5000.0)}    # 50 uur
+        combos = {'C': MachineCombination(combination_id='C', machine_codes=['MA', 'MB'],
+                                          operators=1.0)}
+        data = _data(machines, materials, groups, routings, machine_combinations=combos)
+
+        without = _run(data, plan)
+        with_combo = _run(data, plan, active_combinations=['C'])
+
+        assert without.total_hours['2025-01'] == pytest.approx(150.0)   # 100 + 50 apart
+        assert with_combo.total_hours['2025-01'] == pytest.approx(100.0)  # samen: de langste
+        assert with_combo.total_fte['2025-01'] < without.total_fte['2025-01']
 
 
 class TestCostAndKpis:

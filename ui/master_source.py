@@ -32,6 +32,11 @@ class MasterSource:
     file_path: Optional[str]     # base workbook path; None on the store path
     master_data: Optional[dict]  # store payload for the engine (overlay or full)
     label: str                   # user-facing description, stored on the session
+    # Storeversie waaruit master_data komt (None zonder store). De werkbank
+    # stuurt hem mee als base_version bij het opslaan van bemensingsnormen:
+    # de HUIDIGE versie melden zou een wijziging die deze engine nog niet
+    # kent stil overschrijven in plaats van een 409 te geven.
+    version: Optional[int] = None
 
     def apply_to_session(self, sess: dict) -> None:
         """Record the resolved source on the session for the sidebar."""
@@ -52,7 +57,7 @@ def resolve_for_new_session(global_config: dict) -> Optional[MasterSource]:
     """Source for a fresh extracts-only upload (no workbook of its own)."""
     master, version = _store_master()
     if master is not None:
-        return MasterSource('store', None, master, f'app-masterdata (v{version})')
+        return MasterSource('store', None, master, f'app-masterdata (v{version})', version)
     legacy = global_config.get('master_file')
     if legacy and Path(legacy).exists():
         return MasterSource('legacy_file', str(legacy), None,
@@ -73,7 +78,7 @@ def resolve_for_session(sess: dict) -> Optional[MasterSource]:
         label = 'werkboek'
         if master is not None:
             label += f' + app-masterdata (v{version})'
-        return MasterSource('workbook', file_path, master, label)
+        return MasterSource('workbook', file_path, master, label, version)
     if master is not None:
-        return MasterSource('store', None, master, f'app-masterdata (v{version})')
+        return MasterSource('store', None, master, f'app-masterdata (v{version})', version)
     return None

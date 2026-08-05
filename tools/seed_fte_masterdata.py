@@ -25,9 +25,13 @@ Uitgangspunten
 
 Gebruik
 -------
-    python tools/seed_fte_masterdata.py --report seed-rapport.md
+    python tools/seed_fte_masterdata.py --report %LOCALAPPDATA%\\SOPPlanningEngine\\seed.md
     python tools/seed_fte_masterdata.py --apply
     python tools/seed_fte_masterdata.py --apply --machines-workbook pad/naar/MS_RECONC.xlsm
+
+Een tweede --apply voegt alleen ONTBREKENDE records toe. Bestaande records —
+inclusief wat de klant inmiddels heeft aangepast — blijven staan tenzij je
+--overwrite-existing meegeeft.
 """
 
 from __future__ import annotations
@@ -50,6 +54,10 @@ from modules.models import (  # noqa: E402
 )
 
 DEFAULT_WORKBOOK = Path.home() / 'Documents' / 'OEE model MTO APEX voorbeeld.xlsx'
+
+# Deze seed bevat Maastricht-normen. De zusterrepo's draaien op een eigen
+# SOP_APP_DATA_DIR; zonder controle landen ze zo in de Winterswijk-store.
+EXPECTED_SITE = 'NLX1'
 
 SHEET_FTE = 'FTE'
 SHEET_MODEL = 'OEE Model MST '
@@ -172,17 +180,69 @@ def _text(value) -> str:
 # ── blad 'FTE' ──────────────────────────────────────────────────────────────
 
 
+def _rows_by_label(ws, column: int = 2) -> dict:
+    """{label in kleine letters: rijnummer} voor een kolom met labels.
+
+    Vaste celadressen braken zodra de klant één rij invoegde: F13 wees dan
+    naar een lege cel (uren per FTE = 0, door hydratie stil 1492) en de
+    ploegurenrijen schoven op, waardoor élke 3-ploegenmachine 347 in plaats
+    van 520 beschikbare uren kreeg. Het label verschuift niet.
+    """
+    labels = {}
+    duplicates = {}
+    for row in range(1, ws.max_row + 1):
+        text = _text(ws.cell(row=row, column=column).value).lower()
+        if not text:
+            continue
+        if text in labels:
+            duplicates.setdefault(text, [labels[text]]).append(row)
+        else:
+            labels[text] = row
+    # Een dubbel label is dodelijk: we zouden stil de EERSTE lezen. Voor de
+    # bruto->netto-velden vangen de afleidingscontroles dat nog af, maar voor
+    # de bezettingsgraad en de ploeguren is er niets dat het merkt.
+    labels['__duplicates__'] = duplicates
+    return labels
+
+
+class SeedError(RuntimeError):
+    """Het werkboek levert niet wat de seed nodig heeft. Luid falen: stil
+    doorschrijven zet onzin in de klantdatabase."""
+
+
 def read_fte(ws) -> tuple[dict, float, dict, list[str]]:
     """FTE-parameters, het eindgetal, de ploeguren en de controleregels."""
-    gross = _num(ws['F5'].value) or 0.0
-    leave = abs(_num(ws['F6'].value) or 0.0)
-    adv = abs(_num(ws['F7'].value) or 0.0)
-    holiday = abs(_num(ws['F8'].value) or 0.0)
-    after_holidays = _num(ws['F9'].value) or 0.0
-    illness = _num(ws['C10'].value) or 0.0
-    training = _num(ws['C11'].value) or 0.0
-    effective = _num(ws['F13'].value) or 0.0
-    occupancy = _num(ws['D16'].value) or 0.0
+    labels = _rows_by_label(ws)
+
+    duplicates = labels.get('__duplicates__') or {}
+
+    def _row(label: str) -> int:
+        key = label.lower()
+        if key in duplicates:
+            rows = ', '.join(str(r) for r in duplicates[key])
+            raise SeedError(
+                f'Blad "FTE": "{label}" staat op meerdere rijen ({rows}). '
+                f'De seed leest op label, dus welke bedoeld is valt niet af '
+                f'te leiden. Maak de labels uniek.')
+        row = labels.get(key)
+        if row is None:
+            raise SeedError(
+                f'Blad "FTE": regel "{label}" niet gevonden. Is het werkboek '
+                f'van vorm veranderd? De seed leest op label, niet op celadres.')
+        return row
+
+    def _cell(label: str, column: int):
+        return _num(ws.cell(row=_row(label), column=column).value)
+
+    gross = _cell('Effective days', 6) or 0.0
+    leave = abs(_cell('Holiday', 6) or 0.0)
+    adv = abs(_cell('ATV', 6) or 0.0)
+    holiday = abs(_cell('Public holidays in workweek', 6) or 0.0)
+    after_holidays = _cell('Working hours after holidays', 6) or 0.0
+    illness = _cell('Sick leave', 3) or 0.0
+    training = _cell('Training', 3) or 0.0
+    effective = _cell('Working hours per FTE per yr', 6) or 0.0
+    occupancy = _cell('Bezettingsgraad', 4) or 0.0
 
     params = {
         'utilization_rate': occupancy,
@@ -195,22 +255,49 @@ def read_fte(ws) -> tuple[dict, float, dict, list[str]]:
     }
 
     shift_hours = {}
-    for row, name in ((17, '2-shift system'), (18, '3-shift system'), (19, '24/7 production')):
-        annual = _num(ws.cell(row=row, column=3).value)
-        if annual:
-            shift_hours[name] = annual / 12
+    for label, name in (('2-ploegen', '2-shift system'),
+                        ('3-ploegen', '3-shift system'),
+                        ('24/7', '24/7 production')):
+        annual = _cell(label, 3)
+        if not annual or annual <= 0:
+            raise SeedError(f'Blad "FTE": jaaruren bij "{label}" ontbreken of zijn 0.')
+        # Plausibiliteitsbereik: een ploegensysteem ligt tussen ~1.200 (één
+        # ploeg) en 8.784 (24/7 in een schrikkeljaar) uur per jaar. Zonder
+        # deze grens leest een verschoven of verkeerd label stil een getal dat
+        # de beschikbare uren van elke machine in dat systeem scheeftrekt.
+        if not 1000 <= annual <= 8784:
+            raise SeedError(
+                f'Blad "FTE": {annual:g} jaaruren bij "{label}" is onmogelijk '
+                f'(verwacht tussen 1.000 en 8.784). Lees het blad na.')
+        shift_hours[name] = annual / 12
+
+    # Blokkerende plausibiliteitscontroles. Een 0 hier komt via hydratie stil
+    # als 1492 terug en verschuift elk FTE-getal.
+    if gross <= 0:
+        raise SeedError('Blad "FTE": bruto uren per jaar is 0 of ontbreekt.')
+    if effective <= 0:
+        raise SeedError('Blad "FTE": uren per FTE per jaar is 0 of ontbreekt.')
+    if not 0 < occupancy <= 1:
+        raise SeedError(f'Blad "FTE": bezettingsgraad {occupancy} valt buiten (0, 1].')
 
     checks = []
     base = gross - leave - adv - holiday
-    checks.append(f'bruto {gross:g} − verlof {leave:g} − ADV {adv:g} − feestdagen {holiday:g} '
-                  f'= {base:g} (werkboek F9 = {after_holidays:g}) '
-                  f'{"OK" if abs(base - after_holidays) < 0.01 else "AFWIJKING"}')
+    if abs(base - after_holidays) >= 0.01:
+        raise SeedError(
+            f'Blad "FTE": bruto {gross:g} - verlof {leave:g} - ADV {adv:g} - '
+            f'feestdagen {holiday:g} = {base:g}, maar het werkboek zegt '
+            f'{after_holidays:g}. Lees het blad na voordat je seedt.')
+    checks.append(f'bruto {gross:g} - verlof {leave:g} - ADV {adv:g} - feestdagen '
+                  f'{holiday:g} = {base:g} (werkboek = {after_holidays:g}) OK')
     derived = derive_effective_fte_hours(params)
-    checks.append(f'{base:g} − {illness:.0%} − {training:.0%} van diezelfde basis '
-                  f'= {derived:.2f} (werkboek F13 = {effective:.2f}) '
-                  f'{"OK" if abs(derived - effective) < 0.01 else "AFWIJKING"}')
+    if abs(derived - effective) >= 0.01:
+        raise SeedError(
+            f'Blad "FTE": de afleiding geeft {derived:.2f} maar het werkboek voert '
+            f'{effective:.2f} als uren per FTE. Controleer ziekte-/trainingspercentage.')
+    checks.append(f'{base:g} - {illness:.0%} - {training:.0%} van diezelfde basis '
+                  f'= {derived:.2f} (werkboek = {effective:.2f}) OK')
     compounded = base * (1 - illness) * (1 - training)
-    checks.append(f'ter vergelijking: stapelend gerekend zou {compounded:.2f} geven — '
+    checks.append(f'ter vergelijking: stapelend gerekend zou {compounded:.2f} geven - '
                   f'{compounded - effective:+.2f} uur per FTE per jaar')
     return params, effective, shift_hours, checks
 
@@ -453,20 +540,24 @@ def build_seed(workbook_path: Path, sap_machines: dict | None = None) -> tuple[d
     report.append('## 1. FTE-parameters (blad `FTE`)\n')
     report.append('| parameter | waarde | betekenis |')
     report.append('|---|---:|---|')
-    report.append(f'| bruto uren per jaar | {params["gross_hours_per_year"]:g} | 260 werkdagen × 8 uur (F5) |')
-    report.append(f'| verlof | {params["leave_hours_per_year"]:g} | 28 dagen × 8 uur (F6) |')
-    report.append(f'| ADV | {params["adv_hours_per_year"]:g} | 14 dagen × 8 uur (F7) |')
-    report.append(f'| feestdagen in de werkweek | {params["holiday_hours_per_year"]:g} | 6 dagen × 8 uur (F8) |')
-    report.append(f'| ziekteverzuim | {params["illness_pct"]:.0%} | HR-rapport (C10) |')
-    report.append(f'| training | {params["training_pct"]:.0%} | (C11) |')
-    report.append(f'| **effectieve uren per FTE per jaar** | **{effective_hours:.2f}** | F13 — dit getal rekent |')
-    report.append(f'| bezettingsgraad | {params["utilization_rate"]:.0%} | D16 |')
+    # Labels, geen celadressen: de seed leest op label (een ingevoegde rij
+    # verschuift de cellen wel maar het label niet), dus adressen noemen zou
+    # de lezer naar de verkeerde cel sturen.
+    report.append(f'| bruto uren per jaar | {params["gross_hours_per_year"]:g} | regel "Effective days" |')
+    report.append(f'| verlof | {params["leave_hours_per_year"]:g} | regel "Holiday" |')
+    report.append(f'| ADV | {params["adv_hours_per_year"]:g} | regel "ATV" |')
+    report.append(f'| feestdagen in de werkweek | {params["holiday_hours_per_year"]:g} | regel "Public holidays in workweek" |')
+    report.append(f'| ziekteverzuim | {params["illness_pct"]:.0%} | regel "Sick leave" |')
+    report.append(f'| training | {params["training_pct"]:.0%} | regel "Training" |')
+    report.append(f'| **effectieve uren per FTE per jaar** | **{effective_hours:.2f}** | regel "Working hours per FTE per yr" — dit getal rekent |')
+    report.append(f'| bezettingsgraad | {params["utilization_rate"]:.0%} | regel "Bezettingsgraad" |')
     report.append('')
     report.append('Controle van de rekenregel:')
     for line in checks:
         report.append(f'- {line}')
     report.append('')
-    report.append('Ploeguren per maand uit C17:C19 (jaaruren ÷ 12): '
+    report.append('Ploeguren per maand (jaaruren ÷ 12, gelezen op de regels '
+                  '"2-ploegen", "3-ploegen" en "24/7"): '
                   + ', '.join(f'{k} = {v:.1f}' for k, v in shift_hours.items()))
     report.append('')
 
@@ -646,7 +737,7 @@ def build_seed(workbook_path: Path, sap_machines: dict | None = None) -> tuple[d
 
     # 4. Benchmarks ----------------------------------------------------------
     mes, mes_skipped = read_mes(wb[SHEET_MES])
-    peer_rows, peer_skipped = read_peer(wb[SHEET_PEER])
+    peer_rows, _peer_skipped = read_peer(wb[SHEET_PEER])
     benchmarks: dict[str, dict] = {}
     for row in peer_rows:
         key = f'{row["machine_code"]}|{row["material_number"]}'
@@ -726,7 +817,7 @@ def build_seed(workbook_path: Path, sap_machines: dict | None = None) -> tuple[d
 # ── store bijwerken ─────────────────────────────────────────────────────────
 
 
-def load_machines(workbook: Path) -> list[dict]:
+def load_machines(workbook: Path):
     """Machines uit een MS_RECONC-werkboek, in store-formaat."""
     import contextlib
     import io
@@ -743,9 +834,89 @@ def load_machines(workbook: Path) -> list[dict]:
     return machines, loader.config.site
 
 
-def apply_seed(store_path: Path, datasets: dict, machines: list | None,
-               verify_only: bool, keep_fte_hours: bool = False) -> tuple[dict, list[str]]:
-    """Voeg de seed samen met de bestaande store. Retourneert (nieuwe master, wijzigingen)."""
+def _merge_dataset(existing: dict, seeded: dict, overwrite: bool):
+    """Voeg seedrecords toe zonder klantbewerkingen terug te draaien.
+
+    Standaard worden alleen ONTBREKENDE sleutels toegevoegd. De hele opzet is
+    dat de klant deze records daarna bijstelt (een activiteit aanzetten, een
+    norm corrigeren); een tweede --apply die dat overschrijft maakt het script
+    gevaarlijker dan nuttig. Met --overwrite-existing kan het wel, expliciet.
+    """
+    merged = dict(existing or {})
+    stats = {'toegevoegd': [], 'ongewijzigd': [], 'overschreven': []}
+    for key, value in (seeded or {}).items():
+        if key not in merged:
+            merged[key] = value
+            stats['toegevoegd'].append(key)
+        elif merged[key] == value:
+            stats['ongewijzigd'].append(key)
+        elif overwrite:
+            merged[key] = value
+            stats['overschreven'].append(key)
+        else:
+            stats['ongewijzigd'].append(key)
+    return merged, stats
+
+
+def _describe(name: str, stats: dict, overwrite: bool) -> str:
+    parts = [f'{len(stats["toegevoegd"])} toegevoegd',
+             f'{len(stats["ongewijzigd"])} ongemoeid gelaten']
+    if stats['overschreven']:
+        shown = ', '.join(stats['overschreven'][:6])
+        more = '...' if len(stats['overschreven']) > 6 else ''
+        parts.append(f'{len(stats["overschreven"])} OVERSCHREVEN ({shown}{more})')
+    line = f'{name}: ' + ', '.join(parts)
+    if stats['ongewijzigd'] and not overwrite:
+        line += (' - bestaande records blijven staan '
+                 '(--overwrite-existing vervangt ze)')
+    return line
+
+
+def _merge_machines(existing: list, seeded: list, overwrite: bool):
+    """Machines per VELD samenvoegen in plaats van integraal vervangen.
+
+    Een in de app gecorrigeerde OEE of naam mag niet terugspringen naar de
+    werkboekwaarde: OEE schaalt de capaciteit rechtstreeks, dus dat verschuift
+    Line 09-12 en de hele werkbank zonder melding.
+    """
+    by_code = {m['machine_code']: dict(m) for m in (existing or [])}
+    notes = []
+    for machine in seeded or []:
+        code = machine['machine_code']
+        current = by_code.get(code)
+        if current is None:
+            by_code[code] = dict(machine)
+            notes.append(f'+{code}')
+            continue
+        incoming = dict(machine)
+        # Beschikbaarheid is MAANDdata; die van de store wint, tenzij leeg.
+        # Is de store leeg en het werkboek gevuld, dan is het geen conflict
+        # maar een AANVULLING — die moet landen, ook zonder --overwrite, en
+        # hij moet in het rapport staan.
+        fills_month_data = (not current.get('availability_by_period')
+                            and bool(incoming.get('availability_by_period')))
+        if current.get('availability_by_period'):
+            incoming['availability_by_period'] = current['availability_by_period']
+        changed = [f for f, v in incoming.items()
+                   if f != 'availability_by_period' and current.get(f) != v]
+        if fills_month_data:
+            current['availability_by_period'] = incoming['availability_by_period']
+            notes.append(f'~{code} (beschikbaarheid aangevuld)')
+        if not changed:
+            continue
+        if overwrite:
+            current.update(incoming)
+            notes.append(f'~{code} ({", ".join(changed)})')
+        else:
+            notes.append(f'={code} ongewijzigd gelaten (werkboek wijkt af op '
+                         f'{", ".join(changed)})')
+    return [by_code[c] for c in sorted(by_code)], notes
+
+
+def apply_seed(store_path: Path, datasets: dict, machines, verify_only: bool,
+               keep_fte_hours: bool = False, overwrite: bool = False,
+               expected_site: str = ''):
+    """Voeg de seed samen met de bestaande store. Retourneert (master, wijzigingen)."""
     from ui import master_store
 
     master_store.set_store_path(store_path)
@@ -756,61 +927,115 @@ def apply_seed(store_path: Path, datasets: dict, machines: list | None,
     master = json.loads(json.dumps(record['master']))
     changes = []
 
+    # Sitecontrole: met SOP_APP_DATA_DIR gezet wijst de default store naar een
+    # ZUSTERSITE. Maastricht-normen daar inschrijven is stille datavervuiling.
+    store_site = str((master.get('config') or {}).get('site') or '').strip()
+    if expected_site and store_site and store_site != expected_site:
+        raise SystemExit(
+            f'Doelstore is site {store_site}, maar deze seed hoort bij '
+            f'{expected_site} ({store_path}). Gebruik --force-site als dit '
+            f'toch de bedoeling is.')
+
     fte = dict(master.get('fte') or {})
     old_hours = float(fte.get('fte_hours_per_year') or 0.0)
     new_hours = datasets['fte_hours_per_year']
-    fte['params'] = datasets['fte_params']
-    fte['shift_hours'] = {**(fte.get('shift_hours') or {}), **datasets['shift_hours']}
-    changes.append(f'fte.params gezet ({len(datasets["fte_params"])} parameters) — '
-                   'documentatie van de afleiding, verandert op zichzelf geen enkel getal')
+    existing_params = fte.get('params') or {}
+
+    # Gate op "heeft de KLANT hier iets aan gedaan", niet op "staat er iets".
+    # serialize_master schrijft ALTIJD een params-blok, gevuld met defaults,
+    # dus 'er staan al parameters' was nooit onwaar en de allereerste --apply
+    # sloeg juist het getal over waar de hele seed om begon.
+    from modules.models import FTE_PARAM_DEFAULTS
+
+    edited_params = {name: value for name, value in existing_params.items()
+                     if name in FTE_PARAM_DEFAULTS
+                     and abs(float(value or 0.0)
+                             - float(FTE_PARAM_DEFAULTS[name] or 0.0)) > 1e-12}
+    if edited_params and not overwrite:
+        changes.append(
+            'fte.params ONGEWIJZIGD — de klant heeft '
+            + ', '.join(sorted(edited_params)) + ' aangepast '
+            '(--overwrite-existing vervangt ze alsnog)')
+    else:
+        old_rate = existing_params.get('utilization_rate')
+        new_rate = datasets['fte_params'].get('utilization_rate')
+        fte['params'] = datasets['fte_params']
+        changes.append(f'fte.params gezet ({len(datasets["fte_params"])} parameters); '
+                       'de bruto->netto-velden documenteren alleen de afleiding')
+        # utilization_rate zit in datzelfde blok maar REKENT mee: FteResult
+        # deelt de benodigde FTE erdoor voor 'bij bezettingsdoel'. Die mag niet
+        # onder 'verandert geen getal' verdwijnen.
+        if old_rate is not None and abs(float(old_rate) - float(new_rate or 0.0)) > 1e-12:
+            changes.append(
+                f'**bezettingsgraad {float(old_rate):g} -> {float(new_rate):g}** — '
+                f'die rekent WEL mee: de benodigde FTE bij bezettingsdoel schuift '
+                f'met {abs(1/float(new_rate) - 1/float(old_rate)) * 100 / (1/float(old_rate)):.1f}%.')
+
+    shift_added, shift_replaced = [], []
+    for name, hours in datasets['shift_hours'].items():
+        current = (fte.get('shift_hours') or {}).get(name)
+        if current is None:
+            fte.setdefault('shift_hours', {})[name] = hours
+            shift_added.append(name)
+        elif overwrite and abs(float(current) - float(hours)) > 1e-9:
+            fte.setdefault('shift_hours', {})[name] = hours
+            shift_replaced.append(f'{name} {float(current):g} -> {float(hours):g}')
+    # Ploeguren schalen de beschikbare uren van ELKE machine in dat systeem;
+    # ze stil muteren is precies wat het wijzigingsoverzicht moet voorkomen.
+    if shift_added or shift_replaced:
+        parts = []
+        if shift_added:
+            parts.append(f'{len(shift_added)} toegevoegd ({", ".join(shift_added)})')
+        if shift_replaced:
+            parts.append('OVERSCHREVEN: ' + '; '.join(shift_replaced)
+                         + ' — dit schaalt de beschikbare uren van elke machine '
+                           'in dat ploegensysteem')
+        changes.append('ploeguren: ' + ', '.join(parts))
+    else:
+        changes.append('ploeguren ONGEWIJZIGD')
+
     if keep_fte_hours or abs(old_hours - new_hours) < 0.005:
-        changes.append(f'uren per FTE ONGEWIJZIGD op {old_hours:g}'
-                       + (f' (werkboek zegt {new_hours:.2f}; --keep-current-fte-hours actief)'
-                          if keep_fte_hours and abs(old_hours - new_hours) >= 0.005 else ''))
+        changes.append(f'uren per FTE ONGEWIJZIGD op {old_hours:g}')
+    elif edited_params and not overwrite:
+        changes.append(f'uren per FTE ONGEWIJZIGD op {old_hours:g} (werkboek zegt '
+                       f'{new_hours:.2f}; --overwrite-existing past het aan)')
     else:
         fte['fte_hours_per_year'] = new_hours
+        shift = (f' Dat schuift ELK FTE-getal met '
+                 f'{abs(new_hours - old_hours) / old_hours:.2%}.' if old_hours > 0
+                 else ' De store had er nog geen.')
         changes.append(
-            f'**uren per FTE {old_hours:g} → {new_hours:.2f}** — dit is de exacte waarde uit het '
-            f'werkboek (F13) in plaats van de afgeronde. Het schuift ELK FTE-getal met '
-            f'{abs(new_hours - old_hours) / old_hours:.2%}. Draai met --keep-current-fte-hours '
-            'om de afgeronde waarde te behouden.')
+            f'**uren per FTE {old_hours:g} -> {new_hours:.2f}** - de exacte waarde uit '
+            f'het werkboek in plaats van de afgeronde.{shift} Draai met '
+            f'--keep-current-fte-hours om de huidige waarde te behouden.')
     master['fte'] = fte
 
     for name in ('staffing_norms', 'indirect_activities', 'benchmark_throughput'):
-        before = len(master.get(name) or {})
-        merged = dict(master.get(name) or {})
-        merged.update(datasets[name])
+        merged, stats = _merge_dataset(master.get(name), datasets[name], overwrite)
         master[name] = merged
-        changes.append(f'{name}: {before} → {len(merged)} records')
+        changes.append(_describe(name, stats, overwrite))
 
     for name in ('labor_rates', 'throughput_overrides', 'machine_combinations'):
         master.setdefault(name, {})
 
-    # Groepsmaterialen een leesbare naam geven. Alleen waar er nog geen naam
-    # staat: een naam die iemand zelf heeft ingevuld mag deze seed niet
-    # overschrijven.
+    # Groepsmaterialen een leesbare naam geven, alleen waar er nog geen staat.
     renamed = []
     for material in master.get('materials') or []:
         target = GROUP_NAME.get(str(material.get('material_number')))
         current = str(material.get('name') or '').strip()
         if target and (not current or current.lower() == 'nan'):
             material['name'] = target
-            renamed.append(f'{material["material_number"]} → "{target}"')
+            renamed.append(f'{material["material_number"]} -> "{target}"')
     if renamed:
         changes.append(f'machinegroepen een naam gegeven ({len(renamed)}): '
                        + ', '.join(renamed))
 
     if machines is not None:
         before = len(master.get('machines') or [])
-        by_code = {m['machine_code']: m for m in (master.get('machines') or [])}
-        for machine in machines:
-            existing = by_code.get(machine['machine_code'])
-            if existing is not None:
-                # Beschikbaarheid is MAANDdata; die van de store wint.
-                machine['availability_by_period'] = existing.get('availability_by_period') or {}
-            by_code[machine['machine_code']] = machine
-        master['machines'] = [by_code[c] for c in sorted(by_code)]
-        changes.append(f'machines: {before} → {len(master["machines"])}')
+        master['machines'], notes = _merge_machines(master.get('machines'), machines,
+                                                    overwrite)
+        changes.append(f'machines: {before} -> {len(master["machines"])}'
+                       + (f' | {"; ".join(notes)}' if notes else ''))
 
     if verify_only:
         return master, changes
@@ -820,28 +1045,55 @@ def apply_seed(store_path: Path, datasets: dict, machines: list | None,
     class _Probe:
         pass
 
-    hydrate_loader(_Probe(), master)   # validatie door hydratie, net als de PATCH-route
-    backup = store_path.with_name(
-        f'{store_path.name}.backup-{datetime.now().strftime("%Y%m%d%H%M%S")}')
-    shutil.copy2(store_path, backup)
-    master_store.save_master_store(store_path, master, previous=record, edited=True)
+    hydrate_loader(_Probe(), master)   # validatie door hydratie, als de PATCH-route
+
+    # Compare-and-swap op de storeversie. LET OP de reikwijdte: de lock
+    # hieronder is een threading.Lock die per PROCES bestaat, dus tussen de
+    # seed en een draaiende app beschermt hij niets — hij houdt alleen deze
+    # run intern consistent. Wat wél helpt is de versiecheck: die vangt een
+    # wijziging die vóór dit punt is gedaan. Er blijft een klein venster
+    # tussen de check en de save; draai de seed daarom bij voorkeur met de
+    # app dicht.
+    from ui.routes.master_data import _master_mutation_lock
+
+    with _master_mutation_lock:
+        current = master_store.get_current_master_record()
+        if (current or {}).get('version') != record.get('version'):
+            raise SystemExit(
+                f'De masterdata is tijdens deze seed gewijzigd (versie '
+                f'{record.get("version")} -> {(current or {}).get("version")}). '
+                f'Er is NIETS geschreven. Draai opnieuw.')
+        backup = store_path.with_name(
+            f'{store_path.name}.backup-{datetime.now().strftime("%Y%m%d%H%M%S")}')
+        shutil.copy2(store_path, backup)
+        master_store.save_master_store(store_path, master, previous=current, edited=True)
     changes.append(f'back-up geschreven naar {backup.name}')
 
-    # De spiegel op schijf is het referentiedocument ("kijk naar de
-    # master-Excel"); die moet meteen de nieuwe stand tonen, anders leest
-    # iedereen morgen nog de oude normen.
+    # De spiegel op schijf is het referentiedocument; die moet meteen de
+    # nieuwe stand tonen.
     from ui import master_mirror
 
     master_mirror.set_mirror_dir(store_path.parent)
     status = master_mirror.refresh_mirror()
     if status.get('stale'):
-        changes.append(f'LET OP: masterwerkboek niet bijgewerkt — {status.get("reason")}')
+        changes.append(f'LET OP: masterwerkboek niet bijgewerkt - {status.get("reason")}')
     else:
         changes.append(f'masterwerkboek ververst: {Path(status["path"]).name}')
     return master, changes
 
 
 def main() -> int:
+    # Windows-consoles draaien standaard cp1252. Zonder deze regel eindigde
+    # het script met een UnicodeEncodeError op het eerste niet-ASCII teken —
+    # NA de storemutatie, dus met exit 1, een gewijzigde database en een
+    # onzichtbaar wijzigingsrapport. De redelijke reactie daarop ("mislukt,
+    # nog eens draaien") was precies de gevaarlijkste.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--workbook', type=Path, default=DEFAULT_WORKBOOK,
@@ -851,15 +1103,21 @@ def main() -> int:
     parser.add_argument('--machines-workbook', type=Path,
                         help='MS_RECONC-werkboek om de machinelijst uit te vullen')
     parser.add_argument('--keep-current-fte-hours', action='store_true',
-                        help='laat fte_hours_per_year staan zoals hij is (de seed zet hem anders '
-                             'op de exacte waarde uit het werkboek, wat elk FTE-getal iets '
-                             'verschuift)')
+                        help='laat fte_hours_per_year staan zoals hij is')
+    parser.add_argument('--overwrite-existing', action='store_true',
+                        help='vervang records die al in de store staan. ZONDER deze vlag '
+                             'voegt de seed alleen ontbrekende records toe en blijven '
+                             'klantbewerkingen (aangezette activiteiten, gecorrigeerde '
+                             'normen, aangepaste machine-OEE) staan.')
+    parser.add_argument('--force-site', action='store_true',
+                        help='sla de sitecontrole over (normaal weigert de seed een store '
+                             'van een andere site dan ' + EXPECTED_SITE + ')')
     parser.add_argument('--apply', action='store_true',
                         help='schrijf naar de store (zonder deze vlag verandert er niets)')
     parser.add_argument('--report', type=Path,
-                        help='schrijf het rapport naar dit bestand. Let op: het rapport bevat '
-                             'klantcijfers (volumes, normen, bezetting) — schrijf het NIET in '
-                             'de repo, die is gitignored voor precies dit soort data.')
+                        help='schrijf het rapport naar dit bestand. Het rapport bevat '
+                             'klantcijfers (volumes, normen, bezetting) en mag daarom '
+                             'NIET in de repo staan; een pad binnen de repo wordt geweigerd.')
     args = parser.parse_args()
 
     if not args.workbook.exists():
@@ -871,10 +1129,27 @@ def main() -> int:
         from ui.paths import default_app_data_root
         store_path = default_app_data_root() / 'master_store.json'
 
+    if args.report:
+        repo_root = Path(__file__).resolve().parent.parent
+        try:
+            args.report.resolve().relative_to(repo_root)
+        except ValueError:
+            pass
+        else:
+            print(f'Weigering: {args.report} ligt in de repo. Het rapport bevat '
+                  f'klantcijfers. Kies een pad daarbuiten, bijvoorbeeld naast de store:'
+                  f'\n  --report "{store_path.parent / "seed-f2-cf-rapport.md"}"')
+            return 1
+
     machines = None
     site = None
     if args.machines_workbook:
         machines, site = load_machines(args.machines_workbook)
+        if site and not args.force_site and site != EXPECTED_SITE:
+            print(f'Weigering: {args.machines_workbook.name} is van site {site}, '
+                  f'maar deze seed hoort bij {EXPECTED_SITE}. Gebruik --force-site '
+                  f'als dit toch de bedoeling is.')
+            return 1
 
     # Machines om de vertaaltabel tegen te controleren: die uit het opgegeven
     # werkboek, anders die al in de store staan.
@@ -886,7 +1161,11 @@ def main() -> int:
         sap_machines = {m['machine_code']: m
                         for m in ((record or {}).get('master', {}).get('machines') or [])}
 
-    datasets, report, questions = build_seed(args.workbook, sap_machines)
+    try:
+        datasets, report, questions = build_seed(args.workbook, sap_machines)
+    except SeedError as exc:
+        print(f'Seed afgebroken: {exc}')
+        return 1
 
     if machines is not None:
         report.insert(0, f'Machinelijst uit `{args.machines_workbook.name}` (site {site}): '
@@ -897,17 +1176,25 @@ def main() -> int:
                          '`--machines-workbook <MS_RECONC.xlsm>` om ze te vullen.\n')
 
     header = [
-        '# Seed F2-CF masterdata — Maastricht (NLX1)',
+        f'# Seed F2-CF masterdata - {EXPECTED_SITE}',
         '',
         f'Bron: `{args.workbook.name}`',
         f'Store: `{store_path}`',
-        f'Modus: {"TOEPASSEN" if args.apply else "droogdraaien (er verandert niets)"}',
+        f'Modus: {"TOEPASSEN" if args.apply else "droogdraaien (er verandert niets)"}'
+        + (' + OVERSCHRIJVEN van bestaande records' if args.overwrite_existing else ''),
         f'Datum: {datetime.now().strftime("%Y-%m-%d %H:%M")}',
         '',
     ]
 
-    _, changes = apply_seed(store_path, datasets, machines, verify_only=not args.apply,
-                            keep_fte_hours=args.keep_current_fte_hours)
+    try:
+        _, changes = apply_seed(store_path, datasets, machines,
+                                verify_only=not args.apply,
+                                keep_fte_hours=args.keep_current_fte_hours,
+                                overwrite=args.overwrite_existing,
+                                expected_site='' if args.force_site else EXPECTED_SITE)
+    except SystemExit as exc:
+        print(str(exc))
+        return 1
 
     tail = ['## 6. Wat er met de database gebeurt', '']
     tail += [f'- {c}' for c in changes]
@@ -917,9 +1204,21 @@ def main() -> int:
 
     text = '\n'.join(header + report + tail)
     if args.report:
-        args.report.write_text(text, encoding='utf-8')
-        print(f'Rapport geschreven naar {args.report}')
-    print(text)
+        # Schrijffouten mogen nooit ná een geslaagde mutatie alsnog exit 1
+        # geven: de operator concludeert dan 'mislukt' en draait opnieuw.
+        try:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(text, encoding='utf-8')
+            print(f'Rapport geschreven naar {args.report}')
+        except OSError as exc:
+            print(f'LET OP: rapport kon niet worden geschreven ({exc}). '
+                  f'De database is wel bijgewerkt; het rapport volgt hieronder.')
+    # Nooit exit 1 op een presentatiefout nadat de database al gemuteerd is.
+    try:
+        print(text)
+    except Exception as exc:  # pragma: no cover - afhankelijk van de console
+        print(f'(rapport kon niet worden getoond: {exc}; '
+              f'gebruik --report om het naar een bestand te schrijven)')
     return 0
 
 
