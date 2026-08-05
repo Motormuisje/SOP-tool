@@ -2281,6 +2281,7 @@ function status(msg) { document.getElementById('status').textContent = msg; }
 let _busyDepth = 0;
 let _noticeTimer = null;
 let _busyHideTimer = null;
+let _busyShowRaf = null;
 function notify(msg, level = 'info', ms = 2600) {
     const n = document.getElementById('appNotice');
     if (!n) return;
@@ -2306,13 +2307,25 @@ function setBusy(isBusy, message = 'Working...') {
             _busyHideTimer = null;
         }
         overlay.classList.remove('hidden');
-        requestAnimationFrame(() => overlay.classList.add('show'));
+        // De RAF wordt bewaard zodat setBusy(false) hem kan annuleren. Duurt een
+        // taak korter dan een frame, dan vuurde hij anders NA het verbergen en
+        // zette 'show' terug -- een onzichtbare overlay die met
+        // pointer-events:auto ~140 ms lang alle kliks opving.
+        if (_busyShowRaf !== null) cancelAnimationFrame(_busyShowRaf);
+        _busyShowRaf = requestAnimationFrame(() => {
+            _busyShowRaf = null;
+            overlay.classList.add('show');
+        });
         document.body.classList.add('ui-busy');
         status(message);
         return;
     }
     _busyDepth = Math.max(0, _busyDepth - 1);
     if (_busyDepth > 0) return;
+    if (_busyShowRaf !== null) {
+        cancelAnimationFrame(_busyShowRaf);
+        _busyShowRaf = null;
+    }
     overlay.classList.remove('show');
     if (_busyHideTimer) clearTimeout(_busyHideTimer);
     _busyHideTimer = setTimeout(() => {
@@ -6092,8 +6105,20 @@ function collectMasterDataset(dataset) {
             const mat = row.dataset.masterKey;
             const lead = _masterCellValue(row.querySelector('[data-master-col="lead"]'), 'number');
             const moq = _masterCellValue(row.querySelector('[data-master-col="moq"]'), 'number');
-            if (lead === null || moq === null) return { error: `Ongeldig getal bij ${mat}.` };
-            if (lead > 0) value.lead_times[mat] = Math.round(lead);
+            // Number.isFinite i.p.v. '=== null': _masterCellValue geeft ook
+            // undefined terug als het invoerveld ontbreekt. Dat glipte langs de
+            // null-check en werd verderop Math.round(undefined) = NaN, wat als
+            // JSON-null bij de server aankwam en daar int(None) opblies.
+            if (!Number.isFinite(lead) || !Number.isFinite(moq)) {
+                return { error: `Ongeldig getal bij ${mat}.` };
+            }
+            if (lead < 0) return { error: `Lead time bij ${mat} kan niet negatief zijn.` };
+            // Lead time 0 is een GELDIGE waarde (direct beschikbaar) en moet
+            // bewaard blijven. De loader schrijft 0 ook weg; laten we hem hier
+            // vallen, dan valt get_lead_time terug op de VBA-default 1 -- die
+            // hoort alleen te gelden voor materialen die NIET in de Purchase
+            // sheet staan. Het inkoopplan schoof daardoor stil een maand op.
+            value.lead_times[mat] = Math.round(lead);
             if (moq > 0) value.moq[mat] = moq;
         }
         // Membership volgt de MOQ-regel: alleen materialen met een MOQ.
@@ -7278,7 +7303,9 @@ let _vpMaterialScope = null;
 let _isSwitchingSession = false;
 const _copyHoldDelayMs = 420;
 const _UI_PREFS_KEY = 'sop_ui_prefs_v1';
-const _VALID_TABS = new Set(['dashboard', 'planning', 'values', 'capacity', 'inventory', 'mom', 'log', 'config']);
+// 'fte' hoort hier ook in: zonder dat wordt het tabblad Capaciteit & FTE bij
+// het herladen als onbekend beschouwd en valt de gebruiker terug op dashboard.
+const _VALID_TABS = new Set(['dashboard', 'planning', 'values', 'capacity', 'fte', 'inventory', 'mom', 'log', 'config']);
 let _activeTabName = 'dashboard';
 let _planFilterRaf = null;
 
