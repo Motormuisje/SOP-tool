@@ -30,6 +30,21 @@ $env:SOP_APP_DATA_DIR = "C:\pad\naar\data"
 python main.py
 ```
 
+## Tests
+
+```powershell
+python -m pytest tests -q --ignore=tests/browser   # snelle suite (incl. golden)
+python main.py --test                              # zelftest van de app
+python -m pytest tests/browser -q                  # browsertests (Playwright)
+```
+
+De gouden baseline staat naast het werkboek, niet in de repo. Ontbreekt hij,
+dan faalt `test_baseline_exists`; aanmaken met `python tests/generate_baseline.py`.
+
+De browsertests starten een echte app en bedienen die met Chromium. Ze hebben
+een echt werkboek nodig via `SOP_GOLDEN_FIXTURE` en skippen zonder. Installatie,
+fixtures en foutzoeken staan in [docs/browsertests.md](docs/browsertests.md).
+
 ## Bewust niet meegenomen
 
 - testbestanden en test-output
