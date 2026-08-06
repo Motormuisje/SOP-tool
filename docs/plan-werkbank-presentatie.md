@@ -1,93 +1,169 @@
-# Plan — werkbankpresentatie: opties, variabelen en opbouw
+# Plan — werkbank: alles aanpasbaar, met SAP/MES als populatie
 
 **Site-scope: uitsluitend Maastricht (NLX1).** Machinevolgorde wisselen is een
 aparte vervolgtaak ná goedkeuring van de werkbank en staat hier bewust niet in.
 
-Dit plan is de synthese van drie onafhankelijk gemaakte ontwerpen
-(invalshoeken: planner-werkproces, financieel beslisser, datavertrouwen),
-gejureerd op drie criteria (meerwaarde/duidelijkheid, haalbaarheid tegen de
-echte engine-code, correctheid/vertrouwen). Afgewezen ideeën staan onderaan
-mét reden — die lijst is net zo belangrijk als de bouwlijst.
+Dit plan verving op 2026-08-06 een eerdere versie, na een richtlijn van de
+klant die het ontwerp fundamenteel kantelt:
 
-## 1. Ordenend principe
+> "In feite moeten alle getallen aanpasbaar zijn; neem SAP/MES-data echt
+> enkel als populeren van de data."
 
-De pagina volgt de maandcyclus van de planner, van boven naar beneden:
+## 1. Eerste principe: alles aanpasbaar — import is populatie
 
-1. **Signaleren** — waar en wanneer knelt de bemensing? (KPI's, knelpuntenmatrix)
-2. **Draaien** — aan wat je mag draaien: normen (via masterdata) en
-   combinaties (sessie-wat-als). Eén eigenaar per getal blijft de wet.
-3. **Doorgeven** — wat betekent het voor kosten en marge, en wat meld je het MT.
+SAP-routing, MES-metingen en PEER-cijfers zijn **beginwaarden**: ze vullen de
+masterdata, daarna is de masterdata — volledig bewerkbaar — de werkelijkheid
+waarmee gerekend wordt. Dit is dezelfde beweging die eerder met materialen en
+prijzen is gemaakt (werkboek → app-masterdata als bron van waarheid), nu
+consequent doorgetrokken naar alle capaciteits- en FTE-getallen.
 
-Daar doorheen geweven de vertrouwenslaag: **elk getal draagt zijn herkomst**
-(SAP-routing, MES-meting, PEER, masterdata-norm, aanname), aannames staan als
-chips op het scherm in plaats van in iemands hoofd, en er telt niets stil mee
-of stil niet mee.
+Drie regels houden dit eerlijk:
 
-## 2. Fase 1 — nu te bouwen (bestaande engine en payload volstaan)
+1. **Geen dood getal.** Elk getal dat de werkbank toont heeft een invulpad:
+   inline met write-through naar de masterdata-PATCH (zoals de
+   bemensingsnormen al werken: base_version, 409 bij conflict), of één klik
+   naar het juiste masterdata-grid.
+2. **Invullen is een zichtbare handeling.** Elke invulling draagt een
+   bronlabel (import / handmatig / MES overgenomen / …) en de beginwaarde
+   blijft ernaast zichtbaar. Niets telt *stil* mee of *stil* niet mee — dat
+   deel van de oude doctrine staat onverkort.
+3. **Een invulling werkt overal door.** Eén getal, één waarheid: wat de
+   planner invult telt in de héle keten (capaciteit, planning, FTE, waarde),
+   niet alleen in het paneel waar hij het intypte. Import overschrijft nooit
+   een klantbewerking (bestaand merge-gedrag van de store, nu de regel voor
+   alles).
 
-| # | Element | Beslissing die het dient | Variabelen | Vorm |
-|---|---|---|---|---|
-| 1 | **Knelpuntenmatrix**: benuttingsheatmap groep × periode, direct onder de KPI's | Waar/wanneer knelt het de komende maanden — de openingsvraag van elke cyclus | `FteLine.utilization` per periode (zit al in de payload); drempels van `_fteUtilizationClass` | Rijen = groepen + indirecte regels met venster, kolommen = periodes, cel = gekleurd blokje met %. Celklik zet het periodefilter en scrolt naar de groep. Toont altijd de hele horizon |
-| 2 | **Piek naast gemiddelde** op de KPI-tegels | Werven/inhuren/ploegen plan je op de piekmaand, niet op het horizongemiddelde | `totals.*` per periode (al in payload) | Subregel per tegel: "32,1 gem. · piek 36,4 (2026-10)", piekmaand klikbaar; vervalt bij gekozen periode |
-| 3 | **Aggregatie-sublabels** op de KPI-tegels | KPI's correct overnemen in rapportages | bestaande `_fteAgg` | Microlabel "gem. per periode" / "som over horizon" / de periodenaam |
-| 4 | **Periodebereik-presets**, standaard "komende 3 maanden" | De ploegbeslissing van déze cyclus gaat over de komende maanden; "alle periodes" verdunt het venster | `data.periods` + kalendermaand | Bereikkeuze (3 mnd / 6 mnd / hele horizon / één maand); tabel en tegels volgen het bereik, de heatmap niet |
-| 5 | **Herkomstchips op de bemensingsnorm** | Welke normen moet ik laten valideren vóór ik het totaal extern toon | `operators_source` (al in payload) | Bron-kolom wordt chip; `default` wordt amber "aanname 1,0" met telkaartje "n regels rekenen op een aanname" dat erop filtert |
-| 6 | **Loonkosten-herkomstchip** "sitebreed tarief — FIN-uitvraag loopt" | Voorkomt dat één gemiddeld tarief gelezen wordt als FIN-gevalideerd | `labor_rates` (alleen `default` aanwezig) | Chip op de KPI-tegel, de kolomkop en in het waardeketenpaneel; verdwijnt vanzelf zodra er functiegroeptarieven zijn (§6.3) |
-| 7 | **Materialiteitsdrempel op alle delta's** | Voorkomt beslissen op ruis (nu kleurt 0,001 FTE al groen/rood) | één gedeelde drempelfunctie i.p.v. epsilon 1e-9 | Onder de drempel grijs "≈ 0" met exact getal in tooltip; zelfde drempel voor tegels, vergelijking en waardeketen — vast, niet per gebruiker |
-| 8 | **Eerlijkheidsmelding bij de vergelijking** | De vergelijking rekent met `engine.data` — dus met de **opgeslagen** normen, niet met wat je net intypte (geverifieerd, bestaande stille valkuil) | `_fteState.dirtyNorms` | Melding op het vergelijkingspaneel zodra er onopgeslagen normen zijn, plus vast bijschrift "gelijk volume, gelijke periodes — alleen de bemensingsaanname verschilt" |
-| 9 | **Indirect-sectie met driverchips + uitsplitsing** | Vast vs volumegedreven uit elkaar houden; §6.6 (maintenance) zichtbaar maken i.p.v. impliciet | `IndirectActivity.driver`, `is_active` | Subkop "Indirect" met chip per regel (vast · per ton · per truck · per machine); maintenance-badge "telt mee — bevestiging OPS (§6.6)"; de tegel "waarvan indirect" klapt een minitabel uit. Aan/uit blijft in de masterdata-tabellen |
-| 10 | **Machinedetail standaard uit** | Leesbaar voor wie het model niet kent: standaard alleen regels die in het totaal meetellen | bestaand vinkje | Uitklappijltje per groepsrij toont de machines ingesprongen en grijs |
-| 11 | **Aannamenregister-strip** onder de KPI-rij | "Kan dit cijfer het MT in?" — de aannames als één regel chips | fte-params, bezettingsdoel, tariefstatus | "Effectieve uren 1.492 (additief) · bezettingsdoel 85% · sitebreed tarief · n aannamenormen", uitklapbaar |
+## 2. Wat de inventaris vond (geverifieerd, met bestand:regel in het rapport)
 
-## 3. Fase 2 — klein enginewerk eerst
+De doorlichting van alle werkbankgetallen, alle masterdata-grids en de
+enginedoorwerking leverde drie structurele bevindingen op:
 
-| # | Element | Enginewerk | Vorm |
-|---|---|---|---|
-| 12 | **Doorzet-triage norm vs MES** (klantvraag §6.1) | `FteLine.throughput_norm` bestaat in het contract (fte_engine.py) maar wordt **nergens gevuld** — geverifieerd. Eerst vullen vanuit de SAP-routing/override in `_machine_lines` | Eén kolom "Doorzet t/u": "norm → MES" met bronchip (SAP/override) en afwijkings-%; amber > X%, rood > 2·X%. Drempel X is één sitewaarde in masterdata (default 10%, label "voorlopig" tot de klant §6.1 beantwoordt). Telkaartje "n normen wijken > X% af" filtert erop. MES rekent nooit mee — doctrine |
-| 13 | **Niet-meegeteld-paneel** | payload-uitbreiding: inactieve activiteiten meesturen | Opvouwbaar, grijs (bewuste keuze, geen fout): per post naam, klantnorm en reden ("volumebron onbevestigd", "wacht op §6.6") |
+1. **De doorzet-override rekent maar half mee.** `throughput_overrides` is
+   invulbaar (grid mét bronlabelveld) en de FTE-motor past hem toe, maar
+   `capacity_engine` gebruikt hem nérgens: planning, Line 07-uren, bezetting
+   en bottlenecks blijven op de SAP-routing rekenen. Hetzelfde getal heeft
+   twee waarheden — strijdig met regel 3.
+2. **Het getal waarmee gerekend wordt is onzichtbaar.** De SAP-doorzet
+   (routing AUX2) staat nergens in de app; `FteLine.throughput_norm` is een
+   dood veld (gedeclareerd, geserialiseerd, nooit gevuld) en
+   `throughput_source` wordt nergens gerenderd. De planner ziet MES/PEER
+   naast een norm die er niet staat, en een actieve override is in de
+   werkbank onzichtbaar — een getal dat stil meetelt.
+3. **Een reeks invulpaden ontbreekt of loopt dood.** Machines (en hun
+   kosten) zijn niet toe te voegen in de app; ploegvensters niet aan te
+   maken; machine-detailvelden (`shift_hours_override`,
+   `availability_by_period`) onbereikbaar; 15 van de ~18 materiaalvelden na
+   aanmaak niet meer bewerkbaar; purchase actuals bevroren op de importmaand;
+   de bruto→netto-FTE-velden (ziekte%, verlof, ADV) zijn invulbaar maar
+   rekenen nergens in door; een lege getalcel wordt bij opslaan stil 0; een
+   regel zonder loontarief rekent stil met €0.
 
-## 4. Fase 3 — wacht op klantantwoord of op goedkeuring van de werkbank
+## 3. Fase 1 — nu: presenteren + bestaande invulpaden ontsluiten
 
-- **Cyclusafsluiting / besliskaart**: huidige stand vergelijken met een
-  vastgezet scenario en een MT-samenvatting produceren — altijd mét
-  masterdata-versiestempel en de voorbehouden (sitebreed tarief, aannamenormen,
-  maintenance in/uit). Een kale kopieerregel zonder herkomst is afgewezen.
-  Vergt uitbreiding van `/api/fte/compare` (die varieert nu alleen
-  combinatiesets).
-- **Combinaties per periode aan/uit**: reële seizoensbeslissing, maar raakt de
-  sessiestate door alle zes sync-/rebuildpunten en §6.4 (welke combinaties
-  zijn überhaupt toegestaan) staat nog open. Pas na goedkeuring.
-- **Meetdatum bij benchmarks**: alleen als de klant een meetdatum meelevert;
-  zonder databron bouwen we het niet.
+Geen enginewerk; de bestaande datasets en het write-through-stramien volstaan.
 
-## 5. Bewust afgewezen (met de jurygrond)
+| # | Element | Invulpad |
+|---|---|---|
+| 1 | **Knelpuntenmatrix** (benuttingsheatmap groep × periode) onder de KPI's; celklik zet periodefilter en scrolt naar de groep; toont altijd de hele horizon | leeswerk (afgeleide ratio, bewust niet invulbaar — stuur via uren/normen) |
+| 2 | **Piek naast gemiddelde** op de KPI-tegels, piekmaand klikbaar; plus **aggregatie-sublabels** ("gem. per periode" / "som over horizon" / periodenaam) | leeswerk |
+| 3 | **Periodebereik-presets**, standaard "komende 3 maanden" | leeswerk |
+| 4 | **Aanname-chips zijn invulvelden.** De amber "aanname 1,0"-chip op `operators_source='default'` opent direct de bestaande inline normcel; het telkaartje "n regels rekenen op een aanname" filtert erop | inline (bestaand write-through) |
+| 5 | **Doorzetkolom die de waarheid toont**: per machineregel de doorzet waarmee gerekend wordt + bronchip (SAP-routing / override met bron). Zolang `throughput_norm` niet gevuld is (fase 2) toont de kolom de overridewaarde uit de masterdata en "SAP" zonder getal — eerlijk over wat er nog niet zichtbaar kan zijn | invulbaar: klik opent de override-invoer (write-through naar `throughput_overrides`, bron "handmatig") |
+| 6 | **"Neem over als beginwaarde"-actie op MES/PEER-cellen**: schrijft een `ThroughputOverride` met bron "MES overgenomen" resp. "PEER overgenomen". Expliciete handeling; MES zelf blijft referentie en rekent nooit vanzelf mee | schrijft override via bestaande PATCH |
+| 7 | **Loonkosten invulbaar per functiegroep, nu.** Niet wachten op FIN: het `labor_rates`-grid heeft al "+ rij"; de werkbank krijgt een directe sprong + chip die de status toont ("sitebreed tarief" → "eigen tarieven, n groepen"). FIN-antwoord = betere beginwaarde, geen voorwaarde. **Stille €0** (regel zonder tarief én zonder default) wordt een zichtbare waarschuwing op de regel | masterdata-grid (bestaand, addable) |
+| 8 | **Combinatiegetallen bewerkbaar vanuit het paneel**: operators-samen en doorzetfactor(en) in het combinatiepaneel openen de bijbehorende rij in het `machine_combinations`-grid | sprong naar grid (bestaand, addable) |
+| 9 | **Indirect-sectie**: driverchips (vast · per ton · per truck · per machine), maintenance-badge (§6.6), klikbare uitsplitsing achter de tegel "waarvan indirect", en per regel een sprong naar de `indirect_activities`-rij | sprong naar grid (bestaand, addable) |
+| 10 | **Materialiteitsdrempel op alle delta's** (vast; grijs "≈ 0" met exact getal in tooltip) en **eerlijkheidsmelding** op het vergelijkingspaneel (rekent met opgeslagen normen; melding bij onopgeslagen wijzigingen) | leeswerk |
+| 11 | **Machinedetail standaard uit**, uitklap per groep; **aannamenstrip** onder de KPI-rij (effectieve uren, bezettingsdoel, tariefstatus, n aannamenormen) — elke chip is een sprong naar zijn invulpad | leeswerk + sprongen |
 
-- **±-bandbreedte op loonkosten** — de ±10% is zelf een getal zonder herkomst;
-  schijnprecisie bestrijden met nieuwe schijnprecisie.
-- **Norm-wat-als per variant** — schept een tweede eigenaar van de norm;
-  binnen een week circuleren delta's waarvan niemand de normstand kent.
-- **Variantenkast (checkbox-matrix, vrij samenstellen)** — overlaadt de pagina
-  terwijl §6.4 nog niet eens vastlegt welke combinaties toegestaan zijn.
-- **KPI-herordening "euro's eerst" / referentie-anker met delta-tegels** —
-  herframet een plannerswerkbank tot financieel dashboard en verdubbelt het
-  rekenwerk om tegels te decoreren.
-- **Stille jaarbasis-normalisatie** — som ÷ periodes × 12 zonder dat te zeggen
-  is precies de verborgen aanname die we overal anders uitbannen.
-- **Per-gebruiker instelbare afwijkingsdrempel** — een signaal dat per kijker
-  verschilt is niet reproduceerbaar; screenshots dragen het signaal niet.
-- **"Reken met MES"-knop, doorzet-bewerking in de werkbank, optimizer,
-  extra grafieken** — doctrine (benchmarks rekenen nooit mee; één eigenaar
-  per getal; zes tegels is de grens) en scope.
-- **Machinevolgorde wisselen** — expliciete klantuitspraak: aparte taak, later.
+## 4. Fase 2 — enginewerk: invullingen laten dóórwerken
 
-## 6. Wat dit oplevert per open klantvraag
+Dit is de kern van de richtlijn en het zwaarste werk. Volgorde van belang:
 
-| Klantvraag (§6 F2-CF-plan) | Zichtbaar als |
-|---|---|
-| 6.1 brontriage doorzet, drempel X | doorzet-triagekolom + telkaartje (fase 2), drempel gelabeld "voorlopig" |
-| 6.3 loonkosten per functiegroep | sitebreed-tariefchip die vanzelf verdwijnt zodra FIN levert |
-| 6.4 combinatieregels | combinaties blijven hele-horizon-wat-als tot de regels bevestigd zijn |
-| 6.6 maintenance wel/niet | badge op de maintenance-regel + niet-meegeteld-paneel maakt beide lezingen controleerbaar |
+1. **Doorzet-override doorwerken in de capaciteitsmotor.** `capacity_engine`
+   past `throughput_overrides` toe op de Line 07-uren (zelfde
+   sleutel `machine|materiaal`, zelfde OEE-behandeling als de FTE-motor), zodat
+   planning, bezetting, bottlenecks én werkbank hetzelfde getal zien. Dit
+   raakt de rekenkern: eigen verificatieronde met (a) bewijs dat een lege
+   override-set byte-identieke resultaten geeft (additiviteit), (b) golden
+   baseline opnieuw genereren mét dat bewijs ernaast, (c) browsertests op de
+   cascade planning→werkbank.
+2. **`FteLine.throughput_norm` vullen** met de effectief meegerekende doorzet
+   (routing-AUX2 dan wel override) + `throughput_source` renderen. Daarmee
+   wordt kolom 5 uit fase 1 volwaardig en is er geen stil meetellend getal
+   meer.
+3. **Bruto→netto-parameters laten doorwerken.** Ziekte%, verlof, ADV en
+   training zijn nu "afleidingshulp" die niets doet. Ze gaan
+   `fte_hours_per_year` daadwerkelijk afleiden (`derive_effective_fte_hours`
+   bestaat al), met de afgeleide waarde zichtbaar naast het veld en een
+   expliciete bevestigingsstap — invullen dat niets doet is erger dan geen
+   veld.
+4. **Lege cel ≠ nul.** `_masterCellValue` maakt van een leeggemaakte getalcel
+   stil 0; dat wordt een expliciete keuze (leeg = niet ingevuld = weigeren of
+   bewust wissen, nooit stil 0).
+5. **Override-randgevallen zichtbaar**: een override ≤ 0 of zonder basisdoorzet
+   wordt nu stil genegeerd op een warninglijst na — dat wordt een zichtbare
+   melding op de regel zelf.
+6. **Afwijkingsbadge norm vs MES** (klantvraag §6.1): amber > X%, rood > 2·X%,
+   met X als één sitewaarde in masterdata (default 10%, label "voorlopig").
+   Kan pas zinvol ná stap 2 (er moet een norm zichtbaar zijn om tegen af te
+   wijken).
 
-Zo is de werkbank zelf het antwoordformulier: elke openstaande vraag staat als
-chip of badge op het scherm, en het antwoord van de klant haalt hem weg.
+## 5. Fase 3 — ontbrekende invulpaden in de masterdata
+
+Zuivere uitbreiding van de bestaande grids/formulieren, geen rekenwerk:
+
+- **Machines toevoegen** in de app (incl. `machine_costs`-rij), naar het
+  stramien van de productwizard; machine-detailvelden bewerkbaar
+  (`shift_hours_override`; `availability_by_period` heeft een eigen
+  periode-editor nodig).
+- **Ploegvenster toevoegen** in het FTE-formulier (nu alleen bestaande
+  sleutels bewerkbaar).
+- **Materiaalvelden ontsluiten** die na aanmaak vastzitten
+  (`fte_requirements`, `ton_per_truck`, `control_room`,
+  machinegroep-toewijzingen, …).
+- **Purchase actuals invulbaar** met de import als beginwaarde (nu "bevroren
+  op importmaand").
+- **Losse "+ rij"** voor `safety_stock`, `material_costs`, `sales_prices`
+  (nu alleen via de alles-in-één-productwizard).
+- **Systematisch bronlabel**: per record zichtbaar of het de importwaarde is
+  of een bewerking (schema-uitbreiding; nu heeft alleen
+  `throughput_overrides` een bronveld).
+
+## 6. Fase 4 — wacht op klantantwoord of op goedkeuring van de werkbank
+
+- **Cyclusafsluiting / besliskaart** (scenario-referentie + MT-samenvatting,
+  altijd mét masterdata-versiestempel en voorbehouden; vergt
+  compare-uitbreiding).
+- **Combinaties per periode aan/uit** (raakt alle zes sync-/rebuildpunten;
+  §6.4 eerst).
+- **Meetdatum bij benchmarks** (alleen als de klant een meetdatum meelevert).
+
+## 7. Wat er door de richtlijn is omgekeerd — en wat blijft staan
+
+Omgekeerd (was afgewezen, mag nu — als expliciete handeling met bron):
+
+- **Doorzet invullen vanuit de werkbank** (was: "overrides alleen in de
+  masterdata-tabellen"). Het blijft dezelfde dataset en dezelfde PATCH; alleen
+  de ingang zit nu waar de planner kijkt.
+- **"Neem MES/PEER over"** (was: verboden knop). Toegestaan als expliciete
+  overname die een override mét bronlabel schrijft; MES rekent nooit vanzelf.
+
+Blijft afgewezen, met de oorspronkelijke jurygrond:
+
+- **±-bandbreedte op loonkosten** — verzonnen onzekerheidsgetal.
+- **Norm-wat-als per variant in de vergelijking** — de richtlijn zegt dat
+  alles ínvulbaar moet zijn in de data, niet dat vergelijkingen mogen rekenen
+  met normen die in geen enkele masterdata-versie bestaan.
+- **Stille jaarbasis-normalisatie, per-gebruiker drempels, "euro's
+  eerst"-herordening, optimizer, extra grafieken** — ongewijzigd.
+- **MES die vanzelf meerekent** — de overname is een handeling, geen sluis.
+
+## 8. Klantvragen worden beginwaarde-verbeteringen
+
+| Klantvraag (§6 F2-CF-plan) | Was | Wordt |
+|---|---|---|
+| 6.1 brontriage doorzet | blokkade voor de triagekolom | invulpad bestaat vast; klantantwoord zet de drempel en de voorkeursbron |
+| 6.3 loonkosten per functiegroep | wachten op FIN | planner vult nu al tarieven in; FIN-cijfers vervangen de beginwaarde |
+| 6.4 combinatieregels | blokkade voor per-periode | combinaties blijven hele-horizon tot bevestigd |
+| 6.6 maintenance wel/niet | badge | badge + activiteit staat in de masterdata en is nu al aan/uit te zetten |
