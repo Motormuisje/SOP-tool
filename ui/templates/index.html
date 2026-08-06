@@ -1301,18 +1301,73 @@
             <div id="fteEmpty" class="card rounded-xl p-6 text-slate-400 text-sm">Run calculations</div>
 
             <div id="fteBody" class="hidden">
-                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">FTE benodigd</p><p class="text-2xl font-bold" id="fteKpiTotal">0</p></div>
-                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">waarvan indirect</p><p class="text-2xl font-bold text-slate-300" id="fteKpiIndirect">0</p></div>
-                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Bij bezettingsdoel</p><p class="text-2xl font-bold text-blue-400" id="fteKpiStaffed">0</p></div>
-                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Benutting</p><p class="text-2xl font-bold" id="fteKpiUtilization">0%</p></div>
-                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Loonkosten</p><p class="text-2xl font-bold" id="fteKpiCost">&euro;0</p></div>
-                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Ton per FTE</p><p class="text-2xl font-bold" id="fteKpiTonsPerFte">0</p></div>
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-2">
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">FTE benodigd</p><p class="text-2xl font-bold" id="fteKpiTotal">0</p><p class="text-[10px] text-slate-500" id="fteKpiTotalSub"></p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">waarvan indirect</p><p class="text-2xl font-bold text-slate-300" id="fteKpiIndirect">0</p><p class="text-[10px] text-slate-500" id="fteKpiIndirectSub"></p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Bij bezettingsdoel</p><p class="text-2xl font-bold text-blue-400" id="fteKpiStaffed">0</p><p class="text-[10px] text-slate-500" id="fteKpiStaffedSub"></p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Benutting</p><p class="text-2xl font-bold" id="fteKpiUtilization">0%</p><p class="text-[10px] text-slate-500" id="fteKpiUtilizationSub"></p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Loonkosten</p><p class="text-2xl font-bold" id="fteKpiCost">&euro;0</p><p class="text-[10px] text-slate-500" id="fteKpiCostSub"></p></div>
+                    <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Ton per FTE</p><p class="text-2xl font-bold" id="fteKpiTonsPerFte">0</p><p class="text-[10px] text-slate-500" id="fteKpiTonsPerFteSub"></p></div>
                 </div>
+
+                <!-- Aannamenstrip: waar de getallen op steunen, elk met een sprong
+                     naar zijn invulpad. Gevuld door _renderFteAssumptions(). -->
+                <div id="fteAssumptions" class="flex flex-wrap gap-2 mb-4 text-[11px]"></div>
 
                 <div id="fteWarnings" class="hidden card rounded-xl p-4 mb-4 border border-amber-500/40">
                     <p class="text-amber-400 text-sm font-semibold mb-1">Let op</p>
                     <ul id="fteWarningList" class="text-xs text-amber-200 list-disc pl-5 space-y-1"></ul>
+                </div>
+
+                <!-- Overzicht: knelpuntenmatrix + FTE-opbouwgrafiek. Beide zijn
+                     bediening, niet alleen beeld: klikken opent het bijbehorende
+                     bewerkpad in de tabel eronder. -->
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+                    <div class="card rounded-xl p-6">
+                        <h3 class="font-semibold mb-1">Knelpunten &mdash; benutting per groep per maand</h3>
+                        <p class="text-xs text-slate-500 mb-3">Klik een cel om die maand en groep in de werkbank te openen.</p>
+                        <div id="fteHeatmap" class="overflow-x-auto text-[11px]"></div>
+                    </div>
+                    <div class="card rounded-xl p-6">
+                        <h3 class="font-semibold mb-1">FTE-opbouw per maand</h3>
+                        <p class="text-xs text-slate-500 mb-3">Gestapeld per groep; indirect als aparte laag. Klik een staafsegment om de bemensing van die groep te bewerken.</p>
+                        <!-- Vaste hoogte om het canvas heen: responsive zonder
+                             gedimensioneerde ouder laat Chart.js het canvas bij
+                             elke render groeien tot het de halve pagina afdekt
+                             en alle kliks onderschept. -->
+                        <div class="relative" style="height:230px"><canvas id="fteWbChart"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="card rounded-xl p-6 mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h3 class="font-semibold">Werkbank &mdash; capaciteit, bemensing en kosten</h3>
+                        <div class="flex flex-wrap items-center gap-3 text-xs">
+                            <span id="fteRange" class="flex rounded-lg overflow-hidden border border-slate-600">
+                                <button data-range="all" onclick="setFteRange('all')" class="px-2 py-1 bg-blue-600 text-white">hele horizon</button>
+                                <button data-range="next3" onclick="setFteRange('next3')" class="px-2 py-1 bg-slate-800 text-slate-300 hover:bg-slate-700">komende 3 mnd</button>
+                                <button data-range="next6" onclick="setFteRange('next6')" class="px-2 py-1 bg-slate-800 text-slate-300 hover:bg-slate-700">komende 6 mnd</button>
+                            </span>
+                            <label class="flex items-center gap-1 text-slate-400">Maand
+                                <select id="ftePeriod" onchange="renderFteWorkbench()" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"></select>
+                            </label>
+                            <label class="flex items-center gap-1 text-slate-400">
+                                <input id="fteShowMachines" type="checkbox" checked onchange="renderFteWorkbench()" class="accent-blue-500"> machinedetail
+                            </label>
+                        </div>
+                    </div>
+                    <div id="fteDirtyBar" class="hidden mb-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/40 rounded-lg px-3 py-2">
+                        <span class="text-xs text-amber-200"><span id="fteDirtyCount">0</span> gewijzigde bemensingsnorm(en) &mdash; nog niet opgeslagen.</span>
+                        <span class="flex gap-2">
+                            <button onclick="revertFteNorms()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Ongedaan maken</button>
+                            <button onclick="saveFteNorms()" class="text-xs bg-blue-600 hover:bg-blue-500 rounded px-3 py-1">Opslaan in masterdata</button>
+                        </span>
+                    </div>
+                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteWbHead"></thead><tbody id="fteWbBody"></tbody></table></div>
+                    <p class="text-xs text-slate-500 mt-2">Klik een groepsrij om de machines eronder te tonen. Machinerijen zijn detail
+                        achter hun groep en tellen niet mee in het totaal (een molengroep is het maximum van zijn machines, geen som).
+                        SAP/MES-waarden zijn beginwaarden: via &#9998; vul je een eigen doorzet in (met bronlabel), via &#8594; neem je
+                        de MES-meting als startwaarde over.</p>
                 </div>
 
                 <div class="card rounded-xl p-6 mb-4">
@@ -1331,32 +1386,11 @@
                         <h3 class="font-semibold">Vergelijking combinatievarianten</h3>
                         <button onclick="document.getElementById('fteComparePanel').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-200">sluiten</button>
                     </div>
+                    <p id="fteCompareDirtyNote" class="hidden text-xs text-amber-300 mb-2">De vergelijking rekent met de <b>opgeslagen</b>
+                        bemensingsnormen &mdash; je hebt onopgeslagen wijzigingen die hier niet in meetellen.</p>
+                    <p class="text-xs text-slate-500 mb-2">Gelijk volume, gelijke periodes &mdash; alleen de bemensingsaanname verschilt.
+                        Verschillen kleiner dan de materialiteitsdrempel staan als &asymp;&nbsp;0.</p>
                     <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteCompareHead"></thead><tbody id="fteCompareBody"></tbody></table></div>
-                </div>
-
-                <div class="card rounded-xl p-6 mb-4">
-                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                        <h3 class="font-semibold">Werkbank &mdash; capaciteit, bemensing en kosten</h3>
-                        <div class="flex flex-wrap items-center gap-3 text-xs">
-                            <label class="flex items-center gap-1 text-slate-400">Periode
-                                <select id="ftePeriod" onchange="renderFteWorkbench()" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-200"></select>
-                            </label>
-                            <label class="flex items-center gap-1 text-slate-400">
-                                <input id="fteShowMachines" type="checkbox" checked onchange="renderFteWorkbench()" class="accent-blue-500"> machinedetail
-                            </label>
-                        </div>
-                    </div>
-                    <div id="fteDirtyBar" class="hidden mb-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/40 rounded-lg px-3 py-2">
-                        <span class="text-xs text-amber-200"><span id="fteDirtyCount">0</span> gewijzigde bemensingsnorm(en) &mdash; nog niet opgeslagen.</span>
-                        <span class="flex gap-2">
-                            <button onclick="revertFteNorms()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Ongedaan maken</button>
-                            <button onclick="saveFteNorms()" class="text-xs bg-blue-600 hover:bg-blue-500 rounded px-3 py-1">Opslaan in masterdata</button>
-                        </span>
-                    </div>
-                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteWbHead"></thead><tbody id="fteWbBody"></tbody></table></div>
-                    <p class="text-xs text-slate-500 mt-2">Machinerijen zijn detail achter hun groep en tellen niet mee in het totaal
-                        (een molengroep is het maximum van zijn machines, geen som). Doorzet-overrides en benchmarks beheer je in de
-                        masterdata-tabellen.</p>
                 </div>
 
                 <div id="fteValuePanel" class="card rounded-xl p-6">
@@ -11952,7 +11986,16 @@ async function resetMachineEdits() {
 // masterVersion: de storeversie waarop de getoonde normen zijn gebaseerd. Die
 // gaat als base_version mee bij het opslaan, zodat een wijziging uit een tweede
 // tabblad een 409 geeft in plaats van stil te worden overschreven.
-let _fteState = { data: null, combinations: [], active: [], dirtyNorms: {}, masterVersion: null };
+let _fteState = { data: null, combinations: [], active: [], dirtyNorms: {}, masterVersion: null,
+                  // range: aggregatiebereik ('all' | 'next3' | 'next6'); een gekozen
+                  // maand in #ftePeriod gaat vóór het bereik. openGroups: welke
+                  // groepen hun machinedetail tonen (accordion; de rijen blijven in
+                  // de DOM zodat rijtellingen en tests niets merken van in-/uitklappen).
+                  range: 'all', openGroups: new Set(),
+                  // driver per indirecte activiteit (fixed/per_ton/...), best-effort
+                  // opgehaald uit de masterdata voor de chips in de tabel.
+                  indirectDrivers: {} };
+let _fteWbChartInstance = null;
 
 async function loadFteWorkbench({ force = false } = {}) {
     // Van tabblad wisselen roept dit opnieuw aan. Onopgeslagen normen mogen
@@ -11980,6 +12023,26 @@ async function loadFteWorkbench({ force = false } = {}) {
         document.getElementById('fteBody').classList.remove('hidden');
         _renderFtePeriodOptions();
         renderFteWorkbench();
+        // Driverchips (vast/per ton/...) op de indirecte regels: best effort
+        // uit de masterdata, één keer per paginabezoek — zonder store geeft
+        // dit een 400, en die hoeft niet bij elke verversing opnieuw in de
+        // console te verschijnen.
+        // Indirecte regels bestáán alleen als er een masterstore is; zonder
+        // die regels is er niets om een chip op te zetten en zou de fetch
+        // gegarandeerd een 400 opleveren.
+        if (!_fteState._driversFetched
+            && (_fteState.data.lines || []).some(l => l.category === 'indirect')) {
+            _fteState._driversFetched = true;
+            fetch('/api/master_data/indirect_activities')
+                .then(r => r.ok ? r.json() : null)
+                .then(body => {
+                    if (!body || body.error || !body.value) return;
+                    _fteState.indirectDrivers = Object.fromEntries(
+                        Object.entries(body.value).map(([k, v]) => [k, (v || {}).driver]));
+                    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+                })
+                .catch(() => {});
+        }
         if (Object.keys(pending).length) {
             notify('De werkbank is bijgewerkt; je niet-opgeslagen bemensingsnormen '
                    + 'staan er nog. Controleer ze voordat je opslaat.', 'warning', 7000);
@@ -12001,12 +12064,52 @@ function _renderFtePeriodOptions() {
 
 // Eén periode of het totaal over de horizon. Uren en kosten sommeren, FTE en
 // benutting middelen — een gesommeerde bezettingsgraad zou 300% "zijn".
-function _fteAgg(values, mode) {
+// Periodes waarover de tegels en de tabel aggregeren. Een gekozen maand wint
+// van het bereik; anders 'komende N maanden' gerekend vanaf de huidige
+// kalendermaand (valt die buiten de horizon, dan vanaf het begin — een lege
+// selectie zou stil nul tonen).
+function _ftePeriodsInScope() {
     const periods = (_fteState.data && _fteState.data.periods) || [];
     const period = document.getElementById('ftePeriod')?.value || '';
-    if (period) return Number((values || {})[period] || 0);
-    const total = periods.reduce((sum, p) => sum + Number((values || {})[p] || 0), 0);
-    return mode === 'avg' && periods.length ? total / periods.length : total;
+    if (period) return [period];
+    const n = { next3: 3, next6: 6 }[_fteState.range];
+    if (!n) return periods;
+    const now = new Date();
+    const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    let start = periods.findIndex(p => p >= current);
+    if (start === -1) start = 0;
+    return periods.slice(start, start + n);
+}
+
+function _fteAgg(values, mode) {
+    const scope = _ftePeriodsInScope();
+    const total = scope.reduce((sum, p) => sum + Number((values || {})[p] || 0), 0);
+    return mode === 'avg' && scope.length ? total / scope.length : total;
+}
+
+// Piek over de VOLLE horizon, onafhankelijk van het gekozen bereik: werven en
+// ploegen plan je op de piekmaand, en die mag niet uit beeld raken doordat er
+// toevallig op drie rustige maanden is ingezoomd.
+function _ftePeak(values, mode) {
+    const periods = (_fteState.data && _fteState.data.periods) || [];
+    let peak = null;
+    for (const p of periods) {
+        const v = Number((values || {})[p] || 0);
+        if (peak === null || v > peak.value) peak = { period: p, value: v };
+    }
+    return peak;
+}
+
+function setFteRange(range) {
+    _fteState.range = range;
+    const period = document.getElementById('ftePeriod');
+    if (period) period.value = '';
+    document.querySelectorAll('#fteRange button').forEach(b => {
+        const active = b.dataset.range === range;
+        b.className = active ? 'px-2 py-1 bg-blue-600 text-white'
+                             : 'px-2 py-1 bg-slate-800 text-slate-300 hover:bg-slate-700';
+    });
+    renderFteWorkbench();
 }
 
 function _fteOperators(line) {
@@ -12036,6 +12139,13 @@ function renderFteWorkbench() {
     document.getElementById('fteKpiTonsPerFte').textContent =
         fteAvg > 0 ? _fmtNlNum(volume / fteAvg, 0) : '—';
 
+    _fteKpiSub('fteKpiTotalSub', 'avg', data.totals.fte);
+    _fteKpiSub('fteKpiIndirectSub', 'avg', data.totals.indirect_fte);
+    _fteKpiSub('fteKpiStaffedSub', 'avg', data.totals.staffed_fte);
+    _fteKpiSub('fteKpiUtilizationSub', 'avg', null);
+    _fteKpiSub('fteKpiCostSub', 'sum', null);
+    _fteKpiSub('fteKpiTonsPerFteSub', 'avg', null);
+
     const warnBox = document.getElementById('fteWarnings');
     const warnList = document.getElementById('fteWarningList');
     if ((data.warnings || []).length) {
@@ -12045,10 +12155,223 @@ function renderFteWorkbench() {
         warnBox.classList.add('hidden');
     }
 
+    _renderFteAssumptions();
+    _renderFteHeatmap();
+    _renderFteWbChart();
     _renderFteCombinations();
     _renderFteTable(showMachines);
     _renderFteValuePanel();
     _updateFteDirtyBar();
+}
+
+// Sublabel onder een KPI-tegel: wat het getal IS (gemiddelde/som + bereik) en
+// waar de piek zit. Zonder dat label werd 'FTE benodigd' als maandwaarde in
+// rapportages overgenomen terwijl het een horizongemiddelde was — en de piek
+// is klikbaar, want werven en ploegen plan je op de piekmaand.
+function _fteKpiSub(id, mode, values) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const single = document.getElementById('ftePeriod')?.value || '';
+    const scopeLabel = single ? single
+        : { all: 'hele horizon', next3: 'komende 3 mnd', next6: 'komende 6 mnd' }[_fteState.range] || '';
+    const kind = mode === 'avg' ? 'gem.' : 'som';
+    let peakHtml = '';
+    if (!single && values) {
+        const peak = _ftePeak(values);
+        if (peak && peak.value > 0) {
+            peakHtml = ` · piek <button class="underline decoration-dotted hover:text-slate-300"
+                onclick="document.getElementById('ftePeriod').value='${escapeHtml(peak.period)}';renderFteWorkbench()">${
+                _fmtNlNum(peak.value, 2)} (${escapeHtml(peak.period)})</button>`;
+        }
+    }
+    el.innerHTML = `${kind} · ${escapeHtml(scopeLabel)}${peakHtml}`;
+}
+
+// De aannamenstrip: waar de getallen op steunen, elk als chip met een sprong
+// naar het invulpad. Doctrine 'alles invulbaar': een aanname is geen etiket
+// maar een uitnodiging om het echte getal in te vullen.
+function _renderFteAssumptions() {
+    const host = document.getElementById('fteAssumptions');
+    if (!host) return;
+    const lines = (_fteState.data && _fteState.data.lines) || [];
+    const defaults = lines.filter(l => l.operators_source === 'default').length;
+    const zeroCost = lines.filter(l => l.category !== 'machine' && !l.combination_id
+        && _fteAgg(l.fte, 'avg') > 0.005 && _fteAgg(l.cost) === 0).length;
+    const chip = (text, cls, onclick) =>
+        `<button onclick="${onclick}" class="px-2 py-0.5 rounded-full border ${cls}">${text}</button>`;
+    const goto = (dataset) => `showTab('config');setTimeout(() => openMasterDatasetModal('${dataset}'), 150)`;
+    const chips = [
+        chip('bemensingsnormen &amp; tarieven: masterdata is de bron — import vult alleen',
+             'border-slate-600 text-slate-400 hover:text-slate-200', goto('staffing_norms')),
+    ];
+    if (defaults > 0) {
+        chips.push(chip(`${defaults} regel(s) rekenen op aanname 1,0 — vul de norm in`,
+            'border-amber-500/60 text-amber-300 hover:text-amber-200', goto('staffing_norms')));
+    }
+    if (zeroCost > 0) {
+        chips.push(chip(`${zeroCost} regel(s) zonder loontarief rekenen € 0 — vul een tarief in`,
+            'border-red-500/60 text-red-300 hover:text-red-200', goto('labor_rates')));
+    }
+    chips.push(chip('FTE-uren &amp; bezettingsdoel', 'border-slate-600 text-slate-400 hover:text-slate-200',
+                    goto('fte')));
+    host.innerHTML = chips.join('');
+}
+
+// ── Overzichtslaag ─────────────────────────────────────────────────────────
+// De heatmap en de grafiek zijn bediening, geen behang: klikken opent het
+// bewerkpad van die groep in de tabel. Beide tonen altijd de VOLLE horizon,
+// onafhankelijk van het gekozen bereik — het signaal mag niet verdwijnen
+// doordat er is ingezoomd.
+
+function _fteWindowLines() {
+    return ((_fteState.data && _fteState.data.lines) || [])
+        .filter(l => l.category !== 'machine' && !l.combination_id && l.counts_window !== false)
+        .filter(l => Object.values(l.available_hours || {}).some(v => Number(v) > 0));
+}
+
+function _renderFteHeatmap() {
+    const host = document.getElementById('fteHeatmap');
+    if (!host) return;
+    const periods = (_fteState.data && _fteState.data.periods) || [];
+    const lines = _fteWindowLines();
+    if (!lines.length || !periods.length) { host.innerHTML = ''; return; }
+    // Achtergrondtinten volgen dezelfde drempels als _fteUtilizationClass;
+    // twee kleursystemen voor dezelfde grootheid zouden elkaar tegenspreken.
+    const cellBg = (u) => u === null ? 'background:rgba(51,65,85,0.4)'
+        : u > 0.95 ? 'background:rgba(248,113,113,0.42)'
+        : u > 0.8 ? 'background:rgba(250,204,21,0.32)'
+        : 'background:rgba(74,222,128,0.18)';
+    const header = '<tr><th class="text-left pr-2 py-0.5"></th>' + periods.map(p =>
+        `<th class="px-1 py-0.5 font-normal text-slate-500">${escapeHtml(p.slice(2).replace('-', '·'))}</th>`).join('') + '</tr>';
+    const rows = lines.map(line => {
+        const cells = periods.map(p => {
+            const hours = Number((line.hours || {})[p] || 0);
+            const avail = Number((line.available_hours || {})[p] || 0);
+            const util = avail > 0 ? hours / avail : null;
+            const label = util === null ? '—' : Math.round(util * 100) + '%';
+            return `<td class="text-center cursor-pointer rounded px-1 py-0.5" style="${cellBg(util)}"
+                title="${escapeHtml(line.label)} · ${escapeHtml(p)}: ${label}"
+                onclick="focusFteGroup('${escapeHtml(line.category)}','${escapeHtml(line.key)}','${escapeHtml(p)}')">${label}</td>`;
+        }).join('');
+        return `<tr><td class="pr-2 py-0.5 whitespace-nowrap text-slate-300">${escapeHtml(line.label)}</td>${cells}</tr>`;
+    }).join('');
+    host.innerHTML = `<table class="border-separate" style="border-spacing:2px">${header}${rows}</table>`;
+}
+
+const _FTE_CHART_COLORS = ['#60a5fa', '#f97316', '#4ade80', '#facc15', '#a78bfa',
+                           '#f472b6', '#38bdf8', '#fb923c', '#34d399', '#eab308'];
+
+function _renderFteWbChart() {
+    const canvas = document.getElementById('fteWbChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const data = _fteState.data;
+    if (!data) return;
+    const periods = data.periods || [];
+    const groups = (data.lines || []).filter(l => l.category === 'group' && l.counts_in_total !== false);
+    const datasets = groups.map((line, i) => ({
+        label: line.label,
+        data: periods.map(p => Number((line.fte || {})[p] || 0)),
+        backgroundColor: _FTE_CHART_COLORS[i % _FTE_CHART_COLORS.length],
+        _fteCat: line.category, _fteKey: line.key,
+    }));
+    datasets.push({
+        label: 'Indirect', data: periods.map(p => Number((data.totals.indirect_fte || {})[p] || 0)),
+        backgroundColor: '#64748b', _fteCat: 'indirect', _fteKey: null,
+    });
+    if (_fteWbChartInstance) { _fteWbChartInstance.destroy(); _fteWbChartInstance = null; }
+    _fteWbChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels: periods, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { x: { stacked: true, ticks: { color: '#94a3b8' }, grid: { display: false } },
+                      y: { stacked: true, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' },
+                           title: { display: true, text: 'FTE', color: '#94a3b8' } } },
+            plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } } } },
+            // Klik = bewerken: een staafsegment opent de bemensingscel van die
+            // groep in de gekozen maand. De grafiek is daarmee een tweede
+            // ingang naar hetzelfde invulpad, geen eigen eigenaar van het getal.
+            onClick: (event, elements) => {
+                if (!elements || !elements.length) return;
+                const el = elements[0];
+                const ds = _fteWbChartInstance.data.datasets[el.datasetIndex];
+                const period = periods[el.index] || '';
+                if (ds._fteCat === 'group' && ds._fteKey) focusFteGroup('group', ds._fteKey, period);
+            },
+        },
+    });
+}
+
+// Eén klik-doel voor heatmap en grafiek: maand kiezen, groep openklappen,
+// ernaartoe scrollen en de bemensingscel klaarzetten om te typen.
+function focusFteGroup(category, key, period) {
+    const select = document.getElementById('ftePeriod');
+    if (select && period) select.value = period;
+    if (category === 'group') _fteState.openGroups.add(key);
+    renderFteWorkbench();
+    const row = document.querySelector(
+        `#fteWbBody tr[data-fte-row="${CSS.escape(`${category}:${key}`)}"]`);
+    if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('ring-1', 'ring-blue-400');
+        setTimeout(() => row.classList.remove('ring-1', 'ring-blue-400'), 1600);
+        row.querySelector('input[data-fte-key]')?.focus();
+    }
+}
+
+function toggleFteGroup(key) {
+    if (_fteState.openGroups.has(key)) _fteState.openGroups.delete(key);
+    else _fteState.openGroups.add(key);
+    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+}
+
+// Doorzet invullen vanuit de werkbank: opent het overrides-grid gefilterd op
+// de machine. Zelfde dataset, zelfde PATCH, zelfde eigenaar — alleen de ingang
+// zit nu waar de planner kijkt.
+function openFteThroughputGrid(machine) {
+    showTab('config');
+    setTimeout(() => {
+        openMasterDatasetModal('throughput_overrides');
+        setTimeout(() => {
+            const filter = document.getElementById('masterDatasetFilter');
+            if (filter) { filter.value = machine; filter.dispatchEvent(new Event('input', { bubbles: true })); }
+        }, 200);
+    }, 150);
+}
+
+// 'Neem MES over als beginwaarde': expliciete handeling, geen sluis. De
+// override-sleutel is machine|materiaal en de werkbankregel kent het materiaal
+// niet, dus blind wegschrijven kan niet: de gebruiker maakt de sleutel af in
+// een prompt (machinedeel staat klaar) en er wordt een override-RIJ klaargezet
+// met de MES-waarde en bronlabel 'MES overgenomen' — opslaan blijft de
+// bestaande, gecontroleerde PATCH van het grid.
+function adoptFteBenchmark(machine, value) {
+    showTab('config');
+    setTimeout(() => {
+        openMasterDatasetModal('throughput_overrides');
+        setTimeout(() => {
+            const spec = _MASTER_DATASETS['throughput_overrides'];
+            const key = (prompt('Override-sleutel (MACHINE|MATERIAAL) — vul het materiaalnummer aan:',
+                                `${machine}|`) || '').trim();
+            if (!key || key.endsWith('|')) {
+                if (key) notify('De sleutel mist het materiaalnummer; er is niets klaargezet.', 'warning', 5000);
+                return;
+            }
+            const body = document.getElementById('masterDatasetBody');
+            const tbody = body && body.querySelector('tbody');
+            if (!tbody) return;
+            if (tbody.querySelector(`tr[data-master-key="${CSS.escape(key)}"]`)) {
+                notify(`"${key}" bestaat al — pas die rij aan.`, 'warning', 5000);
+                return;
+            }
+            const defaults = { ...(spec.identity ? spec.identity(key) : {}),
+                               throughput_t_per_hour: value, source: 'MES overgenomen' };
+            tbody.insertAdjacentHTML('beforeend', _masterDatasetRowHtml(spec, key, defaults));
+            tbody.lastElementChild.scrollIntoView({ block: 'center' });
+            tbody.lastElementChild.querySelector('.master-edit')?.focus();
+            notify('MES-waarde staat klaar als beginwaarde — controleer en sla op.', 'info', 6000);
+        }, 250);
+    }, 150);
 }
 
 function _renderFteCombinations() {
@@ -12103,10 +12426,105 @@ async function toggleFteCombination(id, on) {
 }
 
 const _FTE_COLUMNS = [
-    ['Regel', 'left'], ['Groep', 'left'], ['Operators/uur', 'right'], ['Bron', 'left'],
+    ['Regel', 'left'], ['Operators/uur', 'right'], ['Bron', 'left'],
     ['Uren', 'right'], ['Beschikbaar', 'right'], ['Benutting', 'right'],
-    ['FTE', 'right'], ['Loonkosten', 'right'], ['MES t/u', 'right'], ['PEER t/u', 'right'],
+    ['FTE', 'right'], ['Loonkosten', 'right'], ['Doorzet & benchmark', 'right'],
 ];
+
+// Eén rij van de werkbanktabel. Gedeeld door groeps-, machine- en indirecte
+// regels zodat kolommen nooit uit de pas lopen.
+function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}) {
+    const hours = _fteAgg(line.hours);
+    const available = _fteAgg(line.available_hours);
+    const util = available > 0 ? hours / available : null;
+    const utilClass = util === null ? 'text-slate-500' : _fteUtilizationClass(util);
+    const editable = line.category !== 'indirect' && !line.combination_id;
+    const operators = _fteOperators(line);
+    const rowId = `${line.category}:${line.key}`;
+    const dirty = rowId in _fteState.dirtyNorms;
+    const opCell = editable
+        ? `<input type="text" value="${escapeHtml(String(operators))}"
+             class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${dirty ? 'ring-1 ring-amber-400' : ''}"
+             data-fte-cat="${escapeHtml(line.category)}" data-fte-key="${escapeHtml(line.key)}"
+             onchange="onFteNormEdit(this)">`
+        : _fmtNlNum(operators, 3);
+
+    // Bron als chip. 'default' is geen etiket maar een uitnodiging: de motor
+    // rekent met een verzonnen 1,0 tot iemand de echte norm invult — de chip
+    // zet de cursor er meteen in.
+    let sourceCell;
+    if (line.operators_source === 'default' && editable) {
+        sourceCell = `<button class="px-1.5 py-0.5 rounded-full border border-amber-500/60 text-amber-300
+            hover:text-amber-100 text-[10px]" title="De motor rekent met aanname 1,0 — vul de echte norm in"
+            onclick="this.closest('tr').querySelector('input[data-fte-key]')?.focus()">aanname 1,0</button>`;
+    } else {
+        const label = { staffing_norms: 'norm', line12_coefficient: 'L12-coëff.',
+                        combination: 'combinatie', default: 'default' }[line.operators_source]
+                        || line.operators_source || '';
+        sourceCell = `<span class="text-slate-500">${escapeHtml(label)}</span>`;
+    }
+
+    // Driverchip voor indirecte activiteiten (vast · per ton · per truck ·
+    // per machine), zodat vast vs volumegedreven op de regel zelf staat.
+    let labelExtra = '';
+    if (line.category === 'indirect') {
+        const driver = _fteState.indirectDrivers[line.key];
+        const driverLabel = { fixed: 'vast', per_ton: 'per ton', per_truck: 'per truck',
+                              per_machine: 'per machine' }[driver];
+        if (driverLabel) {
+            labelExtra += ` <span class="px-1.5 rounded-full border border-slate-600 text-slate-400 text-[10px]">${driverLabel}</span>`;
+        }
+    }
+    if (line.combination_id) {
+        labelExtra += ` <span class="text-blue-400">[${escapeHtml(line.combination_id)}]</span>`;
+    }
+
+    // Stille € 0 zichtbaar maken: een regel die wél FTE vraagt maar zonder
+    // tarief (en zonder 'default') rekent, drukt de loonkosten kunstmatig.
+    const cost = _fteAgg(line.cost);
+    const fteAvg = _fteAgg(line.fte, 'avg');
+    const costCell = (cost === 0 && fteAvg > 0.005 && line.category !== 'machine')
+        ? `<button class="px-1.5 py-0.5 rounded-full border border-red-500/60 text-red-300 hover:text-red-100 text-[10px]"
+             title="Geen loontarief voor deze functiegroep — de regel telt € 0 mee"
+             onclick="showTab('config');setTimeout(() => openMasterDatasetModal('labor_rates'), 150)">€ 0 — geen tarief</button>`
+        : _fmtNlNum(cost, 0);
+
+    // Doorzet & benchmark: MES/PEER als beginwaarde-referentie, met ✎ (eigen
+    // doorzet invullen als override) en → (MES overnemen als beginwaarde).
+    // Alleen op machinerijen: overrides zijn machine×product.
+    let throughputCell = '—';
+    if (line.category === 'machine') {
+        const mes = line.throughput_mes ? `MES ${_fmtNlNum(line.throughput_mes, 1)}` : '';
+        const peer = line.throughput_peer ? `PEER ${_fmtNlNum(line.throughput_peer, 1)}` : '';
+        const parts = [mes, peer].filter(Boolean).join(' · ') || '—';
+        const adopt = line.throughput_mes
+            ? `<button class="text-blue-400 hover:text-blue-200" title="Neem de MES-meting over als beginwaarde (override met bronlabel)"
+                 onclick="adoptFteBenchmark('${escapeHtml(line.key)}', ${Number(line.throughput_mes)})">&#8594;</button>`
+            : '';
+        throughputCell = `<span class="inline-flex items-center gap-1.5">${parts}
+            <button class="text-slate-400 hover:text-slate-200" title="Eigen doorzet invullen (override in de masterdata)"
+                onclick="openFteThroughputGrid('${escapeHtml(line.key)}')">&#9998;</button>${adopt}</span>`;
+    }
+
+    const labelCell = chevron
+        ? `<button class="text-left w-full" onclick="toggleFteGroup('${escapeHtml(line.key)}')">${chevron}
+             ${escapeHtml(line.label)}<span class="text-slate-500"> · ${escapeHtml(line.key)}</span></button>${labelExtra}`
+        : `${indent ? '<span class="inline-block w-4"></span>' : ''}${escapeHtml(line.label)}
+           <span class="text-slate-500"> · ${escapeHtml(line.key)}</span>${labelExtra}`;
+
+    return `<tr data-fte-row="${escapeHtml(rowId)}"
+        class="${line.category === 'machine' ? 'text-slate-400' : ''} ${hidden ? 'hidden' : ''}">
+        <td class="p-1">${labelCell}</td>
+        <td class="p-1 text-right">${opCell}</td>
+        <td class="p-1">${sourceCell}</td>
+        <td class="p-1 text-right">${_fmtNlNum(hours, 0)}</td>
+        <td class="p-1 text-right">${available > 0 ? _fmtNlNum(available, 0) : '—'}</td>
+        <td class="p-1 text-right ${utilClass}">${util === null ? '—' : _fmtNlNum(util * 100, 1) + '%'}</td>
+        <td class="p-1 text-right">${_fmtNlNum(fteAvg, 2)}</td>
+        <td class="p-1 text-right">${costCell}</td>
+        <td class="p-1 text-right">${throughputCell}</td>
+    </tr>`;
+}
 
 function _renderFteTable(showMachines) {
     const head = document.getElementById('fteWbHead');
@@ -12115,45 +12533,54 @@ function _renderFteTable(showMachines) {
     head.innerHTML = '<tr>' + _FTE_COLUMNS.map(c =>
         `<th class="text-${c[1]} p-1">${escapeHtml(c[0])}</th>`).join('') + '</tr>';
 
-    const lines = (_fteState.data.lines || [])
-        .filter(l => showMachines || l.category !== 'machine');
-    const order = { group: 0, indirect: 1, machine: 2 };
-    lines.sort((a, b) => (order[a.category] - order[b.category])
-        || String(a.machine_group || '').localeCompare(String(b.machine_group || ''))
-        || String(a.key).localeCompare(String(b.key)));
+    const all = _fteState.data.lines || [];
+    const byCat = (cat) => all.filter(l => l.category === cat)
+        .sort((a, b) => String(a.machine_group || '').localeCompare(String(b.machine_group || ''))
+            || String(a.key).localeCompare(String(b.key)));
 
-    body.innerHTML = lines.map(line => {
-        const hours = _fteAgg(line.hours);
-        const available = _fteAgg(line.available_hours);
-        const util = available > 0 ? hours / available : null;
-        const utilClass = util === null ? 'text-slate-500' : _fteUtilizationClass(util);
-        const editable = line.category !== 'indirect' && !line.combination_id;
-        const operators = _fteOperators(line);
-        const dirty = `${line.category}:${line.key}` in _fteState.dirtyNorms;
-        const opCell = editable
-            ? `<input type="text" value="${escapeHtml(String(operators))}"
-                 class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${dirty ? 'ring-1 ring-amber-400' : ''}"
-                 data-fte-cat="${escapeHtml(line.category)}" data-fte-key="${escapeHtml(line.key)}"
-                 onchange="onFteNormEdit(this)">`
-            : _fmtNlNum(operators, 3);
-        const sourceLabel = { staffing_norms: 'norm', line12_coefficient: 'L12-coëff.',
-                              combination: 'combinatie', default: 'default' }[line.operators_source]
-                              || line.operators_source || '';
-        return `<tr class="${line.category === 'machine' ? 'text-slate-400' : ''}">
-            <td class="p-1">${escapeHtml(line.label)}<span class="text-slate-500"> · ${escapeHtml(line.key)}</span>${
-                line.combination_id ? ` <span class="text-blue-400">[${escapeHtml(line.combination_id)}]</span>` : ''}</td>
-            <td class="p-1">${escapeHtml(line.machine_group || '')}</td>
-            <td class="p-1 text-right">${opCell}</td>
-            <td class="p-1 text-slate-500">${escapeHtml(sourceLabel)}</td>
-            <td class="p-1 text-right">${_fmtNlNum(hours, 0)}</td>
-            <td class="p-1 text-right">${available > 0 ? _fmtNlNum(available, 0) : '—'}</td>
-            <td class="p-1 text-right ${utilClass}">${util === null ? '—' : _fmtNlNum(util * 100, 1) + '%'}</td>
-            <td class="p-1 text-right">${_fmtNlNum(_fteAgg(line.fte, 'avg'), 2)}</td>
-            <td class="p-1 text-right">${_fmtNlNum(_fteAgg(line.cost), 0)}</td>
-            <td class="p-1 text-right">${line.throughput_mes ? _fmtNlNum(line.throughput_mes, 1) : '—'}</td>
-            <td class="p-1 text-right">${line.throughput_peer ? _fmtNlNum(line.throughput_peer, 1) : '—'}</td>
-        </tr>`;
-    }).join('') || '<tr><td colspan="11" class="text-center p-4 text-slate-500">Geen regels</td></tr>';
+    // Accordion: machines staan DIRECT onder hun groep en zijn ingeklapt tot
+    // de groepsrij wordt aangeklikt — de lange platte lijst was onleesbaar.
+    // Ingeklapte rijen blijven in de DOM (alleen 'hidden'), zodat rijtellingen
+    // en het machinedetail-vinkje hun bestaande betekenis houden.
+    const html = [];
+    for (const group of byCat('group')) {
+        const machines = showMachines
+            ? byCat('machine').filter(m => (m.machine_group || '') === String(group.key)
+                                           || (m.machine_group || '') === String(group.machine_group || group.key))
+            : [];
+        const open = _fteState.openGroups.has(group.key);
+        const chevron = machines.length
+            ? `<span class="inline-block w-4 text-slate-500">${open ? '&#9662;' : '&#9656;'}</span>`
+            : '<span class="inline-block w-4"></span>';
+        html.push(_fteRowHtml(group, { chevron }));
+        for (const machine of machines) {
+            html.push(_fteRowHtml(machine, { indent: true, hidden: !open }));
+        }
+    }
+    for (const combi of all.filter(l => !!l.combination_id && l.category !== 'machine'
+                                        && l.category !== 'group' && l.category !== 'indirect')) {
+        html.push(_fteRowHtml(combi));
+    }
+    for (const indirect of byCat('indirect')) html.push(_fteRowHtml(indirect));
+    // Machines zonder herkenbare groep (hoort niet, maar niets mag stil
+    // wegvallen): achteraan, altijd zichtbaar.
+    if (showMachines) {
+        const placed = new Set();
+        for (const group of byCat('group')) {
+            byCat('machine').forEach(m => {
+                if ((m.machine_group || '') === String(group.key)
+                    || (m.machine_group || '') === String(group.machine_group || group.key)) {
+                    placed.add(m.key);
+                }
+            });
+        }
+        for (const orphan of byCat('machine').filter(m => !placed.has(m.key))) {
+            html.push(_fteRowHtml(orphan, { indent: true }));
+        }
+    }
+
+    body.innerHTML = html.join('')
+        || '<tr><td colspan="9" class="text-center p-4 text-slate-500">Geen regels</td></tr>';
 }
 
 function onFteNormEdit(input) {
@@ -12311,10 +12738,16 @@ function _renderFteValuePanel() {
         const b = _fteAgg(base);
         const a = _fteAgg(adjusted);
         const diff = a - b;
+        // Zelfde materialiteitsdrempel als de euro-kolommen van de
+        // vergelijkingstabel: onder de € 100 is het ruis en staat er ≈ 0.
+        const diffCell = Math.abs(diff) < _FTE_MATERIALITY.labor_cost_total
+            ? `<span class="text-slate-500" title="exact: ${_fmtNlNum(diff, 2)}">&asymp; 0</span>`
+            : `<span class="${_fteDeltaClass(diff, higherIsBetter, _FTE_MATERIALITY.labor_cost_total)}">${
+                diff >= 0 ? '+' : ''}${_fmtNlNum(diff, 0)}</span>`;
         return `<tr><td class="p-1">${escapeHtml(label)}</td>
             <td class="p-1 text-right">${_fmtNlNum(b, 0)}</td>
             <td class="p-1 text-right">${_fmtNlNum(a, 0)}</td>
-            <td class="p-1 text-right ${_fteDeltaClass(diff, higherIsBetter, 0.5)}">${diff >= 0 ? '+' : ''}${_fmtNlNum(diff, 0)}</td></tr>`;
+            <td class="p-1 text-right">${diffCell}</td></tr>`;
     }).join('');
 }
 
@@ -12338,11 +12771,25 @@ async function compareFteCombinations() {
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Vergelijking mislukt.', 'error', 5000); return; }
         _renderFteComparison(data.variants || []);
+        // Eerlijkheidsmelding: de route rekent met engine.data — dus met de
+        // OPGESLAGEN normen. Getypte-maar-niet-opgeslagen normen tellen hier
+        // niet in mee, en dat moet er met zoveel woorden bij staan.
+        document.getElementById('fteCompareDirtyNote')?.classList.toggle(
+            'hidden', Object.keys(_fteState.dirtyNorms).length === 0);
         document.getElementById('fteComparePanel').classList.remove('hidden');
     } catch (err) {
         notify('Vergelijking mislukt: ' + err, 'error', 5000);
     }
 }
+
+// Materialiteitsdrempel per grootheid: daaronder is een verschil ruis en
+// wordt het grijs als '≈ 0' getoond (exacte waarde in de tooltip). De oude
+// epsilon van 1e-9 kleurde 0,001 FTE of drie cent al groen of rood — en op
+// ruis wordt dan beslist. Vast en gedeeld, niet per gebruiker instelbaar:
+// twee planners moeten hetzelfde signaal zien.
+const _FTE_MATERIALITY = { fte_avg: 0.05, staffed_fte_avg: 0.05, hours_total: 1,
+                           utilization: 0.002, labor_cost_total: 100, tons_per_fte: 1,
+                           gross_margin_total: 100, ebitda_total: 100 };
 
 function _renderFteComparison(variants) {
     // Vierde element: is MEER beter? Minder FTE, uren en loonkosten is beter;
@@ -12366,12 +12813,16 @@ function _renderFteComparison(variants) {
             // beter tot je over de drempel gaat; daarboven is het
             // overbelasting. Dezelfde drempels als de rijkleuring hieronder,
             // anders staat dezelfde grootheid in één tabblad groen én rood.
+            const materiality = _FTE_MATERIALITY[key] ?? 1e-9;
             const cls = higherIsBetter === null
                 ? _fteUtilizationClass(value)
-                : _fteDeltaClass(delta, higherIsBetter);
-            const deltaHtml = (delta === undefined || Math.abs(delta) < 1e-9) ? ''
-                : `<span class="block text-xs ${cls}">${
-                    delta > 0 ? '+' : ''}${dec === 'pct' ? _fmtNlNum(delta * 100, 1) + '%' : _fmtNlNum(delta, dec)}</span>`;
+                : _fteDeltaClass(delta, higherIsBetter, materiality);
+            const deltaShown = dec === 'pct' ? _fmtNlNum((delta || 0) * 100, 2) + '%' : _fmtNlNum(delta || 0, 2);
+            const deltaHtml = delta === undefined ? ''
+                : Math.abs(delta) < materiality
+                    ? `<span class="block text-xs text-slate-500" title="exact: ${deltaShown}">&asymp; 0</span>`
+                    : `<span class="block text-xs ${cls}">${
+                        delta > 0 ? '+' : ''}${dec === 'pct' ? _fmtNlNum(delta * 100, 1) + '%' : _fmtNlNum(delta, dec)}</span>`;
             const valueCls = higherIsBetter === null ? _fteUtilizationClass(value) : '';
             return `<td class="p-1 text-right ${valueCls}">${shown}${deltaHtml}</td>`;
         }).join('');
