@@ -166,6 +166,56 @@ def create_fte_blueprint(
             'fte': result.to_dict(),
             'combinations': _combination_catalog(engine),
             'active_combinations': list((sess or {}).get('active_combinations') or []),
+            'norm_overrides': dict((sess or {}).get('fte_norm_overrides') or {}),
+            'master_version': _master_version(engine),
+        })
+
+    @bp.route('/api/fte/norm_overrides', methods=['POST'])
+    def set_norm_overrides():
+        """Wat-als op de bemensingsnormen: rekent DIRECT mee, raakt de
+        masterdata niet.
+
+        Sessiestate naast active_combinations: dezelfde zes sync-/rebuild-
+        punten, dezelfde reset- en scenario-semantiek. De werkbank stuurt de
+        VOLLEDIGE set overrides (leeg = alles terugzetten); de regels dragen
+        bron 'wat-als' zodat een experiment nooit voor een vastgelegde norm
+        kan doorgaan. Vastleggen gebeurt daarna expliciet via de masterdata-
+        PATCH (opslaan) of via een scenario.
+        """
+        sess, engine = get_active()
+        if engine is None:
+            return jsonify({'error': _NO_ENGINE}), 400
+        mismatch = _site_mismatch(engine)
+        if mismatch:
+            return jsonify({'error': _SITE_MISMATCH.format(**mismatch), **mismatch}), 409
+        body = request.get_json(silent=True) or {}
+        raw = body.get('overrides')
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'Verwacht een object "overrides".'}), 400
+        overrides = {}
+        for code, spec in raw.items():
+            if not isinstance(spec, dict):
+                return jsonify({'error': f'Override "{code}" is geen object.'}), 400
+            try:
+                operators = float(spec.get('operators_per_hour'))
+            except (TypeError, ValueError):
+                return jsonify({'error': f'Override "{code}": operators per uur moet een getal zijn.'}), 400
+            if operators < 0:
+                return jsonify({'error': f'Override "{code}": operators per uur kan niet negatief zijn.'}), 400
+            scope = str(spec.get('scope') or 'group')
+            if scope not in ('group', 'machine'):
+                return jsonify({'error': f'Override "{code}": onbekend bereik "{scope}".'}), 400
+            overrides[str(code)] = {'operators_per_hour': operators, 'scope': scope}
+
+        engine.recalculate_fte(norm_overrides=overrides)
+        sess['fte_norm_overrides'] = dict(overrides)
+        save_sessions_to_disk()
+        return jsonify({
+            'success': True,
+            'fte': engine.fte_results.to_dict(),
+            'norm_overrides': dict(overrides),
+            'active_combinations': list((sess or {}).get('active_combinations') or []),
+            'warnings': engine.fte_results.warnings,
             'master_version': _master_version(engine),
         })
 
@@ -283,9 +333,13 @@ def create_fte_blueprint(
 
         rows = []
         for variant in prepared:
+            # De wat-als-normen van de sessie gelden voor ALLE varianten:
+            # alleen de combinatieset verschilt, anders vergelijkt de tabel
+            # appels met peren.
             result = FteEngine(engine.data, engine.results,
                                active_combinations=variant['active_combinations'],
-                               value_results=engine.value_results).calculate()
+                               value_results=engine.value_results,
+                               staffing_norm_overrides=getattr(engine, 'fte_norm_overrides', None)).calculate()
             rows.append({
                 'label': variant['label'],
                 'active_combinations': variant['active_combinations'],

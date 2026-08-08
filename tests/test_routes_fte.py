@@ -27,14 +27,18 @@ class _Engine:
         self.results = results
         self.value_results = value_results or {}
         self.active_combinations = []
+        self.fte_norm_overrides = {}
         self.fte_results = None
 
-    def recalculate_fte(self, active_combinations=None):
+    def recalculate_fte(self, active_combinations=None, norm_overrides=None):
         if active_combinations is not None:
             self.active_combinations = list(active_combinations)
+        if norm_overrides is not None:
+            self.fte_norm_overrides = dict(norm_overrides)
         self.fte_results = FteEngine(
             self.data, self.results, active_combinations=self.active_combinations,
-            value_results=self.value_results).calculate()
+            value_results=self.value_results,
+            staffing_norm_overrides=self.fte_norm_overrides).calculate()
 
 
 def _env(*, with_combination=True, demand=None):
@@ -403,3 +407,61 @@ class TestSitePoort:
         finally:
             if previous:
                 master_store.set_store_path(previous)
+
+
+class TestNormOverrides:
+    """POST /api/fte/norm_overrides: de wat-als-werkstroom van de werkbank —
+    aanpassen, direct resultaat, en de sessie draagt de stand."""
+
+    def test_override_rekent_direct_en_persisteert(self):
+        client, sess, engine, saved = _env()
+        before = client.get('/api/fte').get_json()['fte']['totals']['fte']['2025-01']
+
+        body = client.post('/api/fte/norm_overrides', json={'overrides': {
+            'ZZ_MILL': {'operators_per_hour': 2.0, 'scope': 'group'}}}).get_json()
+
+        assert body['success'] is True
+        assert body['norm_overrides']['ZZ_MILL']['operators_per_hour'] == 2.0
+        after = body['fte']['totals']['fte']['2025-01']
+        assert after == pytest.approx(before * 2)
+        line = next(l for l in body['fte']['lines']
+                    if l['category'] == 'group' and l['key'] == 'ZZ_MILL')
+        assert line['operators_source'] == 'wat-als'
+        assert sess['fte_norm_overrides']['ZZ_MILL']['operators_per_hour'] == 2.0
+        assert saved, 'sessies zijn niet weggeschreven'
+
+        # GET spiegelt de sessie-stand.
+        echo = client.get('/api/fte').get_json()
+        assert echo['norm_overrides']['ZZ_MILL']['operators_per_hour'] == 2.0
+
+        # Leeg = alles terug.
+        cleared = client.post('/api/fte/norm_overrides', json={'overrides': {}}).get_json()
+        assert cleared['norm_overrides'] == {}
+        assert cleared['fte']['totals']['fte']['2025-01'] == pytest.approx(before)
+
+    def test_validatie_weigert_rommel(self):
+        client, sess, _, _ = _env()
+        for payload, fragment in [
+            ({'overrides': [1, 2]}, 'object'),
+            ({'overrides': {'X': {'operators_per_hour': 'veel'}}}, 'getal'),
+            ({'overrides': {'X': {'operators_per_hour': -1}}}, 'negatief'),
+            ({'overrides': {'X': {'operators_per_hour': 1, 'scope': 'planeet'}}}, 'bereik'),
+        ]:
+            resp = client.post('/api/fte/norm_overrides', json=payload)
+            assert resp.status_code == 400, payload
+            assert fragment in resp.get_json()['error'], resp.get_json()
+        assert sess.get('fte_norm_overrides') in (None, {}), 'geweigerde POST muteerde de sessie'
+
+    def test_compare_rekent_met_de_wat_als_normen(self):
+        """Alle varianten van de vergelijking dragen de sessie-wat-als: alleen
+        de combinatieset mag verschillen, anders is de tabel appels-en-peren."""
+        client, _, engine, _ = _env()
+        base = client.post('/api/fte/compare', json={'variants': [
+            {'label': 'x', 'active_combinations': []}]}).get_json()
+        base_fte = base['variants'][0]['summary']['fte_avg']
+
+        client.post('/api/fte/norm_overrides', json={'overrides': {
+            'ZZ_MILL': {'operators_per_hour': 2.0, 'scope': 'group'}}})
+        doubled = client.post('/api/fte/compare', json={'variants': [
+            {'label': 'x', 'active_combinations': []}]}).get_json()
+        assert doubled['variants'][0]['summary']['fte_avg'] == pytest.approx(base_fte * 2)

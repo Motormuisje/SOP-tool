@@ -250,7 +250,8 @@ class FteEngine:
 
     def __init__(self, data, planning_results: Dict[str, List],
                  active_combinations: Optional[Iterable[str]] = None,
-                 value_results: Optional[Dict[str, List]] = None):
+                 value_results: Optional[Dict[str, List]] = None,
+                 staffing_norm_overrides: Optional[Dict[str, dict]] = None):
         self.data = data
         self.results = planning_results or {}
         self.value_results = value_results or {}
@@ -265,6 +266,36 @@ class FteEngine:
         self.utilization_rate = float(params.get('utilization_rate') or 1.0) or 1.0
 
         self.staffing_norms: Dict[str, StaffingNorm] = getattr(data, 'staffing_norms', None) or {}
+        # Sessie-wat-als op de bemensingsnormen: rekent DIRECT mee zonder de
+        # masterdata te raken. Een override ligt als kopie over de norm heen
+        # (functiegroep/omschrijving van een bestaande norm blijven staan) en
+        # de regel draagt bron 'wat-als', zodat altijd zichtbaar is dat dit
+        # een experiment is en geen vastgelegde norm.
+        self._overridden_norms: Set[str] = set()
+        overrides = staffing_norm_overrides or {}
+        if overrides:
+            merged = dict(self.staffing_norms)
+            for code, spec in overrides.items():
+                if not isinstance(spec, dict):
+                    continue
+                try:
+                    operators = float(spec.get('operators_per_hour'))
+                except (TypeError, ValueError):
+                    self.warnings.append(
+                        f'Wat-als-norm voor "{code}" heeft geen geldig getal en is genegeerd.')
+                    continue
+                if operators < 0:
+                    self.warnings.append(
+                        f'Wat-als-norm voor "{code}" is negatief en is genegeerd.')
+                    continue
+                base = merged.get(str(code))
+                scope = str(spec.get('scope') or (base.scope if base is not None else 'group'))
+                merged[str(code)] = StaffingNorm(
+                    code=str(code), operators_per_hour=operators, scope=scope,
+                    function_group=(base.function_group if base is not None else ''),
+                    description=(base.description if base is not None else ''))
+                self._overridden_norms.add(str(code))
+            self.staffing_norms = merged
         self.labor_rates = getattr(data, 'labor_rates', None) or {}
         self.indirect_activities: Dict[str, IndirectActivity] = \
             getattr(data, 'indirect_activities', None) or {}
@@ -417,7 +448,8 @@ class FteEngine:
         """
         norm = self._norm_for(group_id, CATEGORY_GROUP)
         if norm is not None:
-            return float(norm.operators_per_hour), 'staffing_norms'
+            source = 'wat-als' if group_id in self._overridden_norms else 'staffing_norms'
+            return float(norm.operators_per_hour), source
         material = (getattr(self.data, 'materials', None) or {}).get(group_id)
         coefficient = float(getattr(material, 'fte_requirements', 0.0) or 0.0)
         if coefficient > 0:
@@ -429,7 +461,8 @@ class FteEngine:
     def _machine_operators(self, machine_code: str, group_id: str) -> tuple:
         norm = self._norm_for(machine_code, CATEGORY_MACHINE)
         if norm is not None:
-            return float(norm.operators_per_hour), 'staffing_norms'
+            source = 'wat-als' if machine_code in self._overridden_norms else 'staffing_norms'
+            return float(norm.operators_per_hour), source
         return self._group_operators(group_id)
 
     # ── combinations ────────────────────────────────────────────────────────

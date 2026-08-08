@@ -108,9 +108,12 @@ def create_financials_blueprint(get_active: Callable[[], tuple]) -> Blueprint:
             total = sum(float(vals.get(p, 0.0) or 0.0) for p in periods)
             if abs(total) < 1e-9:
                 continue
+            # Groepsmaterialen dragen vaak geen naam; pandas maakt daar de
+            # letterlijke tekst 'nan' van en die is voor de gebruiker ruis.
+            raw_name = str(_row_attr(r, 'material_name', '') or '')
             contributors.append({
                 'material_number': str(_row_attr(r, 'material_number', '')),
-                'material_name': str(_row_attr(r, 'material_name', '') or ''),
+                'material_name': '' if raw_name.strip().lower() == 'nan' else raw_name,
                 'total': round(total, 2),
                 'values': {p: round(float(vals.get(p, 0.0) or 0.0), 2) for p in periods},
             })

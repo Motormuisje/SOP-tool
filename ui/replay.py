@@ -28,7 +28,8 @@ def recalculate_fte_results(engine, sess=None) -> None:
     """
     if not hasattr(engine, 'recalculate_fte'):
         return
-    engine.recalculate_fte((sess or {}).get('active_combinations') or [])
+    engine.recalculate_fte((sess or {}).get('active_combinations') or [],
+                           norm_overrides=(sess or {}).get('fte_norm_overrides') or {})
 
 
 def recalculate_value_results(engine, sess=None) -> None:

@@ -151,6 +151,7 @@ def snapshot_engine_state(engine, shift_hours_lookup) -> dict:
         # Reset te werken (regels gingen terug) terwijl de werkbank op de
         # gecombineerde bezetting bleef staan.
         'active_combinations': list(getattr(engine, 'active_combinations', None) or []),
+        'fte_norm_overrides': dict(getattr(engine, 'fte_norm_overrides', None) or {}),
     }
 
 
@@ -312,6 +313,8 @@ def restore_engine_state(engine, snapshot: dict, global_config: dict) -> None:
     # uitzetten bij een Reset naar een oude baseline).
     if 'active_combinations' in snapshot:
         engine.active_combinations = list(snapshot.get('active_combinations') or [])
+    if 'fte_norm_overrides' in snapshot:
+        engine.fte_norm_overrides = dict(snapshot.get('fte_norm_overrides') or {})
 
 
 def ensure_reset_baseline(sess, engine, shift_hours_lookup) -> None:

@@ -89,6 +89,10 @@ class PlanningEngine:
         # session's combinations instead of an empty set.
         self.active_combinations: List[str] = list(
             self.config_overrides.get('active_combinations') or [])
+        # Wat-als-normen van deze sessie (zelfde stramien): een koude rebuild
+        # rekent meteen met de sessiestand in plaats van de kale masterdata.
+        self.fte_norm_overrides: dict = dict(
+            self.config_overrides.get('fte_norm_overrides') or {})
 
     def run(self) -> 'PlanningEngine':
         """Run the complete planning pipeline."""
@@ -488,7 +492,7 @@ class PlanningEngine:
             count = self.summary['line_types'].get(lt, 0)
             print(f"  {lt}: {count}")
 
-    def recalculate_fte(self, active_combinations=None) -> None:
+    def recalculate_fte(self, active_combinations=None, norm_overrides=None) -> None:
         """(Re)build the capacity & FTE workbench result from current results.
 
         Cheap aggregation over the finished planning rows, so every cascade
@@ -498,9 +502,12 @@ class PlanningEngine:
 
         if active_combinations is not None:
             self.active_combinations = list(active_combinations)
+        if norm_overrides is not None:
+            self.fte_norm_overrides = dict(norm_overrides)
         self.fte_engine = FteEngine(self.data, self.results,
                                     active_combinations=self.active_combinations,
-                                    value_results=self.value_results)
+                                    value_results=self.value_results,
+                                    staffing_norm_overrides=self.fte_norm_overrides)
         self.fte_results = self.fte_engine.calculate()
 
     # ===== Export methods =====

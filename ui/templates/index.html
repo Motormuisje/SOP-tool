@@ -1357,7 +1357,7 @@
                         </div>
                     </div>
                     <div id="fteDirtyBar" class="hidden mb-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/40 rounded-lg px-3 py-2">
-                        <span class="text-xs text-amber-200"><span id="fteDirtyCount">0</span> gewijzigde bemensingsnorm(en) &mdash; nog niet opgeslagen.</span>
+                        <span class="text-xs text-amber-200"><span id="fteDirtyCount">0</span> wat-als-wijziging(en) &mdash; rekenen direct mee, nog niet in de masterdata.</span>
                         <span class="flex gap-2">
                             <button onclick="revertFteNorms()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Ongedaan maken</button>
                             <button onclick="saveFteNorms()" class="text-xs bg-blue-600 hover:bg-blue-500 rounded px-3 py-1">Opslaan in masterdata</button>
@@ -1391,6 +1391,21 @@
                     <p class="text-xs text-slate-500 mb-2">Gelijk volume, gelijke periodes &mdash; alleen de bemensingsaanname verschilt.
                         Verschillen kleiner dan de materialiteitsdrempel staan als &asymp;&nbsp;0.</p>
                     <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteCompareHead"></thead><tbody id="fteCompareBody"></tbody></table></div>
+                </div>
+
+                <!-- Wat-als-paneel rechtsonder: de wijzigingen van het experiment,
+                     met de twee uitgangen (masterdata of terugzetten). Scenario's
+                     nemen de stand automatisch mee. -->
+                <div id="fteWhatIfTray" class="hidden" style="position:fixed;right:18px;bottom:18px;z-index:8900;width:300px">
+                    <div class="card rounded-xl p-4 border border-amber-500/40" style="background:rgba(15,23,42,0.97)">
+                        <p class="text-xs font-semibold text-amber-300 mb-2">Wat-als &mdash; rekent direct mee</p>
+                        <div id="fteWhatIfList" class="text-xs space-y-1 mb-3" style="max-height:180px;overflow-y:auto"></div>
+                        <div class="flex gap-2">
+                            <button onclick="saveFteNorms()" class="flex-1 text-xs bg-blue-600 hover:bg-blue-500 rounded px-2 py-1.5">Opslaan in masterdata</button>
+                            <button onclick="revertFteNorms()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-2 py-1.5">Terugzetten</button>
+                        </div>
+                        <p class="text-[10px] text-slate-500 mt-2">Niet opslaan? Een scenario opslaan bewaart deze stand ook.</p>
+                    </div>
                 </div>
 
                 <div id="fteValuePanel" class="card rounded-xl p-6">
@@ -7027,23 +7042,37 @@ function _renderFinancialDeviation(data) {
     const periods = data.periods || [];
     const trendGlyph = t => t === 'up' ? '<span style="color:#4ade80">▲</span>' : t === 'down' ? '<span style="color:#f87171">▼</span>' : '<span class="text-slate-500">▬</span>';
     const fmtNum = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
-    let head = '<th class="text-left p-1 sticky left-0 bg-slate-800">Metric</th><th class="text-center p-1">Trend</th><th class="text-right p-1">Δ totaal</th>'
+    // De cellen tonen het ECHTE getal, met de afwijking als tweede regel
+    // wanneer die er is. De oude weergave toonde alleen delta's: zonder
+    // bewerkingen was dat een muur van puntjes ("er staan geen getallen in"),
+    // terwijl de trendpijlen — die het verloop over de horizon meten, niet de
+    // afwijking — wél kleurden. Dat las als kapot.
+    const anyDelta = (data.metrics || []).some(m =>
+        periods.some(p => Math.abs((m.delta || {})[p] || 0) > 0.5));
+    let head = '<th class="text-left p-1 sticky left-0 bg-slate-800">Metric</th>'
+        + '<th class="text-center p-1" title="Verloop van de metric over de horizon (laatste vs eerste maand) — niet de afwijking t.o.v. de baseline">Verloop</th>'
+        + '<th class="text-right p-1">Totaal</th><th class="text-right p-1">Δ totaal</th>'
         + periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('');
     let rows = (data.metrics || []).map(m => {
+        const totalCurrent = periods.reduce((a, p) => a + ((m.current || {})[p] || 0), 0);
         const totalDelta = periods.reduce((a, p) => a + (m.delta[p] || 0), 0);
-        const deltaCls = totalDelta > 0.5 ? 'text-emerald-400' : totalDelta < -0.5 ? 'text-red-400' : 'text-slate-400';
+        const deltaCls = totalDelta > 0.5 ? 'text-emerald-400' : totalDelta < -0.5 ? 'text-red-400' : 'text-slate-500';
         const drillable = m.source_line_type ? 'cursor-pointer hover:bg-slate-700/50' : '';
         const cells = periods.map(p => {
+            const v = (m.current || {})[p] || 0;
             const d = m.delta[p] || 0;
-            const cls = d > 0.5 ? 'text-emerald-400' : d < -0.5 ? 'text-red-400' : 'text-slate-500';
-            const title = `huidig ${fmtNum(m.current[p])} vs baseline ${fmtNum(m.baseline[p])}`;
-            return `<td class="text-right p-1 font-mono ${cls}" title="${title}">${d ? (d > 0 ? '+' : '') + fmtNum(d) : '·'}</td>`;
+            const cls = d > 0.5 ? 'text-emerald-400' : d < -0.5 ? 'text-red-400' : '';
+            const deltaLine = Math.abs(d) > 0.5
+                ? `<span class="block text-[10px] ${cls}">${d > 0 ? '+' : ''}${fmtNum(d)}</span>` : '';
+            const title = `huidig ${fmtNum(v)} · baseline ${fmtNum((m.baseline || {})[p] || 0)}`;
+            return `<td class="text-right p-1 font-mono text-slate-300" title="${title}">${fmtNum(v)}${deltaLine}</td>`;
         }).join('');
         const onclick = m.source_line_type ? `onclick="drillFinancialMetric('${escapeHtml(m.name)}')"` : '';
         return `<tr class="${drillable}" ${onclick} title="${m.source_line_type ? 'Klik voor onderliggende regels' : 'Afgeleide metric'}">
             <td class="p-1 text-slate-300 sticky left-0 bg-slate-800">${escapeHtml(m.name)}${m.source_line_type ? ' <span class="text-[9px] text-indigo-400">▸</span>' : ''}</td>
             <td class="text-center p-1">${trendGlyph(m.trend)}</td>
-            <td class="text-right p-1 font-mono ${deltaCls}">${totalDelta ? (totalDelta > 0 ? '+' : '') + fmtNum(totalDelta) : '·'}</td>
+            <td class="text-right p-1 font-mono text-slate-200">${fmtNum(totalCurrent)}</td>
+            <td class="text-right p-1 font-mono ${deltaCls}">${Math.abs(totalDelta) > 0.5 ? (totalDelta > 0 ? '+' : '') + fmtNum(totalDelta) : '—'}</td>
             ${cells}</tr>`;
     }).join('');
     document.getElementById('finDevBody').innerHTML =
@@ -7052,6 +7081,10 @@ function _renderFinancialDeviation(data) {
     if (!data.baseline_available) {
         document.getElementById('finDevBody').insertAdjacentHTML('afterbegin',
             '<div class="text-amber-300 text-xs mb-2">Geen baseline beschikbaar — herbereken deze instance voor afwijkingsdata.</div>');
+    } else if (!anyDelta) {
+        document.getElementById('finDevBody').insertAdjacentHTML('afterbegin',
+            '<div class="text-slate-400 text-xs mb-2">Deze instantie heeft geen bewerkingen: huidig = baseline, dus alle afwijkingen zijn 0. '
+            + 'De tabel toont de huidige waarden; zodra je iets bewerkt verschijnen de afwijkingen eronder.</div>');
     }
 }
 
@@ -12366,6 +12399,9 @@ async function resetMachineEdits() {
 // gaat als base_version mee bij het opslaan, zodat een wijziging uit een tweede
 // tabblad een 409 geeft in plaats van stil te worden overschreven.
 let _fteState = { data: null, combinations: [], active: [], dirtyNorms: {}, masterVersion: null,
+                  // Wat-als-normen van deze sessie (server is de bron; dit is de
+                  // spiegel) en de oorspronkelijke waarden voor 'oud → nieuw'.
+                  overrides: {}, overrideBase: {},
                   // range: aggregatiebereik ('all' | 'next3' | 'next6'); een gekozen
                   // maand in #ftePeriod gaat vóór het bereik. openGroups: welke
                   // groepen hun machinedetail tonen (accordion; de rijen blijven in
@@ -12397,6 +12433,7 @@ async function loadFteWorkbench({ force = false } = {}) {
         _fteState.combinations = data.combinations || [];
         _fteState.active = data.active_combinations || [];
         _fteState.masterVersion = data.master_version ?? null;
+        _fteState.overrides = data.norm_overrides || {};
         _fteState.dirtyNorms = pending;
         document.getElementById('fteEmpty').classList.add('hidden');
         document.getElementById('fteBody').classList.remove('hidden');
@@ -12492,8 +12529,9 @@ function setFteRange(range) {
 }
 
 function _fteOperators(line) {
-    const key = `${line.category}:${line.key}`;
-    return key in _fteState.dirtyNorms ? _fteState.dirtyNorms[key] : line.operators_per_hour;
+    // Wat-als-overrides zitten al in de payload (de server rekent ermee);
+    // de cel toont dus altijd gewoon wat er meetelt.
+    return line.operators_per_hour;
 }
 
 function renderFteWorkbench() {
@@ -12826,7 +12864,10 @@ function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}
     // rekent met een verzonnen 1,0 tot iemand de echte norm invult — de chip
     // zet de cursor er meteen in.
     let sourceCell;
-    if (line.operators_source === 'default' && editable) {
+    if (line.operators_source === 'wat-als') {
+        sourceCell = `<span class="px-1.5 py-0.5 rounded-full border border-amber-400/70 text-amber-300 text-[10px]"
+            title="Sessie-wat-als: rekent direct mee, staat nog niet in de masterdata. Opslaan of terugzetten via het paneel rechtsonder.">wat-als</span>`;
+    } else if (line.operators_source === 'default' && editable) {
         sourceCell = `<button class="px-1.5 py-0.5 rounded-full border border-amber-500/60 text-amber-300
             hover:text-amber-100 text-[10px]" title="De motor rekent met aanname 1,0 — vul de echte norm in"
             onclick="this.closest('tr').querySelector('input[data-fte-key]')?.focus()">aanname 1,0</button>`;
@@ -12956,7 +12997,11 @@ function _renderFteTable(showMachines) {
         || '<tr><td colspan="9" class="text-center p-4 text-slate-500">Geen regels</td></tr>';
 }
 
-function onFteNormEdit(input) {
+async function onFteNormEdit(input) {
+    // De werkstroom van de klant: aanpassen, Enter, METEEN resultaat, verder
+    // spelen. De wijziging wordt sessie-wat-als (bron 'wat-als', rekent
+    // direct mee, raakt de masterdata niet); vastleggen is daarna een
+    // expliciete keuze: opslaan in de masterdata of bewaren als scenario.
     const category = input.dataset.fteCat;
     const key = input.dataset.fteKey;
     const parsed = parseLocaleNumber(String(input.value).trim());
@@ -12966,37 +13011,95 @@ function onFteNormEdit(input) {
         return;
     }
     const line = (_fteState.data.lines || []).find(l => l.category === category && l.key === key);
-    const id = `${category}:${key}`;
-    if (line && Math.abs(parsed - line.operators_per_hour) < 1e-9) delete _fteState.dirtyNorms[id];
-    else _fteState.dirtyNorms[id] = parsed;
-    _updateFteDirtyBar();
-    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+    if (!line) return;
+    // Basiswaarde vastleggen vóór de eerste override, zodat het paneel
+    // 'oud → nieuw' kan tonen en terug-naar-oud de override opruimt.
+    if (!(key in _fteState.overrideBase) && line.operators_source !== 'wat-als') {
+        _fteState.overrideBase[key] = line.operators_per_hour;
+    }
+    const base = _fteState.overrideBase[key];
+    const next = { ..._fteState.overrides };
+    if (base !== undefined && Math.abs(parsed - base) < 1e-9) {
+        delete next[key];
+    } else {
+        next[key] = { operators_per_hour: parsed,
+                      scope: category === 'machine' ? 'machine' : 'group' };
+    }
+    await _postFteNormOverrides(next);
+}
+
+async function _postFteNormOverrides(overrides) {
+    try {
+        const res = await fetch('/api/fte/norm_overrides', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ overrides }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            notify(data.error || 'Wat-als doorrekenen mislukt.', 'error', 5000);
+            renderFteWorkbench();
+            return false;
+        }
+        _fteState.data = data.fte;
+        _fteState.overrides = data.norm_overrides || {};
+        for (const code of Object.keys(_fteState.overrideBase)) {
+            if (!(code in _fteState.overrides)) delete _fteState.overrideBase[code];
+        }
+        renderFteWorkbench();
+        return true;
+    } catch (err) {
+        notify('Wat-als doorrekenen mislukt: ' + err, 'error', 5000);
+        return false;
+    }
 }
 
 function _updateFteDirtyBar() {
-    const count = Object.keys(_fteState.dirtyNorms).length;
+    const count = Object.keys(_fteState.overrides).length;
     document.getElementById('fteDirtyCount').textContent = count;
     document.getElementById('fteDirtyBar').classList.toggle('hidden', count === 0);
+    _renderFteWhatIfTray();
+}
+
+// Het wat-als-paneel rechtsonder: houdt bij wat er in het experiment is
+// veranderd (oud → nieuw) en biedt de twee uitgangen — vastleggen in de
+// masterdata, of alles terugzetten. Scenario's nemen de stand vanzelf mee.
+function _renderFteWhatIfTray() {
+    const tray = document.getElementById('fteWhatIfTray');
+    if (!tray) return;
+    const entries = Object.entries(_fteState.overrides);
+    tray.classList.toggle('hidden', entries.length === 0);
+    if (!entries.length) return;
+    const lines = _fteState.data ? (_fteState.data.lines || []) : [];
+    const label = (code) => {
+        const line = lines.find(l => String(l.key) === String(code));
+        return line ? line.label : code;
+    };
+    document.getElementById('fteWhatIfList').innerHTML = entries.map(([code, spec]) => {
+        const base = _fteState.overrideBase[code];
+        const from = base === undefined ? '' : `${_fmtNlNum(base, 2)} → `;
+        return `<div class="flex justify-between gap-3">
+            <span class="text-slate-300 truncate">${escapeHtml(label(code))}</span>
+            <span class="font-mono text-amber-300 whitespace-nowrap">${from}${_fmtNlNum(spec.operators_per_hour, 2)}</span>
+        </div>`;
+    }).join('');
 }
 
 function revertFteNorms() {
-    _fteState.dirtyNorms = {};
-    renderFteWorkbench();
+    _fteState.overrideBase = {};
+    _postFteNormOverrides({});
 }
 
 async function saveFteNorms() {
-    const edits = Object.entries(_fteState.dirtyNorms);
+    const edits = Object.entries(_fteState.overrides);
     if (!edits.length) return;
     try {
         const res = await fetch('/api/master_data/staffing_norms');
         const current = await res.json();
         if (!res.ok || current.error) { notify(current.error || 'Bemensingsnormen laden mislukt.', 'error', 5000); return; }
         const value = { ...(current.value || {}) };
-        for (const [id, operators] of edits) {
-            const [category, key] = id.split(/:(.+)/);
-            const scope = category === 'machine' ? 'machine' : 'group';
-            value[key] = { ...(value[key] || {}), code: key, scope,
-                           operators_per_hour: operators };
+        for (const [key, spec] of edits) {
+            value[key] = { ...(value[key] || {}), code: key, scope: spec.scope,
+                           operators_per_hour: spec.operators_per_hour };
         }
         const patch = await fetch('/api/master_data/staffing_norms', {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -13049,6 +13152,10 @@ async function saveFteNorms() {
         // bewerking een 409 tegen onze eigen wijziging.
         _fteState.masterVersion = (refreshed.ok ? data.master_version : undefined) ?? saved.version
                                   ?? _fteState.masterVersion;
+        // De normen staan nu in de masterdata; de sessie-wat-als is daarmee
+        // vastgelegd en gaat uit (zelfde getallen, bron weer 'norm').
+        _fteState.overrideBase = {};
+        await _postFteNormOverrides({});
         _fteState.dirtyNorms = {};
         renderFteWorkbench();
         // Alleen juichen als de werkbank ook echt bijgewerkt is; anders staat

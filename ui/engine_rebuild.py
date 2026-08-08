@@ -161,6 +161,14 @@ def get_session_config_overrides(sess: dict | None, global_config: dict) -> dict
         ov['active_combinations'] = list(ac)
     else:
         ov.pop('active_combinations', None)
+    # Wat-als-normen: zelfde regel als de combinaties hierboven.
+    norm_overrides = sess.get('fte_norm_overrides')
+    if norm_overrides is None:
+        norm_overrides = getattr(sess.get('engine'), 'fte_norm_overrides', None)
+    if norm_overrides:
+        ov['fte_norm_overrides'] = dict(norm_overrides)
+    else:
+        ov.pop('fte_norm_overrides', None)
     return ov
 
 
@@ -241,8 +249,10 @@ def install_clean_engine_baseline(
         # een configwijziging (clear_machine_overrides=False) laat ze staan.
         sess['active_combinations'] = []
         engine.active_combinations = []
+        sess['fte_norm_overrides'] = {}
+        engine.fte_norm_overrides = {}
         if hasattr(engine, 'recalculate_fte'):
-            engine.recalculate_fte([])
+            engine.recalculate_fte([], norm_overrides={})
     # inventory_overrides (L4 starting stock) and capacity_overrides
     # (L7/L9/L11/L12) are session-scoped edit stores. A clean engine baseline
     # implies no edits have been applied yet — reset both stores so Reset

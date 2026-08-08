@@ -166,6 +166,12 @@ def create_sessions_blueprint(
                 and getattr(sess.get('engine'), 'active_combinations', None) is not None
                 else (sess.get('active_combinations') or [])
             ),
+            'fte_norm_overrides': dict(
+                getattr(sess.get('engine'), 'fte_norm_overrides', None)
+                if sess.get('engine') is not None
+                and getattr(sess.get('engine'), 'fte_norm_overrides', None) is not None
+                else (sess.get('fte_norm_overrides') or {})
+            ),
             'reset_baseline': copy.deepcopy(sess.get('reset_baseline')),
             'forecast_defaults': copy.deepcopy(
                 (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('forecast_defaults')

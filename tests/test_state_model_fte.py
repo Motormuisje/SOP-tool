@@ -40,17 +40,21 @@ class _Engine:
         self.results = results or {}
         self.value_results = {}
         self.active_combinations = []
+        self.fte_norm_overrides = {}
         self.fte_results = None
         self.config_overrides = {}
 
-    def recalculate_fte(self, active_combinations=None):
+    def recalculate_fte(self, active_combinations=None, norm_overrides=None):
         if active_combinations is not None:
             self.active_combinations = list(active_combinations)
+        if norm_overrides is not None:
+            self.fte_norm_overrides = dict(norm_overrides)
         if self.data is None:
             return
         self.fte_results = FteEngine(
             self.data, self.results,
-            active_combinations=self.active_combinations).calculate()
+            active_combinations=self.active_combinations,
+            staffing_norm_overrides=self.fte_norm_overrides).calculate()
 
 
 def _combo_setup():
@@ -358,3 +362,68 @@ class TestDuplicatedInstance:
         copied = self._snapshot_payload(env.sess, None)
 
         assert copied['active_combinations'] == ['C1']
+
+
+class TestWatAlsNormen:
+    """De wat-als-normen (fte_norm_overrides) zijn sessiestate naast de
+    actieve combinaties en volgen exact dezelfde zes sync-/rebuildpunten.
+    Elke test hier spiegelt een bestaand combinatie-geval."""
+
+    OVR = {'ZZ_G1': {'operators_per_hour': 2.0, 'scope': 'group'}}
+
+    def test_de_override_rekent_direct_mee_met_bron_wat_als(self, env):
+        env.engine.recalculate_fte([], norm_overrides=self.OVR)
+        line = next(l for l in env.engine.fte_results.lines
+                    if l.category == 'group' and l.key == 'ZZ_G1')
+        assert line.operators_per_hour == pytest.approx(2.0)
+        assert line.operators_source == 'wat-als'
+        env.engine.recalculate_fte(norm_overrides={})
+        line = next(l for l in env.engine.fte_results.lines
+                    if l.category == 'group' and l.key == 'ZZ_G1')
+        assert line.operators_source != 'wat-als'
+
+    def test_config_overrides_dragen_het_sessieveld(self, env):
+        env.sess['fte_norm_overrides'] = dict(self.OVR)
+        overrides = get_session_config_overrides(env.sess, {})
+        assert overrides['fte_norm_overrides'] == self.OVR
+
+    def test_config_overrides_vallen_terug_op_de_engine(self, env):
+        env.sess.pop('fte_norm_overrides', None)
+        env.engine.fte_norm_overrides = dict(self.OVR)
+        overrides = get_session_config_overrides(env.sess, {})
+        assert overrides['fte_norm_overrides'] == self.OVR
+
+    def test_geen_erfenis_uit_de_global_config(self, env):
+        overrides = get_session_config_overrides(
+            env.sess, {'fte_norm_overrides': dict(self.OVR)})
+        assert 'fte_norm_overrides' not in overrides
+
+    def test_snapshot_en_restore_dragen_de_overrides(self, env):
+        env.engine.fte_norm_overrides = dict(self.OVR)
+        snapshot = snapshot_engine_state(env.engine, lambda m, d: 0.0)
+        fresh = _Engine(env.data, env.results)
+        restore_engine_state(fresh, snapshot, {})
+        assert fresh.fte_norm_overrides == self.OVR
+
+    def test_schone_baseline_zet_ze_uit(self, env):
+        env.sess['fte_norm_overrides'] = dict(self.OVR)
+        env.engine.fte_norm_overrides = dict(self.OVR)
+        install_clean_engine_baseline(env.sess, env.engine, lambda m, d: 0.0,
+                                      clear_machine_overrides=True)
+        assert env.sess['fte_norm_overrides'] == {}
+        assert env.engine.fte_norm_overrides == {}
+
+    def test_configwijziging_laat_ze_staan(self, env):
+        env.sess['fte_norm_overrides'] = dict(self.OVR)
+        env.engine.fte_norm_overrides = dict(self.OVR)
+        install_clean_engine_baseline(env.sess, env.engine, lambda m, d: 0.0,
+                                      clear_machine_overrides=False)
+        assert env.sess['fte_norm_overrides'] == self.OVR
+
+    def test_replay_leest_de_sessie(self, env):
+        env.sess['fte_norm_overrides'] = dict(self.OVR)
+        recalculate_fte_results(env.engine, env.sess)
+        line = next(l for l in env.engine.fte_results.lines
+                    if l.category == 'group' and l.key == 'ZZ_G1')
+        assert line.operators_source == 'wat-als'
+        assert line.operators_per_hour == pytest.approx(2.0)

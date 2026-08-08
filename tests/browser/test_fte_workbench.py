@@ -175,29 +175,37 @@ def test_norm_edit_raises_the_dirty_bar_and_revert_clears_it(browser_page):
     assert page.js_errors == []
 
 
-def test_reopening_the_tab_refreshes_but_keeps_typed_norms(browser_page):
-    """De dirty-bewaking mocht de verversing niet blokkeren: dan bleef het
-    tabblad na een herberekening oude uren, kosten en EBITDA tonen. Nieuwe
-    cijfers ophalen én de getypte norm als overlay houden."""
+def test_reopening_the_tab_refreshes_and_keeps_the_what_if(browser_page):
+    """Een getypte norm is sinds de wat-als-werkstroom SESSIESTATE: hij rekent
+    direct mee en overleeft tabwissel en verversing omdat de server hem
+    draagt — niet omdat een lokale overlay hem vasthoudt."""
     page = browser_page
     _open_workbench(page)
 
-    page.evaluate(
-        """() => {
-            const input = document.querySelector('#fteWbBody input[data-fte-key]');
-            input.value = '3';
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }""")
+    with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
+        page.evaluate(
+            """() => {
+                const input = document.querySelector('#fteWbBody input[data-fte-key]');
+                input.value = '3';
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }""")
     expect(page.locator("#fteDirtyBar")).to_be_visible()
 
-    # Tabblad verlaten en terugkomen haalt nieuwe data op.
+    # Tabblad verlaten en terugkomen haalt nieuwe data op; de wat-als komt
+    # uit de sessie terug.
     with page.expect_response(lambda r: "/api/fte" in r.url and r.ok):
         page.evaluate("() => { showTab('planning'); showTab('fte'); }")
     page.wait_for_function(
         "() => document.querySelectorAll('#fteWbBody tr').length > 0", timeout=30000)
 
-    assert page.evaluate("() => Object.keys(_fteState.dirtyNorms).length") == 1
+    assert page.evaluate("() => Object.keys(_fteState.overrides).length") == 1
     expect(page.locator("#fteDirtyBar")).to_be_visible()
+    assert page.evaluate(
+        "() => document.querySelector('#fteWbBody input[data-fte-key]').value") == "3"
+
+    # Opruimen: de gedeelde server terug naar schoon.
+    with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
+        page.evaluate("() => revertFteNorms()")
     assert page.js_errors == []
 
 
@@ -207,14 +215,16 @@ def test_invalid_norm_is_refused_without_touching_the_dirty_state(browser_page):
     page = browser_page
     _open_workbench(page)
 
+    posted = []
+    page.on("request", lambda req: posted.append(req.url))
     page.evaluate(
         """() => {
             const input = document.querySelector('#fteWbBody input[data-fte-key]');
             input.value = 'veel';
             input.dispatchEvent(new Event('change', { bubbles: true }));
         }""")
-    dirty = page.evaluate("() => Object.keys(_fteState.dirtyNorms).length")
-    assert dirty == 0
+    assert page.evaluate("() => Object.keys(_fteState.overrides).length") == 0
+    assert [u for u in posted if "/api/fte/norm_overrides" in u] == [],         "een geweigerde invoer mag geen wat-als POSTen"
     expect(page.locator("#fteDirtyBar")).to_be_hidden()
 
 
@@ -226,3 +236,76 @@ def test_workbench_knows_the_master_version_it_is_based_on(browser_page):
 
     has_field = page.evaluate("() => 'masterVersion' in _fteState")
     assert has_field, "_fteState houdt de masterversie niet bij"
+
+
+def test_wat_als_werkstroom_direct_resultaat_en_terugzetten(browser_page):
+    """De werkstroom van de klant (2026-08-06): aanpassen, Enter, METEEN
+    resultaat, verder spelen — zonder masterdata-omweg. Het paneel rechtsonder
+    houdt de wijzigingen bij (oud → nieuw) en Terugzetten herstelt alles."""
+    page = browser_page
+    _open_workbench(page)
+
+    # Schoon beginnen: een eerdere test kan een wat-als hebben achtergelaten
+    # (de sessie draagt hem server-side; een gesloten pagina neemt hem niet
+    # mee het graf in). Zonder deze reset meet de basis hieronder een
+    # overridden stand en klopt de verdubbelingsverwachting niet meer.
+    if page.evaluate("() => Object.keys(_fteState.overrides).length"):
+        with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
+            page.evaluate("() => revertFteNorms()")
+
+    target = page.evaluate(
+        """() => {
+            const input = document.querySelector('#fteWbBody input[data-fte-key]');
+            const row = input.closest('tr');
+            return { key: input.dataset.fteKey, value: input.value,
+                     rowId: row.dataset.fteRow };
+        }""")
+    base_fte = page.evaluate(
+        "(id) => _fteAgg(_fteState.data.lines.find(l => `${l.category}:${l.key}` === id).fte, 'avg')",
+        target["rowId"])
+    doubled = str(float(target["value"].replace(",", ".")) * 2)
+
+    patched = []
+    page.on("request", lambda req: patched.append(req.url)
+            if req.method == "PATCH" else None)
+    with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
+        page.evaluate(
+            """([val]) => {
+                const input = document.querySelector('#fteWbBody input[data-fte-key]');
+                input.value = val;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }""", [doubled])
+
+    # Eerst het contract: de override staat geregistreerd met precies de
+    # getypte waarde — een faal hier verklaart zichzelf.
+    registered = page.evaluate("() => _fteState.overrides")
+    assert list(registered) == [target["key"]], registered
+    assert registered[target["key"]]["operators_per_hour"] == pytest.approx(float(doubled)), registered
+
+    # Meteen resultaat: de regel rekent verdubbeld, bron is 'wat-als', en er
+    # is GEEN masterdata-PATCH vertrokken.
+    after = page.evaluate(
+        "(id) => _fteAgg(_fteState.data.lines.find(l => `${l.category}:${l.key}` === id).fte, 'avg')",
+        target["rowId"])
+    assert abs(after - base_fte * 2) < 0.01, (base_fte, after)
+    assert patched == [], "wat-als mag de masterdata niet raken"
+    source = page.evaluate(
+        "(id) => _fteState.data.lines.find(l => `${l.category}:${l.key}` === id).operators_source",
+        target["rowId"])
+    assert source == "wat-als"
+
+    # Het paneel rechtsonder toont oud → nieuw.
+    expect(page.locator("#fteWhatIfTray")).to_be_visible()
+    tray = page.locator("#fteWhatIfList").inner_text()
+    assert "→" in tray, tray
+
+    # Terugzetten herstelt alles exact.
+    with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
+        page.evaluate("() => revertFteNorms()")
+    restored = page.evaluate(
+        "(id) => _fteAgg(_fteState.data.lines.find(l => `${l.category}:${l.key}` === id).fte, 'avg')",
+        target["rowId"])
+    assert abs(restored - base_fte) < 0.01
+    expect(page.locator("#fteWhatIfTray")).to_be_hidden()
+    expect(page.locator("#fteDirtyBar")).to_be_hidden()
+    assert page.js_errors == []
