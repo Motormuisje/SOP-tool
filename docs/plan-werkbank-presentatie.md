@@ -75,6 +75,7 @@ Geen enginewerk; de bestaande datasets en het write-through-stramien volstaan.
 | 9 | **Indirect-sectie**: driverchips (vast · per ton · per truck · per machine), maintenance-badge (§6.6), klikbare uitsplitsing achter de tegel "waarvan indirect", en per regel een sprong naar de `indirect_activities`-rij | sprong naar grid (bestaand, addable) |
 | 10 | **Materialiteitsdrempel op alle delta's** (vast; grijs "≈ 0" met exact getal in tooltip) en **eerlijkheidsmelding** op het vergelijkingspaneel (rekent met opgeslagen normen; melding bij onopgeslagen wijzigingen) | leeswerk |
 | 11 | **Machinedetail standaard uit**, uitklap per groep; **aannamenstrip** onder de KPI-rij (effectieve uren, bezettingsdoel, tariefstatus, n aannamenormen) — elke chip is een sprong naar zijn invulpad | leeswerk + sprongen |
+| 12 | **Keuzelijsten op alle sleutel-invoer** (klantvraag 2026-08-06: "teveel risico op een verkeerde naam of sleutel intypen"). "+ rij" opent een sleutelkiezer i.p.v. een prompt; paarsleutels (MACHINE\|MATERIAAL) zijn twee velden met elk hun eigen lijst; zoeken werkt op een deel van naam óf code; een suggestieveld weigert codes die niet in de lijst staan (vrije ID's zoals een nieuwe combinatie blijven vrij). Ook: wizard-materiaalnummer/familie, csv-machinecellen (per token, reeds gekozen codes niet opnieuw aangeboden), configvelden unlimited-machines en purchased&produced, en de MES-overname (materiaal wordt gekozen, niet getypt) | invulveiligheid op bestaande paden |
 
 ## 4. Fase 2 — enginewerk: invullingen laten dóórwerken
 

@@ -396,8 +396,8 @@ def test_opslaan_met_ongeldig_getal_wordt_geweigerd(browser_page, golden_fixture
     # (b) server-side: een nieuwe doorzet-override met 0 t/u.
     overrides_before = _dataset(base_url, "throughput_overrides")
     _open_dataset(page, "throughput_overrides")
-    page.evaluate("(key) => { window.prompt = () => key; addMasterDatasetRow(); }",
-                  THROUGHPUT_KEY)
+    page.evaluate("([ds, key]) => _insertMasterRow(ds, key)",
+                  ["throughput_overrides", THROUGHPUT_KEY])
     page.wait_for_selector(f'#masterDatasetBody tr[data-master-key="{THROUGHPUT_KEY}"]',
                            timeout=15000)
     response, payload = _save_dataset(page, "throughput_overrides", expect_ok=False)
@@ -479,8 +479,8 @@ def test_bemensingsnorm_toevoegen_met_select_kolom(browser_page, golden_fixture_
     try:
         _open_dataset(page, "staffing_norms")
         before_rows = page.locator("#masterDatasetBody tr[data-master-key]").count()
-        page.evaluate("(key) => { window.prompt = () => key; addMasterDatasetRow(); }",
-                      NORM_KEY)
+        page.evaluate("([ds, key]) => _insertMasterRow(ds, key)",
+                      ["staffing_norms", NORM_KEY])
         page.wait_for_selector(f'#masterDatasetBody tr[data-master-key="{NORM_KEY}"]',
                                timeout=15000)
         assert page.locator("#masterDatasetBody tr[data-master-key]").count() == before_rows + 1
@@ -496,8 +496,8 @@ def test_bemensingsnorm_toevoegen_met_select_kolom(browser_page, golden_fixture_
         assert scope == {"value": "group", "options": ["group", "machine"]}
 
         # Dezelfde sleutel nog eens: geen dubbele rij, wel een melding.
-        page.evaluate("(key) => { window.prompt = () => key; addMasterDatasetRow(); }",
-                      NORM_KEY)
+        page.evaluate("([ds, key]) => _insertMasterRow(ds, key)",
+                      ["staffing_norms", NORM_KEY])
         assert page.locator("#masterDatasetBody tr[data-master-key]").count() == before_rows + 1
         notes = page.evaluate("() => window.__notes")
         assert notes and "staat al in de tabel" in notes[-1], notes
@@ -547,8 +547,8 @@ def test_machinecombinatie_toevoegen_met_csv_en_map_kolommen(browser_page,
     first, second = machine_codes[0], machine_codes[1]
     try:
         _open_dataset(page, "machine_combinations")
-        page.evaluate("(key) => { window.prompt = () => key; addMasterDatasetRow(); }",
-                      COMBI_KEY)
+        page.evaluate("([ds, key]) => _insertMasterRow(ds, key)",
+                      ["machine_combinations", COMBI_KEY])
         page.wait_for_selector(f'#masterDatasetBody tr[data-master-key="{COMBI_KEY}"]',
                                timeout=15000)
         # Defaults: doorzetfactor 1 (0 zou geweigerd worden) en beschikbaar.
@@ -677,4 +677,98 @@ def test_statuskaart_toont_de_aantallen_van_de_store(browser_page, golden_fixtur
     finally:
         requests.patch(base_url + "/api/master_data/purchase",
                        json={"value": purchase}, timeout=120)
+    assert page.js_errors == []
+
+
+def test_config_submenu_overlapt_de_tabellen_niet(browser_page, golden_fixture_path):
+    """Het sticky submenu wordt bij scrollen position:fixed; zonder
+    plaatshouder verliet het de flex-rij, schoof de tabellenkaart naar links
+    en zweefde het menu transparant over de rijen heen (schermafdruk klant
+    2026-08-06). De plaatshouder houdt de 200px vast en de kaart mag het
+    menu nooit horizontaal snijden."""
+    page = browser_page
+    _prepare(page, golden_fixture_path)
+    # Bemensingsnormen zijn leeg in een verse teststore (geen bron in de
+    # maandextracts); het grid zelf — kop plus lege tabel — is genoeg om de
+    # kaartbreedte en het menu te toetsen.
+    page.evaluate("() => openMasterDatasetModal('staffing_norms')")
+    page.wait_for_selector("#masterDatasetBody table", timeout=30000)
+
+    # Naar de tabellenkaart scrollen zoals de gebruiker: venster-scroll.
+    page.evaluate(
+        """() => {
+            const card = document.getElementById('cfgsec-tabellen');
+            window.scrollTo(0, card.getBoundingClientRect().top + window.scrollY - 40);
+        }""")
+    page.wait_for_function(
+        "() => document.getElementById('cfgNav').style.position === 'fixed'",
+        timeout=10000)
+
+    geom = page.evaluate(
+        """() => {
+            const nav = document.getElementById('cfgNav').getBoundingClientRect();
+            const card = document.getElementById('cfgsec-tabellen').getBoundingClientRect();
+            const spacer = document.getElementById('cfgNavSpacer');
+            return {
+                spacerZichtbaar: spacer && spacer.style.display === 'block',
+                navRechts: nav.right, kaartLinks: card.left,
+                achtergrond: getComputedStyle(document.getElementById('cfgNav')).backgroundColor,
+            };
+        }""")
+    assert geom["spacerZichtbaar"] is True, "plaatshouder staat niet aan in fixed-toestand"
+    assert geom["navRechts"] <= geom["kaartLinks"] + 1, (
+        f"menu ({geom['navRechts']:.0f}px) snijdt de tabellenkaart ({geom['kaartLinks']:.0f}px)")
+    assert geom["achtergrond"] not in ("rgba(0, 0, 0, 0)", "transparent"), (
+        "fixed menu heeft geen dekkende achtergrond")
+
+    # Terug omhoog: alles netjes terug naar de normale toestand.
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.wait_for_function(
+        "() => document.getElementById('cfgNav').style.position !== 'fixed'",
+        timeout=10000)
+    assert page.evaluate(
+        "() => document.getElementById('cfgNavSpacer').style.display") == "none"
+    assert page.js_errors == []
+
+
+def test_fte_formulier_heeft_ploegselector_en_uitleg_per_regel(browser_page, golden_fixture_path):
+    """Klantvraag 2026-08-06: het standaard ploegensysteem is een keuze uit de
+    bestaande vensters (vrije tekst viel bij een typfout stil terug op de
+    motor-default), en elke regel draagt rechts de uitleg hoe het getal in de
+    berekening wordt gebruikt."""
+    page = browser_page
+    _prepare(page, golden_fixture_path)
+    _open_dataset(page, "fte")
+
+    report = page.evaluate(
+        """() => {
+            const row = document.querySelector('#masterDatasetBody tr[data-master-field="default_shift_name"]');
+            const select = row && row.cells[1].querySelector('select.master-edit');
+            const fte = _masterDatasetCache.value;
+            const rows = [...document.querySelectorAll(
+                '#masterDatasetBody tr[data-master-field], #masterDatasetBody tr[data-master-shift], #masterDatasetBody tr[data-master-param]')];
+            return {
+                isSelect: !!select,
+                options: select ? [...select.options].map(o => o.value) : [],
+                gekozen: select ? select.value : null,
+                verwacht: Object.keys(fte.shift_hours || {}),
+                huidig: fte.default_shift_name,
+                totaal: rows.length,
+                metUitleg: rows.filter(r => (r.cells[2]?.textContent || '').trim().length > 10).length,
+            };
+        }""")
+    assert report["isSelect"], "standaard ploegensysteem is geen selector"
+    assert set(report["verwacht"]).issubset(set(report["options"])), report
+    assert report["gekozen"] == report["huidig"], "selector staat niet op de huidige waarde"
+    # Elke invoerregel (velden, ploegvensters, parameters) draagt uitleg.
+    assert report["totaal"] > 8
+    assert report["metUitleg"] == report["totaal"], report
+
+    # De selector overleeft de save-roundtrip: opslaan zonder wijziging laat
+    # de waarde exact staan (bewaakt dat collect het select-veld goed leest).
+    response, payload = _save_dataset(page, "fte")
+    assert payload.get("success"), payload
+    import requests as _rq
+    fte = _rq.get(page.server["base_url"] + "/api/master_data/fte", timeout=60).json()["value"]
+    assert fte["default_shift_name"] == report["huidig"]
     assert page.js_errors == []

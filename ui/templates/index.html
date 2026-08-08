@@ -1482,7 +1482,12 @@
           <div class="flex gap-6 max-w-5xl mx-auto items-start">
 
             <!-- C4a: sticky submenu met scrollspy + zoekveld. Links worden
-                 gegenereerd uit de [data-cfg-section]-kaarten hiernaast. -->
+                 gegenereerd uit de [data-cfg-section]-kaarten hiernaast.
+                 De spacer houdt de 200px van de nav vast wanneer die bij
+                 scrollen position:fixed wordt: zonder plaatshouder verlaat de
+                 nav de flex-rij, schuift de inhoud naar links en zweeft het
+                 menu transparant over de tabellen heen. -->
+            <div id="cfgNavSpacer" style="display:none;width:200px;flex:none"></div>
             <nav id="cfgNav" style="position:sticky;top:12px;width:200px;flex:none">
               <input id="cfgSearch" type="text" placeholder="&#128269; Zoeken in instellingen..."
                      oninput="filterConfigSections(this.value)"
@@ -1784,6 +1789,25 @@
 
     <!-- Masterdata-productwizard (C4c-vervolg): product toevoegen aan de
          STORE (enige bron van waarheid), stap voor stap door alle datasets. -->
+    <!-- Sleutelkiezer voor "+ rij": vervangt de kale prompt(). Typ een deel
+         van naam of code en kies uit de lijst — een handgetypte sleutel die
+         nergens aan koppelt is het grootste invoerrisico van de grids. -->
+    <div id="masterKeyModal" style="display:none;position:fixed;inset:0;z-index:9400;background:rgba(2,6,23,0.82);align-items:center;justify-content:center;padding:16px">
+        <div class="card rounded-xl p-6 w-full" style="max-width:430px">
+            <h3 class="font-semibold mb-1" id="masterKeyTitle">Nieuwe rij</h3>
+            <p class="text-xs text-slate-500 mb-3" id="masterKeyHint"></p>
+            <div id="masterKeyFields" class="space-y-3"></div>
+            <div class="flex justify-end gap-2 mt-4">
+                <button onclick="closeMasterKeyPicker()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1.5">Annuleren</button>
+                <button onclick="confirmMasterKeyPicker()" class="text-xs bg-blue-600 hover:bg-blue-500 rounded px-3 py-1.5">Toevoegen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zwevende suggestielijst van de comboboxen (één exemplaar, verplaatst
+         zich naar het actieve invoerveld). -->
+    <div id="suggestDropdown" class="hidden" style="position:fixed;z-index:9500;max-height:230px;overflow-y:auto;min-width:220px"></div>
+
     <div id="masterProductModal" style="display:none;position:fixed;inset:0;z-index:9300;background:rgba(2,6,23,0.82);align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px">
       <div class="card rounded-xl" style="width:min(720px,95vw);padding:20px 22px">
         <div class="flex items-center justify-between mb-1">
@@ -5440,6 +5464,13 @@ async function openMasterProductWizard() {
     document.getElementById('mwNumberHint').textContent = '';
     document.getElementById('mwSaveStatus').textContent = '';
     document.getElementById('masterProductModal').style.display = 'flex';
+    // Keuzelijsten: een deel van naam of nummer typen en kiezen — een
+    // handgetypt nummer dat net verkeerd is maakt een spookproduct.
+    document.getElementById('mwNumber').dataset.suggestFree = '1';
+    document.getElementById('mwFamily').dataset.suggestFree = '1';
+    _wireSuggest(document.getElementById('mwNumber'), ['material'], 'single',
+                 () => _mwCheckExisting());
+    _wireSuggest(document.getElementById('mwFamily'), ['family'], 'single');
     _mwGoto(1);
 }
 
@@ -5779,6 +5810,7 @@ async function openMasterDatasetModal(dataset) {
     const filterEl = document.getElementById('masterDatasetFilter');
     if (filterEl) filterEl.value = '';
     body.innerHTML = _masterDatasetHtml(spec, data.value);
+    _wireMasterSuggest(dataset);
     document.getElementById('masterDatasetFooter').style.display = editable ? '' : 'none';
     const saveBtn = document.getElementById('btnSaveMasterDataset');
     if (saveBtn) saveBtn.onclick = () => saveMasterDataset(dataset);
@@ -5837,8 +5869,319 @@ function _masterInput(kind, value) {
     let text = value;
     if (kind === 'csv') text = (value || []).join(', ');
     else if (kind === 'map') text = Object.entries(value || {}).map(([k, v]) => `${k}:${v}`).join(', ');
-    const wide = (kind === 'csv' || kind === 'map') ? 'w-48' : 'w-28';
-    return `<input type="text" value="${escapeHtml(text === null || text === undefined ? '' : String(text))}" class="master-edit bg-slate-700 rounded px-2 py-1 ${wide} ${kind === 'number' ? 'text-right' : ''}">`;
+    // Getallen smal en rechts; alle tekstachtige velden vullen hun kolom —
+    // een naam op 112px kapte "Maastricht Bagging" af terwijl de tabel
+    // ruimte over had.
+    const wide = kind === 'number' ? 'w-28' : 'w-full';
+    const minw = kind === 'number' ? '' : 'style="min-width:7rem"';
+    return `<input type="text" value="${escapeHtml(text === null || text === undefined ? '' : String(text))}" ${minw} class="master-edit bg-slate-700 rounded px-2 py-1 ${wide} ${kind === 'number' ? 'text-right' : ''}">`;
+}
+
+// ── Keuzelijsten: typ een deel van naam of code, kies uit de lijst ─────────
+// Een handgetypte sleutel of machinecode die nergens aan koppelt is het
+// grootste invoerrisico van de grids en de wizard: de rij wordt opgeslagen
+// maar rekent nooit mee. Elke vrije sleutel-invoer krijgt daarom suggesties
+// uit de masterdata zelf.
+
+let _entityCache = {};
+
+async function _entityOptions(kind) {
+    if (_entityCache[kind]) return _entityCache[kind];
+    const get = async (dataset) => {
+        try {
+            const res = await fetch(`/api/master_data/${dataset}`);
+            if (!res.ok) return null;
+            const body = await res.json();
+            return body.error ? null : body.value;
+        } catch (e) { return null; }
+    };
+    let options = [];
+    if (kind === 'material') {
+        options = ((await get('materials')) || []).map(m => ({
+            code: String(m.material_number), label: String(m.name || '') }));
+    } else if (kind === 'machine') {
+        options = ((await get('machines')) || []).map(m => ({
+            code: String(m.machine_code), label: String(m.name || '') }));
+    } else if (kind === 'machine_group') {
+        const machines = (await get('machines')) || [];
+        const groups = {};
+        for (const m of machines) {
+            const g = String(m.machine_group || '');
+            if (g) groups[g] = (groups[g] || 0) + 1;
+        }
+        options = Object.entries(groups).map(([code, n]) => ({
+            code, label: `groep · ${n} machine(s)` }));
+    } else if (kind === 'function_group') {
+        const rates = (await get('labor_rates')) || {};
+        const norms = (await get('staffing_norms')) || {};
+        const seen = new Set(Object.keys(rates));
+        for (const norm of Object.values(norms)) {
+            if (norm && norm.function_group) seen.add(String(norm.function_group));
+        }
+        seen.add('default');
+        options = [...seen].sort().map(code => ({
+            code, label: code === 'default' ? 'sitebreed tarief' : 'functiegroep' }));
+    } else if (kind === 'family') {
+        const materials = (await get('materials')) || [];
+        options = [...new Set(materials.map(m => String(m.product_family || '')).filter(Boolean))]
+            .sort().map(code => ({ code, label: 'familie' }));
+    }
+    options.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+    _entityCache[kind] = options;
+    return options;
+}
+
+// Token-logica: 'single' = hele veldwaarde; 'csv' = na de laatste komma;
+// 'mapkey' = na de laatste komma, alleen zolang er nog geen ':' in staat.
+function _suggestToken(input, mode) {
+    const value = input.value;
+    if (mode === 'single') return { prefix: '', token: value.trim(), suffix: '' };
+    const cut = value.lastIndexOf(',');
+    const prefix = cut === -1 ? '' : value.slice(0, cut + 1) + ' ';
+    const token = value.slice(cut + 1).trim();
+    if (mode === 'mapkey' && token.includes(':')) return null;
+    return { prefix: prefix.replace(/\s+$/, cut === -1 ? '' : ' '), token, suffix: '' };
+}
+
+let _suggestActive = null;   // { input, kinds, mode, items, index, onPick }
+let _suggestSuppressFocus = null;   // veld dat na een keuze focus terugkrijgt
+
+// Gekozen-status op het veld zelf: groen = de waarde staat in de lijst,
+// amber = niet (alleen bij velden die een bekende code vereisen). Zonder dit
+// was aan het veld niet te zien of je iets gekozen had of alleen getypt.
+function _markSuggestState(input, kinds, mode) {
+    if (mode !== 'single') return;
+    const value = input.value.trim();
+    const pools = kinds.map(k => _entityCache[k]).filter(Boolean).flat();
+    input.classList.remove('ring-1', 'ring-green-500', 'ring-amber-400');
+    input.dataset.suggestState = '';
+    input.title = '';
+    if (!value || !pools.length) return;
+    if (pools.some(o => o.code === value)) {
+        input.dataset.suggestState = 'known';
+        input.classList.add('ring-1', 'ring-green-500');
+        input.title = 'Gekozen uit de lijst';
+    } else {
+        input.dataset.suggestState = 'unknown';
+        if (input.dataset.suggestFree !== '1') {
+            input.classList.add('ring-1', 'ring-amber-400');
+            input.title = 'Staat niet in de lijst';
+        }
+    }
+}
+
+function _hideSuggest() {
+    document.getElementById('suggestDropdown')?.classList.add('hidden');
+    _suggestActive = null;
+}
+
+async function _showSuggest(input, kinds, mode, onPick) {
+    const parts = _suggestToken(input, mode);
+    if (!parts) { _hideSuggest(); return; }
+    const q = parts.token.toLowerCase();
+    const pools = await Promise.all(kinds.map(_entityOptions));
+    // De statusmarkering leest de cache synchroon; bij de allereerste
+    // aanslag was die soms nog koud en bleef het veld statusloos tot de
+    // volgende aanslag. Nu de lijsten er zeker zijn: alsnog markeren.
+    _markSuggestState(input, kinds, mode);
+    const all = pools.flat();
+    const chosen = mode === 'single' ? new Set()
+        : new Set(input.value.split(',').map(x => x.split(':')[0].trim()));
+    const items = all.filter(o => !chosen.has(o.code)
+        && (!q || o.code.toLowerCase().includes(q) || o.label.toLowerCase().includes(q)))
+        .slice(0, 12);
+    const drop = document.getElementById('suggestDropdown');
+    if (!drop || !items.length) { _hideSuggest(); return; }
+    _suggestActive = { input, kinds, mode, items, index: 0, onPick };
+    drop.innerHTML = items.map((o, i) => `
+        <div data-suggest-index="${i}" onmousedown="event.preventDefault();_pickSuggest(${i})"
+             class="px-2 py-1 text-xs cursor-pointer ${i === 0 ? 'bg-blue-600 text-white' : 'text-slate-200 hover:bg-slate-700'}">
+            <span class="font-mono">${escapeHtml(o.code)}</span>${
+                o.label ? ` <span class="${i === 0 ? 'text-blue-100' : 'text-slate-400'}">— ${escapeHtml(o.label)}</span>` : ''}
+        </div>`).join('');
+    drop.className = 'bg-slate-800 border border-slate-600 rounded-lg shadow-xl';
+    const rect = input.getBoundingClientRect();
+    drop.style.left = `${Math.min(rect.left, window.innerWidth - 320)}px`;
+    drop.style.top = `${rect.bottom + 2}px`;
+    drop.classList.remove('hidden');
+}
+
+function _pickSuggest(index) {
+    if (!_suggestActive) return;
+    const { input, kinds, mode, items, onPick } = _suggestActive;
+    const chosen = items[index];
+    if (!chosen) return;
+    const parts = _suggestToken(input, mode) || { prefix: '', token: '' };
+    // Vlag om het hele keuzeblok: het synthetische input-event hieronder
+    // triggert anders onze eigen listener en heropent de lijst — kiezen
+    // voelde daardoor als niets (de lijst bleef gewoon staan).
+    _suggestSuppressFocus = input;
+    input.value = mode === 'single' ? chosen.code
+        : mode === 'mapkey' ? `${parts.prefix}${chosen.code}:`
+        : `${parts.prefix}${chosen.code}`;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    _hideSuggest();
+    input.focus();
+    _suggestSuppressFocus = null;
+    _markSuggestState(input, kinds, mode);
+    if (onPick) onPick(chosen);
+}
+
+function _moveSuggest(step) {
+    if (!_suggestActive) return;
+    const drop = document.getElementById('suggestDropdown');
+    const n = _suggestActive.items.length;
+    _suggestActive.index = (_suggestActive.index + step + n) % n;
+    [...drop.children].forEach((el, i) => {
+        const active = i === _suggestActive.index;
+        el.className = `px-2 py-1 text-xs cursor-pointer ${active ? 'bg-blue-600 text-white' : 'text-slate-200 hover:bg-slate-700'}`;
+        el.querySelectorAll('span')[1]?.classList.toggle('text-blue-100', active);
+    });
+}
+
+function _wireSuggest(input, kinds, mode = 'single', onPick = null) {
+    if (!input || input.dataset.suggestWired) return;
+    input.dataset.suggestWired = '1';
+    input.setAttribute('autocomplete', 'off');
+    const show = () => _showSuggest(input, kinds, mode, onPick);
+    input.addEventListener('input', () => {
+        if (_suggestSuppressFocus === input) return;
+        show();
+        _markSuggestState(input, kinds, mode);
+    });
+    input.addEventListener('focus', () => {
+        if (_suggestSuppressFocus === input) return;
+        show();
+    });
+    // Vooraf de lijsten warm laden zodat de status ook bij een vooringevulde
+    // waarde meteen klopt.
+    Promise.all(kinds.map(_entityOptions)).then(() => _markSuggestState(input, kinds, mode));
+    // Alleen verbergen als de lijst nog bij DIT veld hoort: de blur van veld
+    // 1 plant een verberging die anders 150 ms later de net geopende lijst
+    // van veld 2 doodt (race bij tab/klik tussen twee suggestievelden).
+    input.addEventListener('blur', () => setTimeout(() => {
+        if (_suggestActive && _suggestActive.input === input) _hideSuggest();
+    }, 150));
+    input.addEventListener('keydown', (event) => {
+        if (!_suggestActive || _suggestActive.input !== input) return;
+        if (event.key === 'ArrowDown') { event.preventDefault(); _moveSuggest(1); }
+        else if (event.key === 'ArrowUp') { event.preventDefault(); _moveSuggest(-1); }
+        else if (event.key === 'Enter') { event.preventDefault(); _pickSuggest(_suggestActive.index); }
+        else if (event.key === 'Escape') { _hideSuggest(); }
+    });
+}
+
+// Welke gridkolommen entiteitscodes bevatten. Alles wat hier niet staat
+// blijft gewone vrije invoer.
+const _MASTER_COL_SUGGEST = {
+    'machine_combinations.machine_codes': ['machine', 'csv'],
+    'machine_combinations.throughput_factor_by_machine': ['machine', 'mapkey'],
+    'machine_combinations.function_group': ['function_group', 'single'],
+    'staffing_norms.function_group': ['function_group', 'single'],
+    'indirect_activities.function_group': ['function_group', 'single'],
+    'labor_rates.function_group': ['function_group', 'single'],
+    'machines.machine_group': ['machine_group', 'single'],
+};
+
+function _wireMasterSuggest(dataset) {
+    document.querySelectorAll('#masterDatasetBody tr[data-master-key]').forEach(row => {
+        row.querySelectorAll('[data-master-col]').forEach(cell => {
+            const conf = _MASTER_COL_SUGGEST[`${dataset}.${cell.dataset.masterCol}`];
+            const input = cell.querySelector('input.master-edit[type="text"]');
+            if (conf && input) {
+                input.dataset.suggestFree = '1';
+                _wireSuggest(input, [conf[0]], conf[1]);
+            }
+        });
+    });
+    document.querySelectorAll('#masterDatasetBody tr[data-master-field]').forEach(row => {
+        const input = row.querySelector('input.master-edit[type="text"]');
+        if (!input) return;
+        if (row.dataset.masterField === 'unlimited_capacity_machine') _wireSuggest(input, ['machine'], 'csv');
+        if (row.dataset.masterField === 'purchased_and_produced') _wireSuggest(input, ['material'], 'mapkey');
+    });
+}
+
+// ── Sleutelkiezer voor "+ rij" (vervangt prompt) ───────────────────────────
+// Paarsleutels (MACHINE|MATERIAAL) worden twee losse velden met elk hun
+// eigen keuzelijst; de gebruiker plakt nooit meer zelf een '|'-sleutel.
+const _MASTER_KEY_FIELDS = {
+    staffing_norms: { fields: [{ label: 'Machinegroep of machinecode',
+                                 suggest: ['machine_group', 'machine'] }] },
+    labor_rates: { fields: [{ label: 'Functiegroep ("default" = sitebreed tarief)',
+                              suggest: ['function_group'], free: true }] },
+    machine_combinations: { fields: [{ label: 'Combinatie-ID (nieuw, vrij te kiezen)',
+                                       suggest: [], free: true }] },
+    indirect_activities: { fields: [{ label: 'Activiteit-ID (nieuw, vrij te kiezen)',
+                                      suggest: [], free: true }] },
+    throughput_overrides: { join: '|', fields: [
+        { label: 'Machine', suggest: ['machine'] },
+        { label: 'Materiaal', suggest: ['material'] }] },
+    benchmark_throughput: { join: '|', fields: [
+        { label: 'Machine', suggest: ['machine'] },
+        { label: 'Materiaal', suggest: ['material'] }] },
+};
+
+let _keyPicker = null;   // { conf, callback }
+
+function openMasterKeyPicker(dataset, { title, hint, prefill = [], lockFirst = false } = {}, callback) {
+    const conf = _MASTER_KEY_FIELDS[dataset];
+    if (!conf) return false;
+    _keyPicker = { conf, callback };
+    document.getElementById('masterKeyTitle').textContent =
+        title || `Nieuwe rij — ${_MASTER_DATASETS[dataset]?.label || dataset}`;
+    document.getElementById('masterKeyHint').textContent =
+        hint || 'Typ een deel van de naam of code en kies uit de lijst.';
+    const host = document.getElementById('masterKeyFields');
+    host.innerHTML = conf.fields.map((f, i) => `
+        <label class="block text-xs text-slate-400">${escapeHtml(f.label)}
+            <input type="text" data-key-part="${i}" value="${escapeHtml(prefill[i] || '')}"
+                ${lockFirst && i === 0 ? 'readonly' : ''}
+                class="mt-1 w-full bg-slate-700 rounded px-2 py-1.5 text-sm text-slate-100 ${lockFirst && i === 0 ? 'opacity-60' : ''}">
+        </label>`).join('');
+    conf.fields.forEach((f, i) => {
+        const input = host.querySelector(`input[data-key-part="${i}"]`);
+        if (input) input.dataset.suggestFree = f.free ? '1' : '0';
+        if (f.suggest.length && !(lockFirst && i === 0)) {
+            _wireSuggest(input, f.suggest, 'single');
+        }
+    });
+    document.getElementById('masterKeyModal').style.display = 'flex';
+    const first = host.querySelector(`input[data-key-part="${lockFirst ? 1 : 0}"]`)
+        || host.querySelector('input');
+    setTimeout(() => first?.focus(), 50);
+    return true;
+}
+
+function closeMasterKeyPicker() {
+    document.getElementById('masterKeyModal').style.display = 'none';
+    _hideSuggest();
+    _keyPicker = null;
+}
+
+async function confirmMasterKeyPicker() {
+    if (!_keyPicker) return;
+    const { conf, callback } = _keyPicker;
+    const parts = conf.fields.map((f, i) =>
+        (document.querySelector(`#masterKeyFields input[data-key-part="${i}"]`)?.value || '').trim());
+    for (let i = 0; i < conf.fields.length; i++) {
+        if (!parts[i]) { notify(`Vul "${conf.fields[i].label}" in.`, 'error', 4000); return; }
+        // Suggestievelden zonder vrije invoer: de waarde moet een bekende code
+        // zijn, anders is de kiezer alleen een omweg naar dezelfde typfout.
+        const field = conf.fields[i];
+        if (field.suggest.length && !field.free) {
+            const pools = await Promise.all(field.suggest.map(_entityOptions));
+            if (!pools.flat().some(o => o.code === parts[i])) {
+                notify(`"${parts[i]}" staat niet in de lijst (${field.label}). Kies uit de suggesties.`,
+                       'error', 5000);
+                return;
+            }
+        }
+    }
+    const key = parts.join(conf.join || '');
+    closeMasterKeyPicker();
+    callback(key);
 }
 
 function _masterDatasetHtml(spec, value) {
@@ -5875,29 +6218,52 @@ function _masterDatasetHtml(spec, value) {
     }
     if (spec.kind === 'fte') {
         const v = value || {};
+        // Uitlegkolom RECHTS van elk veld (klantvraag 2026-08-06): wat doet
+        // dit getal in de berekening. De uitleg is cel 3 — de collect leest
+        // het invoerveld op cells[1] en mag daar niets van merken.
+        const uitlegCel = (tekst) => `<td class="p-2 text-xs text-slate-500" style="width:45%">${tekst}</td>`;
+        // Standaard ploegensysteem is een KEUZE uit de bestaande vensters,
+        // geen vrije tekst: een verschreven naam viel stil terug op de
+        // default van de motor.
+        const shiftNames = Object.keys(v.shift_hours || {});
+        const current = String(v.default_shift_name || '');
+        if (current && !shiftNames.includes(current)) shiftNames.unshift(current);
+        const shiftSelect = `<select class="master-edit bg-slate-700 rounded px-2 py-1">`
+            + shiftNames.map(n => `<option value="${escapeHtml(n)}" ${n === current ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')
+            + '</select>';
         let html = '<table class="w-full text-sm"><tbody>'
-            + `<tr data-master-field="fte_hours_per_year"><td class="p-2 text-slate-300" style="width:40%">FTE-uren per jaar</td><td class="p-2">${_masterInput('number', v.fte_hours_per_year)}</td></tr>`
-            + `<tr data-master-field="default_shift_name"><td class="p-2 text-slate-300">Standaard ploegensysteem</td><td class="p-2">${_masterInput('text', v.default_shift_name)}</td></tr>`;
+            + `<tr data-master-field="fte_hours_per_year"><td class="p-2 text-slate-300" style="width:26%">FTE-uren per jaar</td><td class="p-2">${_masterInput('number', v.fte_hours_per_year)}</td>${
+                uitlegCel('De deler van uren naar mensen: FTE = uren &times; operators &divide; (dit getal &divide; 12). Ook de eenheid waarin de loontarieven per FTE rekenen.')}</tr>`
+            + `<tr data-master-field="default_shift_name"><td class="p-2 text-slate-300">Standaard ploegensysteem</td><td class="p-2">${shiftSelect}</td>${
+                uitlegCel('Machines zonder eigen ploegensysteem krijgen dit venster als beschikbaarheid.')}</tr>`;
         for (const [shift, hours] of Object.entries(v.shift_hours || {})) {
-            html += `<tr data-master-shift="${escapeHtml(shift)}"><td class="p-2 text-slate-400 pl-6">Uren/maand — ${escapeHtml(shift)}</td><td class="p-2">${_masterInput('number', hours)}</td></tr>`;
+            html += `<tr data-master-shift="${escapeHtml(shift)}"><td class="p-2 text-slate-400 pl-6">Uren/maand — ${escapeHtml(shift)}</td><td class="p-2">${_masterInput('number', hours)}</td>${
+                uitlegCel('Beschikbaarheidsvenster (uren/maand) van machines met dit ploegensysteem: voedt Line 11 en is de noemer van de benutting in de werkbank.')}</tr>`;
         }
         // F2-CF-parameters. Alleen de bezettingsgraad rekent mee (hij schaalt
         // het FTE-AANBOD); de bruto→netto-velden documenteren hoe de klant aan
         // de FTE-uren per jaar komt en veranderen op zichzelf geen enkel getal.
         const paramLabels = {
-            utilization_rate: ['Bezettingsgraad', 'schaalt het beschikbare FTE-aanbod'],
-            gross_hours_per_year: ['Bruto uren per jaar', 'afleidingshulp'],
-            leave_hours_per_year: ['Verlofuren per jaar', 'afleidingshulp'],
-            adv_hours_per_year: ['ADV-uren per jaar', 'afleidingshulp'],
-            holiday_hours_per_year: ['Feestdaguren per jaar', 'afleidingshulp'],
-            illness_pct: ['Ziekteverzuim (fractie)', 'afleidingshulp'],
-            training_pct: ['Training (fractie)', 'afleidingshulp'],
+            utilization_rate: ['Bezettingsgraad', 'rekent mee',
+                '"Bij bezettingsdoel" in de werkbank = benodigde FTE &divide; deze graad: de marge tussen theoretisch nodig en werkelijk aan te stellen.'],
+            gross_hours_per_year: ['Bruto uren per jaar', 'afleidingshulp',
+                'Contracturen v&oacute;&oacute;r aftrek. Rekent zelf niet door; documenteert de opbouw van de FTE-uren (bruto &minus; verlof &minus; ADV &minus; feestdagen, dan &times; (1 &minus; ziekte &minus; training)). Doorwerking is gepland (fase 2 van het werkbankplan).'],
+            leave_hours_per_year: ['Verlofuren per jaar', 'afleidingshulp',
+                'Aftrekpost in de bruto&rarr;netto-afleiding hierboven; rekent zelf niet door.'],
+            adv_hours_per_year: ['ADV-uren per jaar', 'afleidingshulp',
+                'Aftrekpost in de bruto&rarr;netto-afleiding; rekent zelf niet door.'],
+            holiday_hours_per_year: ['Feestdaguren per jaar', 'afleidingshulp',
+                'Aftrekpost in de bruto&rarr;netto-afleiding; rekent zelf niet door.'],
+            illness_pct: ['Ziekteverzuim (fractie)', 'afleidingshulp',
+                'Percentage-aftrek in de afleiding (samen met training, additief); rekent zelf niet door.'],
+            training_pct: ['Training (fractie)', 'afleidingshulp',
+                'Percentage-aftrek in de afleiding (samen met ziekte, additief); rekent zelf niet door.'],
         };
         const params = v.params || {};
-        html += '<tr><td colspan="2" class="pt-4 pb-1 text-slate-400 text-xs uppercase tracking-wide">FTE-parameters</td></tr>';
-        for (const [field, [label, note]] of Object.entries(paramLabels)) {
+        html += '<tr><td colspan="3" class="pt-4 pb-1 text-slate-400 text-xs uppercase tracking-wide">FTE-parameters</td></tr>';
+        for (const [field, [label, note, uitleg]] of Object.entries(paramLabels)) {
             html += `<tr data-master-param="${field}"><td class="p-2 text-slate-300 pl-6">${label}<div class="text-xs text-slate-500">${note}</div></td>`
-                + `<td class="p-2">${_masterInput('number', params[field])}</td></tr>`;
+                + `<td class="p-2">${_masterInput('number', params[field])}</td>${uitlegCel(uitleg)}</tr>`;
         }
         return html + '</tbody></table>';
     }
@@ -5948,7 +6314,7 @@ function _masterDatasetHtml(spec, value) {
         : '';
     return addBar + `<table class="w-full text-xs"><thead><tr class="text-slate-400">
         <th class="text-left p-1">${spec.kind === 'list' ? 'Sleutel' : 'Materiaal/Code'}</th>
-        ${spec.cols.map(c => `<th class="text-right p-1">${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>`
+        ${spec.cols.map(c => `<th class="text-${c[2] === 'number' ? 'right' : 'left'} p-1">${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>`
         + rows.map(([key, item]) => _masterDatasetRowHtml(spec, key, item)).join('')
         + '</tbody></table>';
 }
@@ -5956,7 +6322,7 @@ function _masterDatasetHtml(spec, value) {
 function _masterDatasetRowHtml(spec, key, item) {
     return `<tr data-master-key="${escapeHtml(String(key))}">
         <td class="p-1 font-mono">${escapeHtml(String(key))}</td>
-        ${spec.cols.map(c => `<td class="p-1 text-right" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
+        ${spec.cols.map(c => `<td class="p-1 ${c[2] === 'number' ? 'text-right' : 'text-left'}" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
     </tr>`;
 }
 
@@ -5968,18 +6334,29 @@ function addMasterDatasetRow() {
     const dataset = _activeMasterDataset;
     const spec = _MASTER_DATASETS[dataset];
     if (!spec || !spec.addable) return;
+    // Sleutelkiezer met suggesties; alleen datasets zonder kiezerdefinitie
+    // vallen terug op de oude vrije prompt.
+    const picked = openMasterKeyPicker(dataset, {}, key => _insertMasterRow(dataset, key));
+    if (picked) return;
     const key = (prompt(`Sleutel voor de nieuwe rij (${spec.addable}):`) || '').trim();
-    if (!key) return;
+    if (key) _insertMasterRow(dataset, key);
+}
+
+function _insertMasterRow(dataset, key, extraDefaults = null) {
+    const spec = _MASTER_DATASETS[dataset];
     const body = document.getElementById('masterDatasetBody');
     const tbody = body && body.querySelector('tbody');
-    if (!tbody) return;
+    if (!spec || !tbody) return null;
     if (tbody.querySelector(`tr[data-master-key="${CSS.escape(key)}"]`)) {
         notify(`"${key}" staat al in de tabel.`, 'warning', 4000);
-        return;
+        return null;
     }
-    const defaults = spec.identity ? spec.identity(key) : {};
+    const defaults = { ...(spec.identity ? spec.identity(key) : {}), ...(extraDefaults || {}) };
     tbody.insertAdjacentHTML('beforeend', _masterDatasetRowHtml(spec, key, defaults));
-    tbody.lastElementChild.querySelector('.master-edit')?.focus();
+    const row = tbody.lastElementChild;
+    _wireMasterSuggest(dataset);
+    row.querySelector('.master-edit')?.focus();
+    return row;
 }
 
 function _masterCellValue(cell, kind) {
@@ -6218,6 +6595,8 @@ async function saveMasterDataset(dataset) {
     // Inline: dataset opnieuw laden zodat defaultValues en afgeleide velden
     // de opgeslagen stand tonen.
     openMasterDatasetModal(dataset);
+    // Suggestielijsten verversen: namen of codes kunnen net gewijzigd zijn.
+    _entityCache = {};
     notify(`Masterdata opgeslagen (versie ${data.version}). Herbereken sessies om de wijziging toe te passen.`, 'info', 4500);
 }
 
@@ -12350,26 +12729,20 @@ function adoptFteBenchmark(machine, value) {
     setTimeout(() => {
         openMasterDatasetModal('throughput_overrides');
         setTimeout(() => {
-            const spec = _MASTER_DATASETS['throughput_overrides'];
-            const key = (prompt('Override-sleutel (MACHINE|MATERIAAL) — vul het materiaalnummer aan:',
-                                `${machine}|`) || '').trim();
-            if (!key || key.endsWith('|')) {
-                if (key) notify('De sleutel mist het materiaalnummer; er is niets klaargezet.', 'warning', 5000);
-                return;
-            }
-            const body = document.getElementById('masterDatasetBody');
-            const tbody = body && body.querySelector('tbody');
-            if (!tbody) return;
-            if (tbody.querySelector(`tr[data-master-key="${CSS.escape(key)}"]`)) {
-                notify(`"${key}" bestaat al — pas die rij aan.`, 'warning', 5000);
-                return;
-            }
-            const defaults = { ...(spec.identity ? spec.identity(key) : {}),
-                               throughput_t_per_hour: value, source: 'MES overgenomen' };
-            tbody.insertAdjacentHTML('beforeend', _masterDatasetRowHtml(spec, key, defaults));
-            tbody.lastElementChild.scrollIntoView({ block: 'center' });
-            tbody.lastElementChild.querySelector('.master-edit')?.focus();
-            notify('MES-waarde staat klaar als beginwaarde — controleer en sla op.', 'info', 6000);
+            // Sleutelkiezer met de machine vastgezet en een keuzelijst voor
+            // het materiaal — het materiaalnummer wordt gekozen, niet getypt.
+            openMasterKeyPicker('throughput_overrides', {
+                title: `MES overnemen als beginwaarde — ${machine}`,
+                hint: `Kies het materiaal; de override krijgt ${_fmtNlNum(value, 1)} t/u met bronlabel "MES overgenomen".`,
+                prefill: [machine, ''], lockFirst: true,
+            }, key => {
+                const row = _insertMasterRow('throughput_overrides', key,
+                    { throughput_t_per_hour: value, source: 'MES overgenomen' });
+                if (row) {
+                    row.scrollIntoView({ block: 'center' });
+                    notify('MES-waarde staat klaar als beginwaarde — controleer en sla op.', 'info', 6000);
+                }
+            });
         }, 250);
     }, 150);
 }
@@ -14185,28 +14558,47 @@ function _cfgNavSticky() {
         // Tab-wissel terwijl de nav fixed stond: terug naar de normale
         // positie, anders zweeft hij bij terugkeer op een stale plek.
         if (nav.style.position === 'fixed') {
+            const spacer = document.getElementById('cfgNavSpacer');
+            if (spacer) spacer.style.display = 'none';
             nav.style.position = 'sticky';
             nav.style.left = '';
             nav.style.width = '200px';
             nav.style.top = '12px';
+            nav.style.background = '';
+            nav.style.borderRadius = '';
+            nav.style.padding = '';
         }
         return;
     }
     const parent = nav.parentElement;
     const parentTop = parent.getBoundingClientRect().top;
+    const spacer = document.getElementById('cfgNavSpacer');
     if (parentTop < 12) {
         if (nav.style.position !== 'fixed') {
             const r = nav.getBoundingClientRect();
+            // Eerst de plaatshouder aan: een fixed nav telt niet meer mee in
+            // de flex-rij, en zonder spacer schoof de inhoud naar links en
+            // zweefde het menu transparant over de tabellen heen.
+            if (spacer) spacer.style.display = 'block';
             nav.style.left = r.left + 'px';
             nav.style.width = r.width + 'px';
             nav.style.position = 'fixed';
             nav.style.top = '12px';
+            // Dekkende achtergrond voor het geval een brede kaart tóch onder
+            // het menu doorschuift (smal venster, horizontale overflow).
+            nav.style.background = 'rgba(15, 23, 42, 0.96)';
+            nav.style.borderRadius = '12px';
+            nav.style.padding = '8px';
         }
     } else if (nav.style.position === 'fixed') {
+        if (spacer) spacer.style.display = 'none';
         nav.style.position = 'sticky';
         nav.style.left = '';
         nav.style.width = '200px';
         nav.style.top = '12px';
+        nav.style.background = '';
+        nav.style.borderRadius = '';
+        nav.style.padding = '';
     }
 }
 
@@ -14215,7 +14607,12 @@ function _buildConfigNav() {
     document.getElementById('main-content')?.addEventListener('scroll', _cfgNavSticky, { passive: true });
     window.addEventListener('resize', () => {
         const nav = document.getElementById('cfgNav');
-        if (nav && nav.style.position === 'fixed') { nav.style.position = 'sticky'; nav.style.left = ''; nav.style.width = '200px'; }
+        if (nav && nav.style.position === 'fixed') {
+            const spacer = document.getElementById('cfgNavSpacer');
+            if (spacer) spacer.style.display = 'none';
+            nav.style.position = 'sticky'; nav.style.left = ''; nav.style.width = '200px';
+            nav.style.background = ''; nav.style.borderRadius = ''; nav.style.padding = '';
+        }
         _cfgNavSticky();
     });
     const host = document.getElementById('cfgNavLinks');
