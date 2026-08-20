@@ -400,6 +400,28 @@ def test_opslaan_met_ongeldig_getal_wordt_geweigerd(browser_page, golden_fixture
                   ["throughput_overrides", THROUGHPUT_KEY])
     page.wait_for_selector(f'#masterDatasetBody tr[data-master-key="{THROUGHPUT_KEY}"]',
                            timeout=15000)
+
+    # (b1) client-side: de LEGE doorzetcel is 'niet ingevuld' en wordt al vóór
+    # de server geweigerd — leeg werd vroeger stil 0 opgeslagen (dat zette
+    # elders zelfs de OEE-correctie uit). Er mag geen PATCH vertrekken.
+    posted = []
+    page.on("request", lambda req: posted.append(req.url)
+            if req.method == "PATCH" else None)
+    page.evaluate("() => saveMasterDataset('throughput_overrides')")
+    page.wait_for_function(
+        "() => (window.__alerts || []).some(a => a.includes('Ongeldige waarde'))",
+        timeout=15000)
+    assert [u for u in posted if "/api/master_data/" in u] == []
+
+    # (b2) server-side: een EXPLICIETE 0 t/u passeert de client en wordt door
+    # de server met 400 geweigerd.
+    page.evaluate(
+        """(key) => {
+            const cell = document.querySelector(
+                `#masterDatasetBody tr[data-master-key="${key}"] [data-master-col="throughput_t_per_hour"] .master-edit`);
+            cell.value = '0';
+            cell.dispatchEvent(new Event('input', { bubbles: true }));
+        }""", THROUGHPUT_KEY)
     response, payload = _save_dataset(page, "throughput_overrides", expect_ok=False)
     assert response.status == 400, payload
     assert "doorzet moet groter dan 0" in payload.get("error", ""), payload

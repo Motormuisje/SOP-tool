@@ -39,6 +39,21 @@ def test_heatmap_covers_window_lines_over_the_full_horizon(browser_page):
     assert report["rows"] == report["expectedRows"] > 0
     assert report["columns"] == report["horizon"]
     assert report["sampleCells"] == report["horizon"]
+
+    # De celwaarde volgt de MACHINEBELASTING (load_hours), niet de bemensing
+    # (hours): bij een actieve combinatie verhuist de bemensing naar de
+    # combinatieregel en zou de groep vals groen kleuren.
+    formule = page.evaluate(
+        """() => {
+            const line = _fteWindowLines()[0];
+            const p = _fteState.data.periods[0];
+            const hours = Number(((line.load_hours || line.hours) || {})[p] || 0);
+            const avail = Number((line.available_hours || {})[p] || 0);
+            const verwacht = avail > 0 ? Math.round(hours / avail * 100) + '%' : '—';
+            const cel = document.querySelector('#fteHeatmap tr:nth-child(2) td:nth-child(2)');
+            return { verwacht, getoond: cel.textContent.trim() };
+        }""")
+    assert formule["getoond"] == formule["verwacht"], formule
     assert page.js_errors == []
 
 
@@ -244,16 +259,15 @@ def test_comparison_shows_materiality_and_dirty_note(browser_page):
     assert verdict["exactInTitle"] is True
     assert verdict["realDelta"] is True, verdict
 
-    # De eerlijkheidsmelding volgt de dirty-toestand door het echte klikpad.
-    page.evaluate("() => { _fteState.dirtyNorms = { 'group:TEST': 2.0 }; }")
+    # Sinds de wat-als-werkstroom rekent de vergelijking de sessie-wat-als in
+    # álle varianten mee; het bijschrift zegt dat expliciet en de oude
+    # 'onopgeslagen normen'-melding bestaat niet meer.
     with page.expect_response(lambda r: "/api/fte/compare" in r.url):
         page.evaluate("() => compareFteCombinations()")
-    expect(page.locator("#fteCompareDirtyNote")).to_be_visible()
-
-    page.evaluate("() => { _fteState.dirtyNorms = {}; }")
-    with page.expect_response(lambda r: "/api/fte/compare" in r.url):
-        page.evaluate("() => compareFteCombinations()")
-    expect(page.locator("#fteCompareDirtyNote")).to_be_hidden()
+    expect(page.locator("#fteComparePanel")).to_be_visible()
+    bijschrift = page.locator("#fteComparePanel").inner_text()
+    assert "wat-als-normen" in bijschrift.lower(), bijschrift
+    assert page.evaluate("() => document.getElementById('fteCompareDirtyNote')") is None
     assert page.js_errors == []
 
 

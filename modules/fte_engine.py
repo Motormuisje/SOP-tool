@@ -296,6 +296,10 @@ class FteEngine:
                     description=(base.description if base is not None else ''))
                 self._overridden_norms.add(str(code))
             self.staffing_norms = merged
+        # Voor de zichtbaarheid van dode wat-als: codes die tijdens de
+        # berekening nooit worden geraadpleegd, krijgen een warning — net als
+        # een verdwenen combinatie. Gevuld in _norm_for, gemeld in calculate().
+        self._consumed_norms: Set[str] = set()
         self.labor_rates = getattr(data, 'labor_rates', None) or {}
         self.indirect_activities: Dict[str, IndirectActivity] = \
             getattr(data, 'indirect_activities', None) or {}
@@ -428,6 +432,7 @@ class FteEngine:
     def _norm_for(self, code: str, scope: str):
         norm = self.staffing_norms.get(code)
         if norm is not None and norm.scope == scope:
+            self._consumed_norms.add(code)
             return norm
         return None
 
@@ -592,6 +597,14 @@ class FteEngine:
 
         self._fill_totals(result)
         result.value_impact = self._value_impact(result)
+        # Dode wat-als zichtbaar maken: een override die tijdens de hele
+        # berekening nooit is geraadpleegd (code verdwenen uit masterdata of
+        # planning, of verkeerd bereik) rekent niet mee — dat mag nooit stil
+        # gebeuren, net als bij een verdwenen combinatie.
+        for code in sorted(self._overridden_norms - self._consumed_norms):
+            self.warnings.append(
+                f'Wat-als-norm voor "{code}" matcht geen enkele regel in deze '
+                f'berekening en telt dus niet mee.')
         result.warnings = list(dict.fromkeys(self.warnings))
         return result
 

@@ -1386,9 +1386,8 @@
                         <h3 class="font-semibold">Vergelijking combinatievarianten</h3>
                         <button onclick="document.getElementById('fteComparePanel').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-200">sluiten</button>
                     </div>
-                    <p id="fteCompareDirtyNote" class="hidden text-xs text-amber-300 mb-2">De vergelijking rekent met de <b>opgeslagen</b>
-                        bemensingsnormen &mdash; je hebt onopgeslagen wijzigingen die hier niet in meetellen.</p>
-                    <p class="text-xs text-slate-500 mb-2">Gelijk volume, gelijke periodes &mdash; alleen de bemensingsaanname verschilt.
+                    <p class="text-xs text-slate-500 mb-2">Gelijk volume, gelijke periodes; wat-als-normen van deze sessie tellen in
+                        &aacute;lle varianten mee &mdash; alleen de combinatieset verschilt.
                         Verschillen kleiner dan de materialiteitsdrempel staan als &asymp;&nbsp;0.</p>
                     <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteCompareHead"></thead><tbody id="fteCompareBody"></tbody></table></div>
                 </div>
@@ -3045,6 +3044,7 @@ async function addMissingToMaster(material) {
         });
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Toevoegen mislukt.', 'error', 5000); return; }
+        _entityCache = {};
         const verb = data.action === 'reactivated' ? 'geheractiveerd'
             : (data.action === 'already_active' ? 'stond al actief in de masterdata' : 'toegevoegd aan de masterdata');
         notify(`${material} ${verb}${data.version ? ' (versie ' + data.version + ')' : ''}. Vul prijs/inrichting aan in de masterdata-grid en herbereken om het door te voeren.`, 'info', 7000);
@@ -5596,6 +5596,7 @@ async function saveMasterProduct() {
         document.getElementById('masterProductModal').style.display = 'none';
         const verb = data.action === 'added' ? 'toegevoegd aan de masterdata'
             : (data.action === 'reactivated' ? 'geheractiveerd en bijgewerkt' : 'bijgewerkt in de masterdata');
+        _entityCache = {};
         notify(`${payload.material} ${verb} (versie ${data.version}); het masterwerkboek is bijgewerkt. Herbereken om het door te voeren.`, 'success', 7000);
         _renderMasterDataStatus(data);
         // Tabellen verversen: als de materialen-tabel open staat, herladen.
@@ -5706,6 +5707,7 @@ async function importMasterData(event) {
     formData.append('file', file);
     const data = await _postMasterImport(formData);
     if (data) {
+        _entityCache = {};
         _renderMasterDataStatus(data);
         notify(`Masterdata geïmporteerd (versie ${data.version}). De maandelijkse berekening heeft geen basis-.xlsm meer nodig.`, 'info', 4500);
     }
@@ -5960,6 +5962,10 @@ function _suggestToken(input, mode) {
 
 let _suggestActive = null;   // { input, kinds, mode, items, index, onPick }
 let _suggestSuppressFocus = null;   // veld dat na een keuze focus terugkrijgt
+// Scrollen verplaatst het veld maar niet de fixed-gepositioneerde lijst;
+// verbergen is eerlijker dan op stale coördinaten hangen. Capture: ook
+// scrollende containers (zoals masterDatasetBody) tellen mee.
+window.addEventListener('scroll', () => { if (_suggestActive) _hideSuggest(); }, true);
 
 // Gekozen-status op het veld zelf: groen = de waarde staat in de lijst,
 // amber = niet (alleen bij velden die een bekende code vereisen). Zonder dit
@@ -6007,12 +6013,16 @@ async function _showSuggest(input, kinds, mode, onPick) {
         .slice(0, 12);
     const drop = document.getElementById('suggestDropdown');
     if (!drop || !items.length) { _hideSuggest(); return; }
-    _suggestActive = { input, kinds, mode, items, index: 0, onPick };
+    // Een exact getypte code start als selectie: Enter verving anders een
+    // correct volgetypte code stil door de alfabetisch eerste suggestie.
+    const exact = items.findIndex(o => o.code.toLowerCase() === q);
+    _suggestActive = { input, kinds, mode, items, index: exact >= 0 ? exact : 0, onPick };
+    const activeIdx = _suggestActive.index;
     drop.innerHTML = items.map((o, i) => `
         <div data-suggest-index="${i}" onmousedown="event.preventDefault();_pickSuggest(${i})"
-             class="px-2 py-1 text-xs cursor-pointer ${i === 0 ? 'bg-blue-600 text-white' : 'text-slate-200 hover:bg-slate-700'}">
+             class="px-2 py-1 text-xs cursor-pointer ${i === activeIdx ? 'bg-blue-600 text-white' : 'text-slate-200 hover:bg-slate-700'}">
             <span class="font-mono">${escapeHtml(o.code)}</span>${
-                o.label ? ` <span class="${i === 0 ? 'text-blue-100' : 'text-slate-400'}">— ${escapeHtml(o.label)}</span>` : ''}
+                o.label ? ` <span class="${i === activeIdx ? 'text-blue-100' : 'text-slate-400'}">— ${escapeHtml(o.label)}</span>` : ''}
         </div>`).join('');
     drop.className = 'bg-slate-800 border border-slate-600 rounded-lg shadow-xl';
     const rect = input.getBoundingClientRect();
@@ -6351,7 +6361,17 @@ function addMasterDatasetRow() {
     if (!spec || !spec.addable) return;
     // Sleutelkiezer met suggesties; alleen datasets zonder kiezerdefinitie
     // vallen terug op de oude vrije prompt.
-    const picked = openMasterKeyPicker(dataset, {}, key => _insertMasterRow(dataset, key));
+    const picked = openMasterKeyPicker(dataset, {}, async key => {
+        let extra = null;
+        if (dataset === 'staffing_norms') {
+            // Scope volgt wat de gebruiker kóós: een machinecode als sleutel
+            // met scope 'group' matcht nooit (motor eist scope-gelijkheid) en
+            // was een stille no-op.
+            const machines = await _entityOptions('machine');
+            if (machines.some(o => o.code === key)) extra = { scope: 'machine' };
+        }
+        _insertMasterRow(dataset, key, extra);
+    });
     if (picked) return;
     const key = (prompt(`Sleutel voor de nieuwe rij (${spec.addable}):`) || '').trim();
     if (key) _insertMasterRow(dataset, key);
@@ -6380,7 +6400,11 @@ function _masterCellValue(cell, kind) {
     if (kind === 'bool') return input.checked;
     const raw = input.value.trim();
     if (kind === 'number') {
-        if (raw === '') return 0;
+        // Leeg is 'niet ingevuld' en wordt geweigerd (null → foutmelding bij
+        // de aanroeper). Leeg stil als 0 opslaan schakelde o.a. de
+        // OEE-correctie uit en zette groepsnormen op nul met bronlabel
+        // 'norm' — wil je echt nul, typ dan 0.
+        if (raw === '') return null;
         const parsed = parseLocaleNumber(raw);
         return Number.isNaN(parsed) ? null : parsed;
     }
@@ -6494,6 +6518,10 @@ function collectMasterDataset(dataset) {
             const field = row.dataset.masterParam;
             const parsed = _masterCellValue(row.cells[1], 'number');
             if (parsed === null) return { error: `Ongeldig getal bij ${field}.` };
+            if (field === 'utilization_rate' && (parsed <= 0 || parsed > 1)) {
+                return { error: 'Bezettingsgraad moet tussen 0 en 1 liggen (de motor '
+                                + 'zou een 0 stil als 1,0 behandelen).' };
+            }
             out.params[field] = parsed;
         }
         return { value: out };
@@ -7038,10 +7066,29 @@ async function openFinancialDeviation() {
     } catch (e) { body.innerHTML = `<div class="text-red-400 p-4">Fout: ${escapeHtml(String(e))}</div>`; }
 }
 
+// Metric-semantiek voor de afwijkingsmodal. 'stroom' telt op over de
+// periodes; 'stand' (balansposten) is een niveau — twaalf maandstanden
+// optellen gaf een voorraadwaarde ~12x te hoog; 'ratio' (ROCE) kent geen
+// totaal. Richting: bij kosten is mínder beter; balansposten zijn bewust
+// neutraal — 'lagere voorraad is beter' is een beleidsoordeel, geen rekenregel.
+const _FIN_METRIC_KIND = {
+    'FIXED ASSETS NET BOOK VALUE': 'stand', 'INVENTORY VALUE': 'stand',
+    'RECEIVABLES': 'stand', 'PAYABLES': 'stand',
+    'WORKING CAPITAL REQUIREMENTS': 'stand', 'CAPITAL INVESTMENT': 'stand',
+    'ROCE': 'ratio',
+};
+const _FIN_HIGHER_IS_BETTER = {
+    'TURNOVER': true, 'GROSS MARGIN': true, 'EBITDA': true, 'EBIT': true,
+    'OPERATIONAL CASHFLOW': true, 'ROCE': true,
+    'RAW MATERIAL COST': false, 'MACHINE COST': false, 'DIRECT FTE COST': false,
+    'INDIRECT FTE COST': false, 'OVERHEAD COST': false, 'COST OF GOODS': false,
+    'SG&A COST': false, 'D&A COST': false,
+};
+
 function _renderFinancialDeviation(data) {
     const periods = data.periods || [];
     const trendGlyph = t => t === 'up' ? '<span style="color:#4ade80">▲</span>' : t === 'down' ? '<span style="color:#f87171">▼</span>' : '<span class="text-slate-500">▬</span>';
-    const fmtNum = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    const fmtNum = v => _fmtNlNum(Number(v || 0), 0);
     // De cellen tonen het ECHTE getal, met de afwijking als tweede regel
     // wanneer die er is. De oude weergave toonde alleen delta's: zonder
     // bewerkingen was dat een muur van puntjes ("er staan geen getallen in"),
@@ -7051,28 +7098,47 @@ function _renderFinancialDeviation(data) {
         periods.some(p => Math.abs((m.delta || {})[p] || 0) > 0.5));
     let head = '<th class="text-left p-1 sticky left-0 bg-slate-800">Metric</th>'
         + '<th class="text-center p-1" title="Verloop van de metric over de horizon (laatste vs eerste maand) — niet de afwijking t.o.v. de baseline">Verloop</th>'
-        + '<th class="text-right p-1">Totaal</th><th class="text-right p-1">Δ totaal</th>'
+        + '<th class="text-right p-1" title="stromen: som · standen: gemiddelde · ratio: geen totaal">Totaal/gem.</th><th class="text-right p-1">Δ totaal</th>'
         + periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('');
     let rows = (data.metrics || []).map(m => {
-        const totalCurrent = periods.reduce((a, p) => a + ((m.current || {})[p] || 0), 0);
-        const totalDelta = periods.reduce((a, p) => a + (m.delta[p] || 0), 0);
-        const deltaCls = totalDelta > 0.5 ? 'text-emerald-400' : totalDelta < -0.5 ? 'text-red-400' : 'text-slate-500';
+        const kind = _FIN_METRIC_KIND[m.name] || 'stroom';
+        const better = _FIN_HIGHER_IS_BETTER[m.name];   // undefined = neutraal
+        const isPct = kind === 'ratio';
+        const show = v => isPct ? _fmtNlNum(Number(v || 0) * 100, 1) + '%' : fmtNum(v);
+        const deltaClass = d => better === undefined ? 'text-slate-400'
+            : (better ? d > 0 : d < 0) ? 'text-emerald-400' : 'text-red-400';
+        const sum = (map) => periods.reduce((a, p) => a + ((map || {})[p] || 0), 0);
+        // Totaal: stromen sommeren; standen middelen (twaalf maandstanden
+        // optellen is 12x te veel); een ratio heeft geen totaal.
+        const totals = kind === 'ratio' ? null
+            : kind === 'stand'
+                ? { cur: sum(m.current) / (periods.length || 1),
+                    delta: sum(m.delta) / (periods.length || 1), label: 'gem.' }
+                : { cur: sum(m.current), delta: sum(m.delta), label: 'som' };
+        const eps = isPct ? 0.0005 : 0.5;
         const drillable = m.source_line_type ? 'cursor-pointer hover:bg-slate-700/50' : '';
         const cells = periods.map(p => {
             const v = (m.current || {})[p] || 0;
             const d = m.delta[p] || 0;
-            const cls = d > 0.5 ? 'text-emerald-400' : d < -0.5 ? 'text-red-400' : '';
-            const deltaLine = Math.abs(d) > 0.5
-                ? `<span class="block text-[10px] ${cls}">${d > 0 ? '+' : ''}${fmtNum(d)}</span>` : '';
-            const title = `huidig ${fmtNum(v)} · baseline ${fmtNum((m.baseline || {})[p] || 0)}`;
-            return `<td class="text-right p-1 font-mono text-slate-300" title="${title}">${fmtNum(v)}${deltaLine}</td>`;
+            const deltaLine = m.has_baseline === false ? ''
+                : Math.abs(d) > eps
+                    ? `<span class="block text-[10px] ${deltaClass(d)}">${d > 0 ? '+' : ''}${show(d)}</span>` : '';
+            const title = m.has_baseline === false
+                ? `huidig ${show(v)} · geen baseline voor deze metric`
+                : `huidig ${show(v)} · baseline ${show((m.baseline || {})[p] || 0)}`;
+            return `<td class="text-right p-1 font-mono text-slate-300" title="${title}">${show(v)}${deltaLine}</td>`;
         }).join('');
-        const onclick = m.source_line_type ? `onclick="drillFinancialMetric('${escapeHtml(m.name)}')"` : '';
+        const totalDeltaCell = m.has_baseline === false || totals === null
+            ? '<td class="text-right p-1 font-mono text-slate-500">—</td>'
+            : `<td class="text-right p-1 font-mono ${Math.abs(totals.delta) > eps ? deltaClass(totals.delta) : 'text-slate-500'}">${
+                Math.abs(totals.delta) > eps ? (totals.delta > 0 ? '+' : '') + show(totals.delta) : '—'}</td>`;
+        const onclick = m.source_line_type ? `onclick="drillFinancialMetric('${_jsArg(m.name)}')"` : '';
         return `<tr class="${drillable}" ${onclick} title="${m.source_line_type ? 'Klik voor onderliggende regels' : 'Afgeleide metric'}">
             <td class="p-1 text-slate-300 sticky left-0 bg-slate-800">${escapeHtml(m.name)}${m.source_line_type ? ' <span class="text-[9px] text-indigo-400">▸</span>' : ''}</td>
             <td class="text-center p-1">${trendGlyph(m.trend)}</td>
-            <td class="text-right p-1 font-mono text-slate-200">${fmtNum(totalCurrent)}</td>
-            <td class="text-right p-1 font-mono ${deltaCls}">${Math.abs(totalDelta) > 0.5 ? (totalDelta > 0 ? '+' : '') + fmtNum(totalDelta) : '—'}</td>
+            <td class="text-right p-1 font-mono text-slate-200" title="${totals ? (kind === 'stand' ? 'gemiddelde stand over de horizon' : 'som over de horizon') : 'ratio — geen totaal'}">${
+                totals ? `${show(totals.cur)} <span class="text-[9px] text-slate-500">${totals.label}</span>` : '—'}</td>
+            ${totalDeltaCell}
             ${cells}</tr>`;
     }).join('');
     document.getElementById('finDevBody').innerHTML =
@@ -7085,6 +7151,13 @@ function _renderFinancialDeviation(data) {
         document.getElementById('finDevBody').insertAdjacentHTML('afterbegin',
             '<div class="text-slate-400 text-xs mb-2">Deze instantie heeft geen bewerkingen: huidig = baseline, dus alle afwijkingen zijn 0. '
             + 'De tabel toont de huidige waarden; zodra je iets bewerkt verschijnen de afwijkingen eronder.</div>');
+    }
+    // Wat-als-normen uit de werkbank rekenen in de FTE-laag, niet in deze
+    // consolidatie — zonder deze regel leek een actieve wat-als 'kwijt'.
+    if (Object.keys((typeof _fteState !== 'undefined' && _fteState.overrides) || {}).length) {
+        document.getElementById('finDevBody').insertAdjacentHTML('afterbegin',
+            '<div class="text-amber-300/80 text-xs mb-2">Er staan wat-als-normen aan in de FTE-werkbank; die tellen hier niet mee. '
+            + 'De loonkosten-doorwerking van de werkbank staat in het paneel "Doorwerking in de waardeketen" op het FTE-tabblad.</div>');
     }
 }
 
@@ -12434,6 +12507,11 @@ async function loadFteWorkbench({ force = false } = {}) {
         _fteState.active = data.active_combinations || [];
         _fteState.masterVersion = data.master_version ?? null;
         _fteState.overrides = data.norm_overrides || {};
+        for (const [code, spec] of Object.entries(_fteState.overrides)) {
+            if (spec && spec.was !== undefined && !(code in _fteState.overrideBase)) {
+                _fteState.overrideBase[code] = spec.was;
+            }
+        }
         _fteState.dirtyNorms = pending;
         document.getElementById('fteEmpty').classList.add('hidden');
         document.getElementById('fteBody').classList.remove('hidden');
@@ -12640,6 +12718,14 @@ function _renderFteAssumptions() {
 // onafhankelijk van het gekozen bereik — het signaal mag niet verdwijnen
 // doordat er is ingezoomd.
 
+// Waarde veilig als JS-stringliteral in een inline handler: eerst de
+// backslashes en aanhalingstekens escapen (JS-laag), daarna escapeHtml
+// (attribuutlaag). Zonder de JS-laag breekt een apostrof in een code of ID de
+// handler na HTML-decodering — het combinatiecommentaar waarschuwt hier al voor.
+function _jsArg(value) {
+    return escapeHtml(String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
 function _fteWindowLines() {
     return ((_fteState.data && _fteState.data.lines) || [])
         .filter(l => l.category !== 'machine' && !l.combination_id && l.counts_window !== false)
@@ -12662,13 +12748,17 @@ function _renderFteHeatmap() {
         `<th class="px-1 py-0.5 font-normal text-slate-500">${escapeHtml(p.slice(2).replace('-', '·'))}</th>`).join('') + '</tr>';
     const rows = lines.map(line => {
         const cells = periods.map(p => {
-            const hours = Number((line.hours || {})[p] || 0);
+            // load_hours = machinebelasting (blijft staan bij een combinatie);
+            // hours = bemensing (verhuist naar de combinatieregel). Benutting
+            // gaat over de machines — anders kleurt een groep groen zodra je
+            // operators combineert, terwijl de machines even hard draaien.
+            const hours = Number(((line.load_hours || line.hours) || {})[p] || 0);
             const avail = Number((line.available_hours || {})[p] || 0);
             const util = avail > 0 ? hours / avail : null;
             const label = util === null ? '—' : Math.round(util * 100) + '%';
             return `<td class="text-center cursor-pointer rounded px-1 py-0.5" style="${cellBg(util)}"
                 title="${escapeHtml(line.label)} · ${escapeHtml(p)}: ${label}"
-                onclick="focusFteGroup('${escapeHtml(line.category)}','${escapeHtml(line.key)}','${escapeHtml(p)}')">${label}</td>`;
+                onclick="focusFteGroup('${_jsArg(line.category)}','${_jsArg(line.key)}','${_jsArg(p)}')">${label}</td>`;
         }).join('');
         return `<tr><td class="pr-2 py-0.5 whitespace-nowrap text-slate-300">${escapeHtml(line.label)}</td>${cells}</tr>`;
     }).join('');
@@ -12847,7 +12937,10 @@ const _FTE_COLUMNS = [
 function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}) {
     const hours = _fteAgg(line.hours);
     const available = _fteAgg(line.available_hours);
-    const util = available > 0 ? hours / available : null;
+    // Benutting op machinebelasting (load_hours), niet op bemensing: zelfde
+    // keuze als de heatmap, de KPI-tegel en FteLine.utilization in de engine.
+    const loadHours = _fteAgg(line.load_hours || line.hours);
+    const util = available > 0 ? loadHours / available : null;
     const utilClass = util === null ? 'text-slate-500' : _fteUtilizationClass(util);
     const editable = line.category !== 'indirect' && !line.combination_id;
     const operators = _fteOperators(line);
@@ -12913,15 +13006,15 @@ function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}
         const parts = [mes, peer].filter(Boolean).join(' · ') || '—';
         const adopt = line.throughput_mes
             ? `<button class="text-blue-400 hover:text-blue-200" title="Neem de MES-meting over als beginwaarde (override met bronlabel)"
-                 onclick="adoptFteBenchmark('${escapeHtml(line.key)}', ${Number(line.throughput_mes)})">&#8594;</button>`
+                 onclick="adoptFteBenchmark('${_jsArg(line.key)}', ${Number(line.throughput_mes)})">&#8594;</button>`
             : '';
         throughputCell = `<span class="inline-flex items-center gap-1.5">${parts}
             <button class="text-slate-400 hover:text-slate-200" title="Eigen doorzet invullen (override in de masterdata)"
-                onclick="openFteThroughputGrid('${escapeHtml(line.key)}')">&#9998;</button>${adopt}</span>`;
+                onclick="openFteThroughputGrid('${_jsArg(line.key)}')">&#9998;</button>${adopt}</span>`;
     }
 
     const labelCell = chevron
-        ? `<button class="text-left w-full" onclick="toggleFteGroup('${escapeHtml(line.key)}')">${chevron}
+        ? `<button class="text-left w-full" onclick="toggleFteGroup('${_jsArg(line.key)}')">${chevron}
              ${escapeHtml(line.label)}<span class="text-slate-500"> · ${escapeHtml(line.key)}</span></button>${labelExtra}`
         : `${indent ? '<span class="inline-block w-4"></span>' : ''}${escapeHtml(line.label)}
            <span class="text-slate-500"> · ${escapeHtml(line.key)}</span>${labelExtra}`;
@@ -13017,18 +13110,47 @@ async function onFteNormEdit(input) {
     if (!(key in _fteState.overrideBase) && line.operators_source !== 'wat-als') {
         _fteState.overrideBase[key] = line.operators_per_hour;
     }
-    const base = _fteState.overrideBase[key];
-    const next = { ..._fteState.overrides };
-    if (base !== undefined && Math.abs(parsed - base) < 1e-9) {
-        delete next[key];
-    } else {
-        next[key] = { operators_per_hour: parsed,
-                      scope: category === 'machine' ? 'machine' : 'group' };
+    const base = _fteState.overrideBase[key]
+        ?? (_fteState.overrides[key] ? _fteState.overrides[key].was : undefined);
+    const send = () => {
+        const next = { ..._fteState.overrides };
+        if (base !== undefined && Math.abs(parsed - base) < 1e-9) {
+            delete next[key];
+        } else {
+            next[key] = { operators_per_hour: parsed,
+                          scope: category === 'machine' ? 'machine' : 'group',
+                          // 'was' reist mee zodat het paneel na een herlaad
+                          // nog steeds oud → nieuw kan tonen en terugtypen
+                          // van de oude waarde de override opruimt.
+                          ...(base !== undefined ? { was: base } : {}) };
+        }
+        return _postFteNormOverridesNow(next);
+    };
+    const chained = _fteNormPostChain.then(send, send);
+    _fteNormPostChain = chained.catch(() => {});
+    await chained;
+    // Eerlijkheid op machinerijen: die zijn detail (MAX-groepen) en tellen
+    // niet mee in de totalen — dat mag geen stille verrassing zijn.
+    if (category === 'machine' && _fteState.overrides[key]) {
+        notify('Machinerijen zijn detail achter hun groep: deze wat-als verandert de '
+               + 'totalen niet. Pas de groepsnorm aan om de totalen te bewegen.',
+               'info', 6000);
     }
-    await _postFteNormOverrides(next);
 }
 
-async function _postFteNormOverrides(overrides) {
+// POSTs serialiseren: twee snelle bewerkingen bouwden allebei op de oude
+// client-kopie en de tweede overschreef de eerste (lost update). De keten
+// zorgt dat elke POST pas vertrekt als de vorige is geland.
+let _fteNormPostChain = Promise.resolve();
+
+function _postFteNormOverrides(overrides) {
+    const send = () => _postFteNormOverridesNow(overrides);
+    const next = _fteNormPostChain.then(send, send);
+    _fteNormPostChain = next.catch(() => {});
+    return next;
+}
+
+async function _postFteNormOverridesNow(overrides) {
     try {
         const res = await fetch('/api/fte/norm_overrides', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -13075,7 +13197,7 @@ function _renderFteWhatIfTray() {
         return line ? line.label : code;
     };
     document.getElementById('fteWhatIfList').innerHTML = entries.map(([code, spec]) => {
-        const base = _fteState.overrideBase[code];
+        const base = _fteState.overrideBase[code] ?? (spec ? spec.was : undefined);
         const from = base === undefined ? '' : `${_fmtNlNum(base, 2)} → `;
         return `<div class="flex justify-between gap-3">
             <span class="text-slate-300 truncate">${escapeHtml(label(code))}</span>
@@ -13152,10 +13274,14 @@ async function saveFteNorms() {
         // bewerking een 409 tegen onze eigen wijziging.
         _fteState.masterVersion = (refreshed.ok ? data.master_version : undefined) ?? saved.version
                                   ?? _fteState.masterVersion;
-        // De normen staan nu in de masterdata; de sessie-wat-als is daarmee
-        // vastgelegd en gaat uit (zelfde getallen, bron weer 'norm').
-        _fteState.overrideBase = {};
-        await _postFteNormOverrides({});
+        // De normen staan nu in de masterdata; de sessie-wat-als gaat pas
+        // uit als de engine de nieuwe normen ook echt heeft (refresh ok).
+        // Anders zou de terugval de sessie op de OUDE normen zetten terwijl
+        // de masterdata al nieuw is — wat-als laten staan is dan eerlijker.
+        if (refreshed.ok && data.fte) {
+            _fteState.overrideBase = {};
+            await _postFteNormOverrides({});
+        }
         _fteState.dirtyNorms = {};
         renderFteWorkbench();
         // Alleen juichen als de werkbank ook echt bijgewerkt is; anders staat
@@ -13251,11 +13377,6 @@ async function compareFteCombinations() {
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Vergelijking mislukt.', 'error', 5000); return; }
         _renderFteComparison(data.variants || []);
-        // Eerlijkheidsmelding: de route rekent met engine.data — dus met de
-        // OPGESLAGEN normen. Getypte-maar-niet-opgeslagen normen tellen hier
-        // niet in mee, en dat moet er met zoveel woorden bij staan.
-        document.getElementById('fteCompareDirtyNote')?.classList.toggle(
-            'hidden', Object.keys(_fteState.dirtyNorms).length === 0);
         document.getElementById('fteComparePanel').classList.remove('hidden');
     } catch (err) {
         notify('Vergelijking mislukt: ' + err, 'error', 5000);

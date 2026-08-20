@@ -427,3 +427,43 @@ class TestWatAlsNormen:
                     if l.category == 'group' and l.key == 'ZZ_G1')
         assert line.operators_source == 'wat-als'
         assert line.operators_per_hour == pytest.approx(2.0)
+
+
+    def test_wat_als_overleeft_een_herstart(self, env, tmp_path):
+        """De spiegel van test_it_survives_a_restart die ONTBRAK: precies dit
+        gat liet de verificatieronde van 2026-08 een wat-als stil verdampen
+        bij herstart — cijfers terug op de masterdata-norm, leeg paneel,
+        geen melding."""
+        ovr = {'ZZ_G1': {'operators_per_hour': 2.0, 'scope': 'group', 'was': 1.0}}
+        env.sess['fte_norm_overrides'] = dict(ovr)
+        env.engine.fte_norm_overrides = dict(ovr)
+        store = tmp_path / 'sessions_store.json'
+
+        save_sessions_to_disk({'s1': env.sess}, 's1', store, lambda s, e: {})
+        loaded, _ = load_sessions_from_disk(store)
+
+        assert loaded['s1']['fte_norm_overrides'] == ovr
+        # En de koude herbouw leest hem ook echt (het hele punt van de keten).
+        overrides = get_session_config_overrides(loaded['s1'], {})
+        assert overrides['fte_norm_overrides'] == ovr
+
+    def test_oude_store_zonder_het_veld_laadt_als_leeg(self, tmp_path):
+        store = tmp_path / 'sessions_store.json'
+        store.write_text(json.dumps({
+            'active_session_id': 's1',
+            'sessions': {'s1': {'id': 's1', 'file_path': '', 'parameters': {}}},
+        }), encoding='utf-8')
+        loaded, _ = load_sessions_from_disk(store)
+        assert loaded['s1']['fte_norm_overrides'] == {}
+
+    def test_inerte_override_geeft_een_warning(self, env):
+        """Een override voor een code die nergens matcht mag niet stil zijn —
+        dezelfde regel als een verdwenen combinatie."""
+        env.engine.recalculate_fte([], norm_overrides={
+            'BESTAAT_NIET': {'operators_per_hour': 3.0, 'scope': 'group'}})
+        assert any('BESTAAT_NIET' in w and 'niet mee' in w
+                   for w in env.engine.fte_results.warnings), env.engine.fte_results.warnings
+        # En een override die WEL matcht, warnt niet.
+        env.engine.recalculate_fte([], norm_overrides={
+            'ZZ_G1': {'operators_per_hour': 2.0, 'scope': 'group'}})
+        assert not any('ZZ_G1' in w for w in env.engine.fte_results.warnings)

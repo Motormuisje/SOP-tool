@@ -81,6 +81,14 @@ def save_sessions_to_disk(
                 if engine is not None and getattr(engine, 'active_combinations', None) is not None
                 else (sess.get('active_combinations') or [])
             ),
+            # Wat-als-normen: zelfde regel. Zonder dit veld verdween een
+            # wat-als bij herstart stil — cijfers terug op de masterdata-norm,
+            # leeg paneel, geen melding (bevinding verificatieronde 2026-08).
+            'fte_norm_overrides': dict(
+                getattr(engine, 'fte_norm_overrides', None)
+                if engine is not None and getattr(engine, 'fte_norm_overrides', None) is not None
+                else (sess.get('fte_norm_overrides') or {})
+            ),
             # L4 starting stock (Dict[str, float]) and L7/L9/L11/L12 capacity
             # (Dict[str, Dict[str, Dict[str, float]]]) — both JSON-safe.
             'inventory_overrides': sess.get('inventory_overrides', {}),
@@ -184,6 +192,7 @@ def load_sessions_from_disk(sessions_store: Path) -> tuple[dict, str | None]:
                 'machine_overrides': data.get('machine_overrides', {}),
                 # [] voor storebestanden van vóór dit veld.
                 'active_combinations': data.get('active_combinations') or [],
+                'fte_norm_overrides': data.get('fte_norm_overrides') or {},
                 # Default to {} (not None) for sessions written before these
                 # fields existed — downstream code uses dict.setdefault and
                 # would crash on None.

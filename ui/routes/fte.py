@@ -205,7 +205,16 @@ def create_fte_blueprint(
             scope = str(spec.get('scope') or 'group')
             if scope not in ('group', 'machine'):
                 return jsonify({'error': f'Override "{code}": onbekend bereik "{scope}".'}), 400
-            overrides[str(code)] = {'operators_per_hour': operators, 'scope': scope}
+            entry = {'operators_per_hour': operators, 'scope': scope}
+            # 'was' is weergave-metadata (oud -> nieuw in het paneel, en het
+            # terugzetten-door-oude-waarde-typen na een paginaherlaad). De
+            # motor negeert het; ongeldig = gewoon weglaten, geen 400.
+            try:
+                if spec.get('was') is not None:
+                    entry['was'] = float(spec.get('was'))
+            except (TypeError, ValueError):
+                pass
+            overrides[str(code)] = entry
 
         engine.recalculate_fte(norm_overrides=overrides)
         sess['fte_norm_overrides'] = dict(overrides)

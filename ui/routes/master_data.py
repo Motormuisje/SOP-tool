@@ -479,6 +479,19 @@ def create_master_data_blueprint(
             return jsonify({'error': 'Kon het masterbestand niet inlezen. Controleer of alle vereiste sheets aanwezig zijn.'}), 400
 
         previous = master_store.get_current_master_record()
+        # Sitepoort, gespiegeld aan de masterwerkboek-import hieronder: een
+        # bestand van een andere site mag de sitestore niet integraal
+        # vervangen. De eerste import bepaalt de site; daarna is een
+        # afwijkende site een harde weigering.
+        if previous is not None:
+            current_site = str((((previous.get('master') or {}).get('config') or {})
+                                .get('site')) or '').strip()
+            incoming_site = str(((master.get('config') or {}).get('site')) or '').strip()
+            if current_site and incoming_site and incoming_site != current_site:
+                return jsonify({'error': f'Dit masterbestand is van site {incoming_site}, '
+                                         f'maar deze installatie draait op {current_site}. '
+                                         'Importeren zou de masterdata van de verkeerde site '
+                                         'installeren en is geweigerd.'}), 400
         confirm = str(request.form.get('confirm')
                       or (request.get_json(silent=True) or {}).get('confirm')
                       or '').lower() in ('true', '1', 'yes')
