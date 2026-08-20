@@ -263,7 +263,7 @@ def test_comparison_shows_materiality_and_dirty_note(browser_page):
     # álle varianten mee; het bijschrift zegt dat expliciet en de oude
     # 'onopgeslagen normen'-melding bestaat niet meer.
     with page.expect_response(lambda r: "/api/fte/compare" in r.url):
-        page.evaluate("() => compareFteCombinations()")
+        page.evaluate("() => { showTab('inzet'); compareFteCombinations(); }")
     expect(page.locator("#fteComparePanel")).to_be_visible()
     bijschrift = page.locator("#fteComparePanel").inner_text()
     assert "wat-als-normen" in bijschrift.lower(), bijschrift

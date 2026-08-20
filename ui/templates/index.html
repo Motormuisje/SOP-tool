@@ -835,6 +835,7 @@
             <button id="valuesTabBtn" class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('values',this)">Values Planning <span id="valuesTabBadge" class="tab-count-badge">0</span></button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('capacity',this)">Machines</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('fte',this)">Capaciteit &amp; FTE</button>
+            <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('inzet',this)">Machine-inzet</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('inventory',this)">Inventory</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" id="momTabBtn" onclick="showTab('mom',this)">MoM</button>
             <button class="tab-btn text-slate-400 px-4 py-2 rounded-lg whitespace-nowrap text-xs md:text-sm flex-shrink-0" onclick="showTab('log',this)">Log</button>
@@ -1370,26 +1371,12 @@
                         de MES-meting als startwaarde over.</p>
                 </div>
 
-                <div class="card rounded-xl p-6 mb-4">
-                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                        <h3 class="font-semibold">Machinecombinaties</h3>
-                        <button onclick="compareFteCombinations()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1.5">Vergelijk varianten</button>
-                    </div>
-                    <p class="text-xs text-slate-500 mb-3">Een combinatie deelt &eacute;&eacute;n operatorpool over meerdere machines. De
-                        definitie staat in de masterdata; welke combinaties aanstaan is een wat-als van deze instantie en gaat mee in
-                        het scenario.</p>
-                    <div id="fteCombinations" class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm"></div>
-                </div>
-
-                <div id="fteComparePanel" class="hidden card rounded-xl p-6 mb-4">
-                    <div class="flex items-center justify-between mb-3">
-                        <h3 class="font-semibold">Vergelijking combinatievarianten</h3>
-                        <button onclick="document.getElementById('fteComparePanel').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-200">sluiten</button>
-                    </div>
-                    <p class="text-xs text-slate-500 mb-2">Gelijk volume, gelijke periodes; wat-als-normen van deze sessie tellen in
-                        &aacute;lle varianten mee &mdash; alleen de combinatieset verschilt.
-                        Verschillen kleiner dan de materialiteitsdrempel staan als &asymp;&nbsp;0.</p>
-                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteCompareHead"></thead><tbody id="fteCompareBody"></tbody></table></div>
+                <!-- Combinatiebeheer is verhuisd naar het tabblad Machine-inzet
+                     (machines bij machines); hier alleen de stand + sprong. -->
+                <div class="card rounded-xl p-4 mb-4 flex items-center justify-between gap-3">
+                    <p class="text-xs text-slate-400"><span id="fteCombiSummary">0</span> machinecombinatie(s) actief in deze sessie
+                        &mdash; combinaties en omstellingen beheer je op het tabblad Machine-inzet.</p>
+                    <button onclick="showTab('inzet')" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1.5">Naar Machine-inzet</button>
                 </div>
 
                 <!-- Wat-als-paneel rechtsonder: de wijzigingen van het experiment,
@@ -1412,6 +1399,48 @@
                     <p class="text-xs text-slate-500 mb-3">De 20 consolidatieregels blijven ongewijzigd; hieronder staat dezelfde
                         rekenwijze met de loonkosten van de werkbank in plaats van de vaste directe-FTE-kost.</p>
                     <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteValueHead"></thead><tbody id="fteValueBody"></tbody></table></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Machine-inzet Tab (fase 1: omstellingen & combinaties;
+             de planning is de bron, dit tabblad leest) -->
+        <div id="inzet-tab" class="tab-content hidden">
+            <div id="inzetEmpty" class="card rounded-xl p-6 text-slate-400 text-sm">Run calculations</div>
+            <div id="inzetBody" class="hidden">
+                <div class="card rounded-xl p-6 mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
+                        <h3 class="font-semibold">Omstellingen per machine</h3>
+                        <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24"
+                              title="Fase 2 laat de omsteluren het beschikbaarheidsvenster verlagen; tot die tijd is dit overzicht informatief.">rekent nog niet door in de planning</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-3">Productiegetallen komen uit de planning (Line 07). Zonder volgordekennis is het
+                        aantal omstellingen een <b>schatting</b>: producten per machine per maand min &eacute;&eacute;n. Klik een celwaarde om het
+                        aantal te overschrijven (wat-als van deze sessie); de omsteltijd per machine bewerk je in de tweede kolom
+                        (masterdata, geldt overal).</p>
+                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="inzetHead"></thead><tbody id="inzetTableBody"></tbody></table></div>
+                </div>
+
+                <div class="card rounded-xl p-6 mb-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <h3 class="font-semibold">Machinecombinaties</h3>
+                        <button onclick="compareFteCombinations()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1.5">Vergelijk varianten</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-3">Een combinatie deelt &eacute;&eacute;n operatorpool over meerdere machines. De
+                        definitie staat in de masterdata; welke combinaties aanstaan is een wat-als van deze instantie en gaat mee in
+                        het scenario. Het FTE-effect zie je op het tabblad Capaciteit &amp; FTE.</p>
+                    <div id="fteCombinations" class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm"></div>
+                </div>
+
+                <div id="fteComparePanel" class="hidden card rounded-xl p-6 mb-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-semibold">Vergelijking combinatievarianten</h3>
+                        <button onclick="document.getElementById('fteComparePanel').classList.add('hidden')" class="text-xs text-slate-400 hover:text-slate-200">sluiten</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mb-2">Gelijk volume, gelijke periodes; wat-als-normen van deze sessie tellen in
+                        &aacute;lle varianten mee &mdash; alleen de combinatieset verschilt.
+                        Verschillen kleiner dan de materialiteitsdrempel staan als &asymp;&nbsp;0.</p>
+                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteCompareHead"></thead><tbody id="fteCompareBody"></tbody></table></div>
                 </div>
             </div>
         </div>
@@ -2460,6 +2489,7 @@ function showTab(name, btn) {
     if (name === 'values') _flushPendingRender('values');
     if (name === 'capacity') loadCapacityData();
     if (name === 'fte') loadFteWorkbench();
+    if (name === 'inzet') loadMachineInzet();
     if (name === 'inventory') loadInventoryData();
     if (name === 'config') loadConfigTab();
     if (name === 'mom') loadMoMTab();
@@ -5442,6 +5472,11 @@ const _MASTER_DATASETS = {
         cols: [['throughput_t_per_hour', 'Doorzet (t/u)', 'number'],
                ['source', 'Herkomst', 'text'],
                ['note', 'Notitie', 'text']] },
+    changeover_times: { label: 'Omsteltijden', kind: 'dict',
+        addable: 'Machinecode',
+        identity: key => ({ machine_code: key }),
+        cols: [['hours_per_changeover', 'Omsteltijd (u/omstelling)', 'number'],
+               ['description', 'Toelichting', 'text']] },
     benchmark_throughput: { label: 'Benchmark doorzet', kind: 'dict',
         addable: 'MACHINE|MATERIAAL',
         identity: key => _splitPairKey(key, 'machine_code', 'material_number'),
@@ -6143,6 +6178,7 @@ const _MASTER_KEY_FIELDS = {
     throughput_overrides: { join: '|', fields: [
         { label: 'Machine', suggest: ['machine'] },
         { label: 'Materiaal', suggest: ['material'] }] },
+    changeover_times: { fields: [{ label: 'Machine', suggest: ['machine'] }] },
     benchmark_throughput: { join: '|', fields: [
         { label: 'Machine', suggest: ['machine'] },
         { label: 'Materiaal', suggest: ['material'] }] },
@@ -7824,7 +7860,7 @@ const _copyHoldDelayMs = 420;
 const _UI_PREFS_KEY = 'sop_ui_prefs_v1';
 // 'fte' hoort hier ook in: zonder dat wordt het tabblad Capaciteit & FTE bij
 // het herladen als onbekend beschouwd en valt de gebruiker terug op dashboard.
-const _VALID_TABS = new Set(['dashboard', 'planning', 'values', 'capacity', 'fte', 'inventory', 'mom', 'log', 'config']);
+const _VALID_TABS = new Set(['dashboard', 'planning', 'values', 'capacity', 'fte', 'inzet', 'inventory', 'mom', 'log', 'config']);
 let _activeTabName = 'dashboard';
 let _planFilterRaf = null;
 
@@ -12654,6 +12690,8 @@ function renderFteWorkbench() {
     _renderFteHeatmap();
     _renderFteWbChart();
     _renderFteCombinations();
+    const combiSummary = document.getElementById('fteCombiSummary');
+    if (combiSummary) combiSummary.textContent = _fteState.active.length;
     _renderFteTable(showMachines);
     _renderFteValuePanel();
     _updateFteDirtyBar();
@@ -13430,6 +13468,181 @@ function _renderFteComparison(variants) {
         const badge = i === 0 ? ' <span class="text-xs text-slate-400">(referentie)</span>' : '';
         return `<tr class="${i === 0 ? 'font-semibold' : ''}"><td class="p-1">${escapeHtml(v.label)}${badge}</td>${cells}</tr>`;
     }).join('');
+}
+
+// ── Machine-inzet (fase 1): omstellingen per machine ───────────────────────
+let _inzetState = { data: null, overrides: {} };
+
+async function loadMachineInzet() {
+    // De combinatiekaart op dit tabblad deelt _fteState met de werkbank.
+    loadFteWorkbench();
+    try {
+        const res = await fetch('/api/machine_inzet');
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            document.getElementById('inzetEmpty').textContent = data.error || 'Machine-inzet niet beschikbaar.';
+            document.getElementById('inzetEmpty').classList.remove('hidden');
+            document.getElementById('inzetBody').classList.add('hidden');
+            return;
+        }
+        _inzetState.data = data;
+        _inzetState.overrides = data.overrides || {};
+        document.getElementById('inzetEmpty').classList.add('hidden');
+        document.getElementById('inzetBody').classList.remove('hidden');
+        renderMachineInzet();
+    } catch (err) {
+        notify('Machine-inzet laden mislukt: ' + err, 'error', 5000);
+    }
+}
+
+// Aantal omstellingen voor machine × periode: sessie-wat-als wint van de
+// schatting (producten − 1, ondergrens 0).
+function _inzetCount(machine, period) {
+    const info = _inzetState.data.machines[machine].per_period[period] || {};
+    const est = Math.max(0, (info.products || []).length - 1);
+    const override = _inzetState.overrides[`${machine}|${period}`];
+    return { est, count: override !== undefined ? override : est,
+             isOverride: override !== undefined, info };
+}
+
+function renderMachineInzet() {
+    const data = _inzetState.data;
+    if (!data) return;
+    const periods = data.periods || [];
+    document.getElementById('inzetHead').innerHTML = '<tr>'
+        + '<th class="text-left p-1">Machine</th>'
+        + '<th class="text-right p-1" title="Uren per omstelling — masterdata, geldt overal">Omsteltijd (u)</th>'
+        + periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('') + '</tr>';
+
+    // Alleen machines die in de horizon draaien of een omsteltijd hebben:
+    // een lege regel zegt niets en de lange lijst was juist de klacht.
+    const codes = Object.keys(data.machines).filter(code => {
+        const per = data.machines[code].per_period || {};
+        return periods.some(p => (per[p] || {}).hours > 0)
+            || data.changeover_times[code] !== undefined;
+    }).sort();
+
+    document.getElementById('inzetTableBody').innerHTML = codes.map(code => {
+        const machine = data.machines[code];
+        const changeover = data.changeover_times[code];
+        const hoursPer = changeover ? changeover.hours_per_changeover : null;
+        const cells = periods.map(p => {
+            const { est, count, isOverride, info } = _inzetCount(code, p);
+            const uren = hoursPer !== null ? count * hoursPer : null;
+            const pct = uren !== null && info.window > 0 ? uren / info.window * 100 : null;
+            const label = uren !== null
+                ? `${count} &times; = ${_fmtNlNum(uren, 1)} u`
+                : `${count} omst.`;
+            const title = `${(info.products || []).length} product(en): ${(info.products || []).join(', ') || '—'}`
+                + ` · ${_fmtNlNum(info.hours || 0, 0)} draaiuren`
+                + (isOverride ? ` · wat-als (schatting was ${est})` : ' · schatting: producten − 1')
+                + (pct !== null ? ` · ${_fmtNlNum(pct, 1)}% van het venster` : '')
+                + (hoursPer === null ? ' · geen omsteltijd ingevuld' : '');
+            const cls = isOverride ? 'text-amber-300' : (count > 0 ? 'text-slate-200' : 'text-slate-500');
+            return `<td class="p-1 text-right"><button class="font-mono ${cls} hover:underline decoration-dotted"
+                title="${escapeHtml(title)}" onclick="editInzetCell('${_jsArg(code)}','${_jsArg(p)}', this)">${label}</button></td>`;
+        }).join('');
+        return `<tr data-inzet-row="${escapeHtml(code)}">
+            <td class="p-1">${escapeHtml(machine.name || code)}<span class="text-slate-500"> · ${escapeHtml(code)}</span></td>
+            <td class="p-1 text-right"><input type="text" value="${hoursPer !== null ? escapeHtml(String(hoursPer)) : ''}"
+                placeholder="—" data-inzet-machine="${escapeHtml(code)}"
+                class="bg-slate-700 rounded px-2 py-0.5 w-16 text-right"
+                onchange="saveChangeoverTime(this)"></td>
+            ${cells}</tr>`;
+    }).join('') || `<tr><td colspan="${periods.length + 2}" class="text-center p-4 text-slate-500">Geen machines met draaiuren in deze horizon</td></tr>`;
+}
+
+// Omsteltijd = masterdata: write-through via de gewone PATCH met
+// versiecontrole, zelfde stramien als de bemensingsnormen.
+async function saveChangeoverTime(input) {
+    const machine = input.dataset.inzetMachine;
+    const raw = String(input.value).trim();
+    const parsed = raw === '' ? null : parseLocaleNumber(raw);
+    if (raw !== '' && (Number.isNaN(parsed) || parsed < 0)) {
+        notify('Omsteltijd moet een getal ≥ 0 zijn.', 'error', 4000);
+        renderMachineInzet();
+        return;
+    }
+    try {
+        const res = await fetch('/api/master_data/changeover_times');
+        const current = await res.json();
+        if (!res.ok || current.error) { notify(current.error || 'Omsteltijden laden mislukt.', 'error', 5000); return; }
+        const value = { ...(current.value || {}) };
+        const huidig = value[machine] ? Number(value[machine].hours_per_changeover) : null;
+        // Idempotent: dezelfde waarde opnieuw opslaan (of een al-afwezige regel
+        // opnieuw leegmaken) doet niets — dat smoort ook het dubbelvuur van
+        // change-events rond een re-render, dat anders een net verwijderde
+        // regel stil terugzette.
+        if ((raw === '' && huidig === null)
+            || (raw !== '' && huidig !== null && Math.abs(huidig - parsed) < 1e-9)) {
+            renderMachineInzet();
+            return;
+        }
+        if (raw === '') {
+            delete value[machine];   // leeg veld = omsteltijd verwijderen
+        } else {
+            value[machine] = { ...(value[machine] || {}), machine_code: machine,
+                               hours_per_changeover: parsed };
+        }
+        const patch = await fetch('/api/master_data/changeover_times', {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value, base_version: current.version }),
+        });
+        const saved = await patch.json();
+        if (patch.status === 409) {
+            notify('Iemand anders heeft de omsteltijden gewijzigd; de tabel is ververst — probeer opnieuw.', 'warning', 7000);
+            loadMachineInzet();
+            return;
+        }
+        if (!patch.ok || saved.error) { notify(saved.error || 'Opslaan mislukt.', 'error', 6000); return; }
+        _entityCache = {};
+        notify(`Omsteltijd opgeslagen (masterdata versie ${saved.version}).`, 'success', 3500);
+        loadMachineInzet();
+    } catch (err) {
+        notify('Opslaan mislukt: ' + err, 'error', 6000);
+    }
+}
+
+// Aantal-omstellingen-cel: klik → invoer → Enter. Terug naar de schatting
+// door de schatting zelf te typen (dan vervalt de override).
+function editInzetCell(machine, period, button) {
+    const { est, count } = _inzetCount(machine, period);
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = String(count);
+    input.className = 'bg-slate-700 rounded px-1 py-0.5 w-12 text-right';
+    button.replaceWith(input);
+    input.focus();
+    input.select();
+    let klaar = false;
+    const commit = async () => {
+        if (klaar) return; klaar = true;
+        const parsed = parseLocaleNumber(String(input.value).trim());
+        if (Number.isNaN(parsed) || parsed < 0 || parsed !== Math.round(parsed)) {
+            notify('Aantal omstellingen is een geheel getal ≥ 0.', 'error', 4000);
+            renderMachineInzet();
+            return;
+        }
+        const next = { ..._inzetState.overrides };
+        const key = `${machine}|${period}`;
+        if (parsed === est) delete next[key];
+        else next[key] = parsed;
+        try {
+            const res = await fetch('/api/machine_inzet/overrides', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ overrides: next }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) { notify(data.error || 'Wat-als opslaan mislukt.', 'error', 5000); }
+            else { _inzetState.overrides = data.overrides || {}; }
+        } catch (err) { notify('Wat-als opslaan mislukt: ' + err, 'error', 5000); }
+        renderMachineInzet();
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { klaar = true; renderMachineInzet(); }
+    });
+    input.addEventListener('blur', () => commit());
 }
 
 async function loadInventoryData() {

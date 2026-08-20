@@ -478,3 +478,18 @@ class BenchmarkThroughput:
     peer_t_per_hour: float = 0.0
     mes_oee: float = 0.0
     note: str = ''
+
+
+@dataclass
+class ChangeoverTime:
+    """Omsteltijd per machine (uren per omstelling) — masterdata.
+
+    Fase 1 van het machine-inzet-tabblad: op machineniveau, bewust simpel.
+    Het sleutelformaat laat een latere verfijning naar productovergangen
+    (MACHINE|VAN|NAAR met de machinewaarde als terugval) toe zonder migratie.
+    Rekent in fase 1 nergens in mee: het tabblad toont de geschatte
+    omsteluren; doorwerking op het beschikbaarheidsvenster is fase 2.
+    """
+    machine_code: str
+    hours_per_changeover: float = 0.0
+    description: str = ''

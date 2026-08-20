@@ -281,6 +281,17 @@ def _check_benchmark(key, item, _known):
     return None, []
 
 
+def _check_changeover(key, item, known_machines):
+    error = _nonneg_error(key, item, 'hours_per_changeover', 'omsteltijd')
+    if error:
+        return error, []
+    warnings = []
+    if known_machines and str(key) not in known_machines:
+        warnings.append(f'Omsteltijd "{key}": machinecode is onbekend in de '
+                        f'masterdata; de regel telt pas mee zodra die machine bestaat.')
+    return None, warnings
+
+
 _FTE_DATASET_CHECKS = {
     'staffing_norms': _check_staffing_norm,
     'labor_rates': _check_labor_rate,
@@ -288,6 +299,7 @@ _FTE_DATASET_CHECKS = {
     'indirect_activities': _check_indirect_activity,
     'throughput_overrides': _check_throughput_override,
     'benchmark_throughput': _check_benchmark,
+    'changeover_times': _check_changeover,
 }
 
 

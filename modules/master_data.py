@@ -24,6 +24,7 @@ from typing import Dict, Optional
 from modules.models import (
     FTE_PARAM_DEFAULTS,
     BenchmarkThroughput,
+    ChangeoverTime,
     IndirectActivity,
     LaborRate,
     Machine,
@@ -54,6 +55,7 @@ FTE_DATASETS = {
     'indirect_activities': IndirectActivity,
     'throughput_overrides': ThroughputOverride,
     'benchmark_throughput': BenchmarkThroughput,
+    'changeover_times': ChangeoverTime,
 }
 
 # master dict key -> DataLoader attribute holding the hydrated objects.
@@ -70,6 +72,7 @@ FTE_DATASET_KEY_FIELDS = {
     'machine_combinations': ('combination_id',),
     'indirect_activities': ('activity_id',),
     'throughput_overrides': ('machine_code', 'material_number'),
+    'changeover_times': ('machine_code',),
     'benchmark_throughput': ('machine_code', 'material_number'),
 }
 

@@ -132,6 +132,9 @@ def test_combination_panel_explains_itself_when_empty(browser_page):
     page = browser_page
     _open_workbench(page)
 
+    # De combinatiekaart woont sinds fase 1 van Machine-inzet op dat tabblad.
+    page.evaluate("() => showTab('inzet')")
+    page.wait_for_function("() => !!_fteState.data", timeout=30000)
     text = page.locator("#fteCombinations").inner_text()
     assert "Masterdata-tabellen" in text or "combinatie" in text.lower()
 
@@ -141,7 +144,7 @@ def test_compare_renders_a_variant_table(browser_page):
     _open_workbench(page)
 
     with page.expect_response(lambda r: "/api/fte/compare" in r.url and r.ok):
-        page.evaluate("() => compareFteCombinations()")
+        page.evaluate("() => { showTab('inzet'); compareFteCombinations(); }")
     expect(page.locator("#fteComparePanel")).to_be_visible()
     page.wait_for_function(
         "() => document.querySelectorAll('#fteCompareBody tr').length > 0", timeout=15000)
@@ -268,6 +271,10 @@ def test_wat_als_werkstroom_direct_resultaat_en_terugzetten(browser_page):
     patched = []
     page.on("request", lambda req: patched.append(req.url)
             if req.method == "PATCH" else None)
+    # Diagnose bij falen: welke body ging er werkelijk over de lijn.
+    bodies = []
+    page.on("request", lambda req: bodies.append(req.post_data)
+            if "/api/fte/norm_overrides" in req.url else None)
     with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
         page.evaluate(
             """([val]) => {
@@ -278,8 +285,14 @@ def test_wat_als_werkstroom_direct_resultaat_en_terugzetten(browser_page):
 
     # Eerst het contract: de override staat geregistreerd met precies de
     # getypte waarde — een faal hier verklaart zichzelf.
+    # Wachten op de toestand, niet op het netwerk: de expect_response landt
+    # vóór de .json()-continuatie die de state zet (zelfde les als bij de
+    # machine-inzet-cellen).
+    page.wait_for_function(
+        "(key) => Object.keys(_fteState.overrides).length === 1 && key in _fteState.overrides",
+        arg=target["key"], timeout=15000)
     registered = page.evaluate("() => _fteState.overrides")
-    assert list(registered) == [target["key"]], registered
+    assert list(registered) == [target["key"]], (registered, bodies, doubled, target)
     assert registered[target["key"]]["operators_per_hour"] == pytest.approx(float(doubled)), registered
 
     # Meteen resultaat: de regel rekent verdubbeld, bron is 'wat-als', en er

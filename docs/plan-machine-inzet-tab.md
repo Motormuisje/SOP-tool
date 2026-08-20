@@ -64,7 +64,7 @@ ernaast, browsertests op de cascade.
 
 | Fase | Inhoud | Raakt rekenkern |
 |---|---|---|
-| 1 | Dataset `changeover_times` + tabblad (telling uit de planning, invulpaden, combinaties verhuizen) | nee |
+| 1 | **GEBOUWD (2026-08-09).** Dataset `changeover_times` + tabblad (telling uit de planning, invulpaden, combinaties verhuisd; omsteltijden lezen live uit de store omdat de motor ze nog niet consumeert; aantal-overrides zijn weergave-wat-als met persistentie via sessiestore/scenario's/duplicaat en Reset-semantiek — bewust nog niet door config_overrides/snapshot/replay, dat volgt zodra fase 2 ze laat meerekenen) | nee |
 | 2 | Omsteluren verlagen het venster in de capaciteitsmotor (samen met de doorzet-override-doorwerking: één golden-hernieuwing voor beide) | ja |
 | 3 | Volgorde-wat-als per machine ("machinevolgorde wisselen"): echte telling i.p.v. schatting, volgorde-afhankelijke tijden | ja (sessiestate door de zes syncpunten) |
 

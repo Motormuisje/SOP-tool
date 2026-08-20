@@ -39,6 +39,7 @@ from ui.routes.comments import create_comments_blueprint
 from ui.routes.config import create_config_blueprint
 from ui.routes.financials import create_financials_blueprint
 from ui.routes.fte import create_fte_blueprint
+from ui.routes.machine_inzet import create_machine_inzet_blueprint
 from ui.routes.edit_state import create_edit_state_blueprint
 from ui.routes.edits import create_edits_blueprint
 from ui.routes.exports import create_exports_blueprint
@@ -440,6 +441,10 @@ app.register_blueprint(create_financials_blueprint(
     lambda: _get_active(),
 ))
 app.register_blueprint(create_fte_blueprint(
+    lambda: _get_active(),
+    _save_sessions_to_disk,
+))
+app.register_blueprint(create_machine_inzet_blueprint(
     lambda: _get_active(),
     _save_sessions_to_disk,
 ))

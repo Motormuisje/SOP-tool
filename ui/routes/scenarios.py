@@ -192,6 +192,7 @@ def create_scenarios_blueprint(
                 active_session.get('machine_overrides') or {})),
             'active_combinations': list(active_session.get('active_combinations') or []),
             'fte_norm_overrides': dict(active_session.get('fte_norm_overrides') or {}),
+            'changeover_overrides': dict(active_session.get('changeover_overrides') or {}),
             # Dynamic products active at save time (Fase 3). Loading does NOT
             # restore them (that would be a structural rebuild) — the list is
             # recorded so load can WARN when it no longer matches the session.
@@ -277,6 +278,7 @@ def create_scenarios_blueprint(
                 'ploeguren) blijven actief en kunnen afwijken van het scenario.')
         sess['active_combinations'] = list(sc.get('active_combinations') or [])
         sess['fte_norm_overrides'] = dict(sc.get('fte_norm_overrides') or {})
+        sess['changeover_overrides'] = dict(sc.get('changeover_overrides') or {})
 
         sc_vp = sc.get('valuation_params')
         restored_vp = None

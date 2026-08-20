@@ -62,6 +62,8 @@ SHEET_INDIRECT = 'Indirecte activiteiten'
 SHEET_THROUGHPUT = 'Doorzet-overrides'
 SHEET_BENCHMARK = 'Benchmark doorzet'
 
+SHEET_CHANGEOVER = 'Omsteltijden'
+
 FTE_DATASET_SHEETS = {
     'staffing_norms': SHEET_STAFFING,
     'labor_rates': SHEET_LABOR_RATES,
@@ -69,6 +71,7 @@ FTE_DATASET_SHEETS = {
     'indirect_activities': SHEET_INDIRECT,
     'throughput_overrides': SHEET_THROUGHPUT,
     'benchmark_throughput': SHEET_BENCHMARK,
+    'changeover_times': SHEET_CHANGEOVER,
 }
 
 _KEY_COLUMN = 'sleutel'
