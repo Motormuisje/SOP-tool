@@ -206,8 +206,17 @@ def _edit_aux_via_ui(page, line_type, material, new_value):
 
 
 def _reset_value_edits(base_url):
-    response = requests.post(
-        base_url + "/api/reset_value_planning_edits", timeout=300)
+    # Een voorganger kan net van sessie gewisseld zijn; de engine warmt dan
+    # nog op en het endpoint zegt 400 'No calculations run'. Kort wachten is
+    # eerlijker dan omvallen op andermans timing.
+    import time
+    deadline = time.monotonic() + 90
+    while True:
+        response = requests.post(
+            base_url + "/api/reset_value_planning_edits", timeout=300)
+        if response.status_code != 400 or time.monotonic() > deadline:
+            break
+        time.sleep(0.5)
     response.raise_for_status()
     assert response.json().get("success") is True
 

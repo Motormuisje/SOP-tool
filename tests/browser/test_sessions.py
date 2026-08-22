@@ -318,6 +318,25 @@ def test_save_instance_reopens_with_pending_edit(browser_page):
     assert switch_payload.get("active_session_id") == saved_session_id
 
     page.wait_for_load_state("networkidle")
+
+    # Achterlaten zoals aangetroffen: dit is de laatste test van de module en
+    # de gedeelde server stond hiervoor op de oorspronkelijke sessie. Zonder
+    # terugwissel erfde elke module die NA deze draait (omgekeerde volgorde!)
+    # een vers herstelde instantie waarvan de engine nog opwarmde — het
+    # eerstvolgende reset-endpoint gaf dan 'No calculations run' (400).
+    import time as _time
+    import requests as _rq
+    base_url = page.server["base_url"]
+    terug = _rq.post(base_url + "/api/sessions/switch",
+                     json={"session_id": page.server["session_id"]}, timeout=300)
+    assert terug.ok and terug.json().get("success"), terug.text
+    deadline = _time.monotonic() + 120
+    while _time.monotonic() < deadline:
+        if _rq.get(base_url + "/api/results", timeout=30).status_code == 200:
+            break
+        _time.sleep(0.5)
+    else:
+        raise AssertionError("oorspronkelijke sessie werd niet warm na terugwissel")
     expect(page.locator("#busyOverlay")).to_have_class("hidden", timeout=120000)
     expect(page.locator("#planBody tr[data-material][data-linetype]").first).to_be_visible(timeout=120000)
     expect(page.locator("#editSummaryBar")).to_be_visible(timeout=60000)
