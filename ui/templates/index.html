@@ -12017,7 +12017,20 @@ function renderOeeTable() {
         });
     });
 
+    // Open-staat overleeft de re-render: elke herlaad (edit, undo, reset)
+    // bouwde de groepen opnieuw INGEKLAPT op, ook als de gebruiker ze net
+    // had geopend — irritant in de app en een bron van test-flakes. De
+    // groepssleutels zijn positioneel (oeeGrp0, ...) en de groepering is
+    // deterministisch, dus onthouden-en-heropenen is exact.
+    const openGroups = new Set();
+    body.querySelectorAll('tr[data-oee-grp]').forEach(tr => {
+        if (tr.style.display !== 'none') openGroups.add(tr.dataset.oeeGrp);
+    });
     body.innerHTML = html || '<tr><td class="text-center p-4 text-slate-500">Geen machines</td></tr>';
+    openGroups.forEach(key => {
+        const eerste = body.querySelector(`[data-oee-grp="${key}"]`);
+        if (eerste && eerste.style.display === 'none') toggleOeeGroup(key);
+    });
     _setupMachineEditDelegation();
 }
 
