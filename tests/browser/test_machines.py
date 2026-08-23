@@ -34,18 +34,21 @@ def _open_machines_tab(page):
 def _expand_first_machine_group(page):
     first_group = page.locator("#oeeTableBody tr.cursor-pointer").first
     expect(first_group).to_be_visible(timeout=60000)
-    try:
-        first_group.click(timeout=60000)
-    except PlaywrightTimeoutError:
-        page.evaluate(
-            """() => {
-                const row = document.querySelector('#oeeTableBody tr.cursor-pointer');
-                const arrow = row ? row.querySelector('span[id$="-arrow"]') : null;
-                if (arrow && typeof window.toggleOeeGroup === 'function') {
-                    window.toggleOeeGroup(arrow.id.replace(/-arrow$/, ''));
-                }
-            }"""
-        )
+    # Openen is een TOGGLE: een klik die samenviel met een re-render kon
+    # netto gesloten eindigen (rij bestond wel, bleef display:none). Daarom
+    # idempotent sturen: alleen togglen zolang de kinderen verborgen zijn,
+    # tot de eerste machinerij aantoonbaar zichtbaar is.
+    page.wait_for_function(
+        """() => {
+            const row = document.querySelector('#oeeTableBody tr.cursor-pointer');
+            const arrow = row ? row.querySelector('span[id$="-arrow"]') : null;
+            if (!arrow || typeof window.toggleOeeGroup !== 'function') return false;
+            const key = arrow.id.replace(/-arrow$/, '');
+            const child = document.querySelector(`[data-oee-grp="${key}"]`);
+            if (!child) return false;
+            if (child.style.display === 'none') window.toggleOeeGroup(key);
+            return child.style.display !== 'none';
+        }""", timeout=60000)
     first_machine = page.locator("#oeeTableBody tr[data-oee-grp]").first
     expect(first_machine).to_be_visible()
     return first_machine

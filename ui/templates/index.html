@@ -5997,10 +5997,20 @@ function _suggestToken(input, mode) {
 
 let _suggestActive = null;   // { input, kinds, mode, items, index, onPick }
 let _suggestSuppressFocus = null;   // veld dat na een keuze focus terugkrijgt
-// Scrollen verplaatst het veld maar niet de fixed-gepositioneerde lijst;
-// verbergen is eerlijker dan op stale coördinaten hangen. Capture: ook
-// scrollende containers (zoals masterDatasetBody) tellen mee.
-window.addEventListener('scroll', () => { if (_suggestActive) _hideSuggest(); }, true);
+// Scrollen verplaatst het veld; de lijst schuift MEE in plaats van te
+// verdwijnen. Verbergen leek eerlijk maar doodde de nét geopende lijst
+// tijdens de smooth scroll waarmee het config-grid zich in beeld brengt —
+// timing-afhankelijk en dus precies het soort toeval dat we uitbannen.
+// Capture: ook scrollende containers (zoals masterDatasetBody) tellen mee.
+window.addEventListener('scroll', () => {
+    if (!_suggestActive) return;
+    const drop = document.getElementById('suggestDropdown');
+    if (!drop || drop.classList.contains('hidden')) return;
+    const rect = _suggestActive.input.getBoundingClientRect();
+    if (!rect.width && !rect.height) { _hideSuggest(); return; }   // veld is weg
+    drop.style.left = `${Math.min(rect.left, window.innerWidth - 320)}px`;
+    drop.style.top = `${rect.bottom + 2}px`;
+}, true);
 
 // Gekozen-status op het veld zelf: groen = de waarde staat in de lijst,
 // amber = niet (alleen bij velden die een bekende code vereisen). Zonder dit
