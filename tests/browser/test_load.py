@@ -47,7 +47,12 @@ def _advance_walkthrough_until(page, title: str, *, max_steps: int = 25):
 def test_page_loads_without_errors(browser_page):
     page = browser_page
 
-    expect(page).to_have_title("Apex Rainier Planning")
+    # De titel is site-specifiek (hoofdrepo: "Apex Rainier Planning";
+    # Winterswijk: "Apex Rainier — Winterswijk (NLK1)", enz.). Het merk is
+    # het invariant — zo draait deze suite ook als overlay tegen de
+    # site-uitgaven zonder hun bewuste identiteit fout te rekenen.
+    import re
+    expect(page).to_have_title(re.compile(r"^Apex Rainier"))
     expect(page.locator("#busyOverlay")).to_have_class("hidden")
     _open_planning_tab(page)
     expect(page.locator("#planTableScroll")).to_be_visible()
