@@ -1153,7 +1153,7 @@ class DataLoader:
         """Detect BOM cycles in the workbook (BUGS.md M6) and warn loudly.
 
         Detection only: existing level assignment and cascade numbers are
-        deliberately left untouched (docs/ontwikkelhandleiding.md rule 4 — no silent numeric
+        deliberately left untouched (projectregel — no silent numeric
         changes). The UI/overlay layer uses ``bom_cycle_warnings`` to inform
         users and to distinguish pre-existing cycles from overlay-introduced
         ones (which are hard errors in modules/product_overlay.py).
