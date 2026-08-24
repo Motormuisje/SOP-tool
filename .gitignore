@@ -62,5 +62,6 @@ dist/
 *.spec
 !packaging/*.spec
 
+# ===== Scratch =====
 scratch/
 tmp/
