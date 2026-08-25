@@ -55,6 +55,11 @@ fixtures en foutzoeken staan in [docs/browsertests.md](docs/browsertests.md).
   invarianten), classificatie van afwijkingen, vrijgaveregels en formulieren.
 - `tools/ground_truth_diff.py` — vergelijkt een app-export cel-voor-cel met het
   klant-Excel en schrijft een rapport (Markdown/xlsx).
+- [docs/validatie/Apex_Rainier_Validation_Test_Workbook.xlsx](docs/validatie/Apex_Rainier_Validation_Test_Workbook.xlsx)
+  — het Engelse test- en validatiewerkboek voor de handmatige rondes (ground-truth-
+  register, rekenketens, invarianten, gespiegelde edits, functionele checks A–I,
+  engine-checks, human tests A–K, afwijkingenregister, sign-off). Bevat geen
+  klantdata; bewust opgenomen ondanks de `*.xlsx`-regel in `.gitignore`.
 - [docs/checklist-manuele-validatie.md](docs/checklist-manuele-validatie.md),
   [docs/validatielijst-fase3.md](docs/validatielijst-fase3.md),
   [docs/browsertests.md](docs/browsertests.md) — functionele checklist,
