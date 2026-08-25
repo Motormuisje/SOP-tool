@@ -45,6 +45,26 @@ De browsertests starten een echte app en bedienen die met Chromium. Ze hebben
 een echt werkboek nodig via `SOP_GOLDEN_FIXTURE` en skippen zonder. Installatie,
 fixtures en foutzoeken staan in [docs/browsertests.md](docs/browsertests.md).
 
+## Documentatie
+
+- [docs/validatie/Apex_Rainier_Validation_Test_Workbook.xlsx](docs/validatie/Apex_Rainier_Validation_Test_Workbook.xlsx)
+  — het Engelse test- en validatiewerkboek voor de handmatige rondes (ground-truth-
+  register, rekenketens, invarianten, gespiegelde edits, functionele checks A–I,
+  engine-checks, human tests A–K, afwijkingenregister, sign-off). Bevat geen
+  klantdata; bewust opgenomen ondanks de `*.xlsx`-regel in `.gitignore`.
+- [docs/checklist-manuele-validatie.md](docs/checklist-manuele-validatie.md),
+  [docs/validatielijst-fase3.md](docs/validatielijst-fase3.md),
+  [docs/browsertests.md](docs/browsertests.md) — functionele checklist,
+  geautomatiseerde dekking en browsertests.
+
+## Site-uitgaven
+
+Winterswijk (NLK1) en Ankerkade (NLU1) zijn aparte repo's (`SOP-WSK`,
+`SOP-ANK`) met dezelfde rekenkern; alleen huisstijl, poort en data-map
+verschillen. Deze branch (`sites`) is hun gemeenschappelijke basis: wijzig
+rekenlogica op `main`, cherry-pick naar `sites` en synchroniseer daarna naar
+de sites.
+
 ## Bewust niet meegenomen
 
 - testbestanden en test-output

@@ -343,6 +343,7 @@ class ValuePlanningEngine:
             VBA: some use SUM for aux2, some use AVERAGE.
             INVENTORY VALUE uses AVERAGE(StartForecast-1 : EndForecast) — includes starting stock!
             """
+            starting = 0.0
             if include_starting_in_avg:
                 # VBA: AVERAGE(PlanningStartForecastClmn - 1 : PlanningEndForecastClmn)
                 # This includes the Starting Stock column, so it's 13 values not 12
@@ -365,7 +366,10 @@ class ValuePlanningEngine:
                 line_type=LineType.CONSOLIDATION.value,
                 aux_column=aux,
                 aux_2_column=str(a2) if a2 != 0 else None,
-                starting_stock=0.0, values=dict(vals))
+                # The VBA writes the opening inventory value into the
+                # Starting-stock column of the INVENTORY VALUE row (it is the
+                # col-1 term of the first-period cashflow); other rows stay 0.
+                starting_stock=starting, values=dict(vals))
 
         def const(val):
             return {p: val for p in P}

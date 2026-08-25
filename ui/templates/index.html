@@ -1375,7 +1375,12 @@
           <div class="flex gap-6 max-w-5xl mx-auto items-start">
 
             <!-- C4a: sticky submenu met scrollspy + zoekveld. Links worden
-                 gegenereerd uit de [data-cfg-section]-kaarten hiernaast. -->
+                 gegenereerd uit de [data-cfg-section]-kaarten hiernaast.
+                 De spacer houdt de 200px van de nav vast wanneer die bij
+                 scrollen position:fixed wordt: zonder plaatshouder verlaat de
+                 nav de flex-rij, schuift de inhoud naar links en zweeft het
+                 menu transparant over de tabellen heen. -->
+            <div id="cfgNavSpacer" style="display:none;width:200px;flex:none"></div>
             <nav id="cfgNav" style="position:sticky;top:12px;width:200px;flex:none">
               <input id="cfgSearch" type="text" placeholder="&#128269; Zoeken in instellingen..."
                      oninput="filterConfigSections(this.value)"
@@ -5686,9 +5691,18 @@ function _masterDatasetHtml(spec, value) {
     }
     if (spec.kind === 'fte') {
         const v = value || {};
+        // Standaard ploegensysteem is een KEUZE uit de bestaande vensters,
+        // geen vrije tekst: een verschreven naam viel stil terug op de
+        // default van de motor.
+        const shiftNames = Object.keys(v.shift_hours || {});
+        const current = String(v.default_shift_name || '');
+        if (current && !shiftNames.includes(current)) shiftNames.unshift(current);
+        const shiftSelect = `<select class="master-edit bg-slate-700 rounded px-2 py-1">`
+            + shiftNames.map(n => `<option value="${escapeHtml(n)}" ${n === current ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')
+            + '</select>';
         let html = '<table class="w-full text-sm"><tbody>'
             + `<tr data-master-field="fte_hours_per_year"><td class="p-2 text-slate-300" style="width:40%">FTE-uren per jaar</td><td class="p-2">${_masterInput('number', v.fte_hours_per_year)}</td></tr>`
-            + `<tr data-master-field="default_shift_name"><td class="p-2 text-slate-300">Standaard ploegensysteem</td><td class="p-2">${_masterInput('text', v.default_shift_name)}</td></tr>`;
+            + `<tr data-master-field="default_shift_name"><td class="p-2 text-slate-300">Standaard ploegensysteem</td><td class="p-2">${shiftSelect}</td></tr>`;
         for (const [shift, hours] of Object.entries(v.shift_hours || {})) {
             html += `<tr data-master-shift="${escapeHtml(shift)}"><td class="p-2 text-slate-400 pl-6">Uren/maand — ${escapeHtml(shift)}</td><td class="p-2">${_masterInput('number', hours)}</td></tr>`;
         }
@@ -5736,10 +5750,10 @@ function _masterDatasetHtml(spec, value) {
         : Object.entries(value || {});
     return `<table class="w-full text-xs"><thead><tr class="text-slate-400">
         <th class="text-left p-1">${spec.kind === 'list' ? 'Sleutel' : 'Materiaal/Code'}</th>
-        ${spec.cols.map(c => `<th class="text-right p-1">${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>`
+        ${spec.cols.map(c => `<th class="text-${c[2] === 'number' ? 'right' : 'left'} p-1">${escapeHtml(c[1])}</th>`).join('')}</tr></thead><tbody>`
         + rows.map(([key, item]) => `<tr data-master-key="${escapeHtml(String(key))}">
             <td class="p-1 font-mono">${escapeHtml(String(key))}</td>
-            ${spec.cols.map(c => `<td class="p-1 text-right" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
+            ${spec.cols.map(c => `<td class="p-1 ${c[2] === 'number' ? 'text-right' : 'text-left'}" data-master-col="${c[0]}">${_masterInput(c[2], (item || {})[c[0]])}</td>`).join('')}
         </tr>`).join('')
         + '</tbody></table>';
 }
@@ -7069,9 +7083,7 @@ let _vpMaterialScope = null;
 let _isSwitchingSession = false;
 const _copyHoldDelayMs = 420;
 const _UI_PREFS_KEY = 'sop_ui_prefs_v1';
-// 'fte' hoort hier ook in: zonder dat wordt het tabblad Capaciteit & FTE bij
-// het herladen als onbekend beschouwd en valt de gebruiker terug op dashboard.
-const _VALID_TABS = new Set(['dashboard', 'planning', 'values', 'capacity', 'fte', 'inventory', 'mom', 'log', 'config']);
+const _VALID_TABS = new Set(['dashboard', 'planning', 'values', 'capacity', 'inventory', 'mom', 'log', 'config']);
 let _activeTabName = 'dashboard';
 let _planFilterRaf = null;
 
@@ -13075,28 +13087,47 @@ function _cfgNavSticky() {
         // Tab-wissel terwijl de nav fixed stond: terug naar de normale
         // positie, anders zweeft hij bij terugkeer op een stale plek.
         if (nav.style.position === 'fixed') {
+            const spacer = document.getElementById('cfgNavSpacer');
+            if (spacer) spacer.style.display = 'none';
             nav.style.position = 'sticky';
             nav.style.left = '';
             nav.style.width = '200px';
             nav.style.top = '12px';
+            nav.style.background = '';
+            nav.style.borderRadius = '';
+            nav.style.padding = '';
         }
         return;
     }
     const parent = nav.parentElement;
     const parentTop = parent.getBoundingClientRect().top;
+    const spacer = document.getElementById('cfgNavSpacer');
     if (parentTop < 12) {
         if (nav.style.position !== 'fixed') {
             const r = nav.getBoundingClientRect();
+            // Eerst de plaatshouder aan: een fixed nav telt niet meer mee in
+            // de flex-rij, en zonder spacer schoof de inhoud naar links en
+            // zweefde het menu transparant over de tabellen heen.
+            if (spacer) spacer.style.display = 'block';
             nav.style.left = r.left + 'px';
             nav.style.width = r.width + 'px';
             nav.style.position = 'fixed';
             nav.style.top = '12px';
+            // Dekkende achtergrond voor het geval een brede kaart tóch onder
+            // het menu doorschuift (smal venster, horizontale overflow).
+            nav.style.background = 'rgba(15, 23, 42, 0.96)';
+            nav.style.borderRadius = '12px';
+            nav.style.padding = '8px';
         }
     } else if (nav.style.position === 'fixed') {
+        if (spacer) spacer.style.display = 'none';
         nav.style.position = 'sticky';
         nav.style.left = '';
         nav.style.width = '200px';
         nav.style.top = '12px';
+        nav.style.background = '';
+        nav.style.borderRadius = '';
+        nav.style.padding = '';
     }
 }
 
@@ -13105,7 +13136,12 @@ function _buildConfigNav() {
     document.getElementById('main-content')?.addEventListener('scroll', _cfgNavSticky, { passive: true });
     window.addEventListener('resize', () => {
         const nav = document.getElementById('cfgNav');
-        if (nav && nav.style.position === 'fixed') { nav.style.position = 'sticky'; nav.style.left = ''; nav.style.width = '200px'; }
+        if (nav && nav.style.position === 'fixed') {
+            const spacer = document.getElementById('cfgNavSpacer');
+            if (spacer) spacer.style.display = 'none';
+            nav.style.position = 'sticky'; nav.style.left = ''; nav.style.width = '200px';
+            nav.style.background = ''; nav.style.borderRadius = ''; nav.style.padding = '';
+        }
         _cfgNavSticky();
     });
     const host = document.getElementById('cfgNavLinks');

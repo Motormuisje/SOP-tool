@@ -31,7 +31,6 @@ ALLE_TABBLADEN = [
     "planning",
     "values",
     "capacity",
-    "fte",
     "inventory",
     "mom",
     "log",

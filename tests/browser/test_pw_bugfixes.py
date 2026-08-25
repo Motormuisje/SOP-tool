@@ -8,12 +8,10 @@ vastgelegd gedrag gaat en niet om dekking-om-de-dekking.
    inkoopdataset. `get_lead_time()` viel dan terug op de VBA-default 1 — die
    alleen bedoeld is voor materialen die NIET in de Purchase sheet staan — en
    het inkoopplan schoof stil een maand op.
-2. `_VALID_TABS` miste 'fte', waardoor het tabblad Capaciteit & FTE na een
-   herlaad terugviel op het dashboard.
-3. `setBusy(false)` annuleerde de geplande requestAnimationFrame van
+2. `setBusy(false)` annuleerde de geplande requestAnimationFrame van
    `setBusy(true)` niet. Bij een taak binnen één frame zette die de klasse
    'show' terug en ving een onzichtbare overlay ~140 ms lang alle kliks op.
-4. Gevonden tijdens het schrijven van test 1: `_masterCellValue` geeft
+3. Gevonden tijdens het schrijven van test 1: `_masterCellValue` geeft
    `undefined` terug als het invoerveld ontbreekt, maar de inkooptak
    controleerde alleen op `=== null`. Dat werd verderop `Math.round(undefined)`
    = NaN, kwam als JSON-null bij de server aan en blies daar `int(None)` op.
@@ -231,44 +229,6 @@ def test_unreadable_lead_cell_is_refused_client_side(own_server, page, golden_fi
     assert not any("NoneType" in a for a in alerts), (
         "de invoerfout bereikte de server alsnog", alerts)
     assert _purchase(base_url)["lead_times"] == before["lead_times"]
-
-
-def test_fte_tab_is_remembered_across_a_reload(browser_page):
-    """Het tabblad Capaciteit & FTE moet na een herlaad open blijven.
-
-    _VALID_TABS miste 'fte', waardoor _restoreUiPrefs() de opgeslagen waarde als
-    onbekend verwierp en de gebruiker op het dashboard belandde — elke herlaad
-    opnieuw, midden in het werk.
-    """
-    page = browser_page
-    expect(page.locator("#busyOverlay")).to_have_class("hidden", timeout=60000)
-
-    page.evaluate("() => showTab('fte')")
-    expect(page.locator("#fte-tab")).to_be_visible(timeout=60000)
-    assert page.evaluate("() => _activeTabName") == "fte"
-    assert page.evaluate("() => _VALID_TABS.has('fte')") is True
-
-    stored = page.evaluate(
-        """() => {
-            for (const k of Object.keys(localStorage)) {
-                try {
-                    const v = JSON.parse(localStorage.getItem(k));
-                    if (v && typeof v === 'object' && 'activeTab' in v) return v.activeTab;
-                } catch (e) { /* geen json */ }
-            }
-            return null;
-        }"""
-    )
-    assert stored == "fte", f"activeTab is niet als 'fte' bewaard: {stored!r}"
-
-    page.reload(wait_until="networkidle")
-    expect(page.locator("#fte-tab")).to_be_visible(timeout=60000)
-    assert page.evaluate("() => _activeTabName") == "fte"
-    expect(page.locator("#dashboard-tab")).to_be_hidden()
-
-    # Opruimen: terug naar dashboard, anders start de volgende test op fte.
-    page.evaluate("() => showTab('dashboard')")
-    assert page.js_errors == []
 
 
 def test_busy_overlay_does_not_reappear_after_a_sub_frame_task(browser_page):
