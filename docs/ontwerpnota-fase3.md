@@ -26,7 +26,7 @@ Fase 1 en 2 waren additief: elke feature staat naast de rekenkern en de
 *golden parity* (zelfde input → byte-voor-byte zelfde output) bleef intact.
 Dynamische producten raken juist de **kern**: de gedeelde datastructuren en de
 stuklijst-volgorde waar forecast → productie/inkoop → capaciteit → financieel →
-export allemaal op steunen. docs/ontwikkelhandleiding.md waarschuwt expliciet: het doorbreken van
+export allemaal op steunen. De ontwikkelhandleiding waarschuwt expliciet: het doorbreken van
 de BOM-topologische volgorde geeft geen foutmelding maar **stil verkeerde
 getallen**. Daarom eerst ontwerp + PoC, dan pas bouw.
 

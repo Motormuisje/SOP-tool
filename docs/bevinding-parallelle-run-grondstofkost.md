@@ -48,7 +48,7 @@ De app past het directe FTE-tarief (6 455,79 €/maand, identiek aan de Excel-
   — dus **alle 16 groepen**, inclusief `ZZZZ_TRUCK01/02`, `ZZZZZ_CONTROLROOM` en
   de `ZZZ_PACKGROUP`-groepen, allemaal tegen het directe tarief.
 - **App:** past speciale truck-/control-room-logica toe (`TruckOperationsFormulas`,
-  cf. docs/ontwikkelhandleiding.md `product_type_raw`) en scoopt het directe FTE-tarief op de
+  cf. ontwikkelhandleiding `product_type_raw`) en scoopt het directe FTE-tarief op de
   productie-FTE. Resultaat ≈ 46% van de Excel-basis.
 
 Dit is een genuanceerd definitieverschil (de app verfijnt de VBA-behandeling van
@@ -68,7 +68,7 @@ welke groepen het *directe* tarief krijgen).
    FTE-tarief op de productie-FTE (met truck-/control-room-logica); de Excel past
    het uniform toe op alle FTE-groepen. De app-benadering is verdedigbaar; met de
    klant bevestigen welke definitie geldt.
-5. **Nooit stilzwijgend een numerieke formule wijzigen** (docs/ontwikkelhandleiding.md) — pas aan ná
+5. **Nooit stilzwijgend een numerieke formule wijzigen** (ontwikkelhandleiding) — pas aan ná
    bevestiging.
 
 > **NB — macro-reruns.** De klant-VBA is opnieuw draaibaar (masterdata wijzigen →

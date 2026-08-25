@@ -89,8 +89,8 @@ Verified the editable-lines proposal (L4 starting stock, L7, L9, L11, L12 — L1
 
 ### 4. PlanningRow.values contract not enforced
 - **Severity**: low
-- **Location**: models.py:59 vs docs/ontwikkelhandleiding.md
-- **Observation**: docs/ontwikkelhandleiding.md says `values` is "never None" but no `__post_init__` validation.
+- **Location**: models.py:59 vs development guide
+- **Observation**: The development guide says `values` is "never None" but no `__post_init__` validation.
 - **Suggestion**: Add `field(default_factory=dict)` or post-init guard.
 - **Action**: defer
 

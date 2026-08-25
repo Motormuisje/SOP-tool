@@ -1,7 +1,7 @@
 # Implementatieplan S&OP-optimalisaties (wensen Sibelco, juni 2026)
 
 Versie 1.1 — 2026-07-11
-Basis: e-mail Sacha Clermont 29-06-2026 + antwoordmail (sprintindeling), bugregister `BUGS.md`, docs/ontwikkelhandleiding.md-werkwijze.
+Basis: e-mail Sacha Clermont 29-06-2026 + antwoordmail (sprintindeling), bugregister `BUGS.md`, werkwijze uit `docs/ontwikkelhandleiding.md`.
 
 ---
 
@@ -28,7 +28,7 @@ Basis: e-mail Sacha Clermont 29-06-2026 + antwoordmail (sprintindeling), bugregi
 - **Numerieke pariteit is heilig.** Geen enkele fase mag bestaande, geverifieerde
   cijfers wijzigen zonder dat dit expliciet de bedoeling is. Elke go/no-go bevat
   daarom een *golden-parity* check: dezelfde input → dezelfde output als vóór de fase.
-- **Elk nieuw stuk sessie-state doorloopt de zes sync-punten** (docs/ontwikkelhandleiding.md): reset-baseline,
+- **Elk nieuw stuk sessie-state doorloopt de zes sync-punten** (ontwikkelhandleiding): reset-baseline,
   config-sync bij instance-wissel, config-overrides bij rebuild, replay na herstart,
   juiste herberekening, serialisatie van/naar `sessions_store.json`. Het testprotocol
   van elke fase bevat deze zes als vaste testgevallen.

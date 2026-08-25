@@ -1,6 +1,6 @@
 """Sessie-state `active_combinations` door de ZES sync-/rebuildpunten.
 
-docs/ontwikkelhandleiding.md: "Every new piece of state must participate in all six. This is the
+Development guide (docs/ontwikkelhandleiding.md): "Every new piece of state must participate in all six. This is the
 single most common source of cross-cutting bugs." Deze testklasse loopt ze
 allemaal langs, want dit veld had er geen enkele test voor — en de bugjacht
 vond er meteen een gat (een gedupliceerde instantie startte met een lege set).

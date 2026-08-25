@@ -121,7 +121,7 @@ def _reset_machines(sess, engine) -> None:
 def test_partial_reset_preserves_planning_edits(session_with_engine):
     """Resetting machine state must not touch planning edits.
 
-    From docs/ontwikkelhandleiding.md state model: reset_baseline + machine_overrides live in
+    From the development guide's state model: reset_baseline + machine_overrides live in
     the session dict alongside pending_edits. The /api/machines/reset path
     must only clear the machine-related entries. This test pins down that
     separation.
@@ -430,7 +430,7 @@ def test_cross_tab_consistency(golden_fixture_path):
 def test_replay_matches_live_edits(golden_fixture_path):
     """Replay invariant: replay_pending_edits must produce the same results as live edits.
 
-    From docs/ontwikkelhandleiding.md: 'replay path is the source of truth — if live behavior
+    From the development guide: 'replay path is the source of truth — if live behavior
     diverges from replay, the live behavior is wrong.'
 
     We build engine A, apply two edits via _apply_volume_change (the real live

@@ -2,7 +2,7 @@
 
 De consultant houdt varianten uit elkaar met INSTANTIES (hernoemen, "Opslaan als
 instantie", wisselen) en met SCENARIO'S (opslaan, laden, vergelijken). Beide
-raken de gekoppelde state-lagen uit docs/ontwikkelhandleiding.md: sessie-dict, live engine en
+raken de gekoppelde state-lagen uit de ontwikkelhandleiding: sessie-dict, live engine en
 `sessions_store.json`. Gaat daar iets stuk, dan ziet de gebruiker geen foutmelding
 maar STIL verkeerde cijfers — een kopie die anders rekent dan zijn bron, een
 scenario dat een bewerking laat staan, of een instantiewissel die de vorige
@@ -410,7 +410,7 @@ def test_02_opslaan_als_instantie_maakt_een_warme_kopie_met_dezelfde_cijfers(app
 def test_03_wisselen_tussen_instanties_toont_andere_cijfers(app_page, ctx):
     """Twee instanties, twee verschillende cijferbeelden.
 
-    Klassieke faalmodus uit docs/ontwikkelhandleiding.md ("Switching instances shows wrong
+    Klassieke faalmodus uit de ontwikkelhandleiding ("Switching instances shows wrong
     values"): de wissel gebeurt wel, maar tabel en API blijven de vorige
     instantie tonen. We bewerken daarom ALLEEN de kopie en controleren daarna
     dat de bron nog exact op zijn oude cijfers staat — in de API én in de cel

@@ -250,7 +250,7 @@ Scenarios to test:
 
 Acceptance criteria:
 
-- The six state-sync points from `docs/ontwikkelhandleiding.md` are named for each new state test.
+- The six state-sync points from the development guide are named for each new state test.
 - `ui/state_snapshot.py` moves toward 80%+ coverage.
 - `ui/replay.py` and `ui/engine_rebuild.py` move toward 85%+ coverage.
 

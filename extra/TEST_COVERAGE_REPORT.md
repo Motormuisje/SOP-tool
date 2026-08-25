@@ -52,7 +52,7 @@ Dit is de "gouden test" â€” wanneer deze faalt, weet je dat de cascade/form
 - âœ… `test_replay_matches_live_edits`: edits afgespeeld na restart geven hetzelfde resultaat als live edits (kritisch voor persistentie)
 
 **Betrouwbaarheid:** â­â­â­â­â­ **ZEER HOOG**
-Direct validates docs/ontwikkelhandleiding.md six sync points: snapshot, reset, replay, recalc.
+Direct validates the development guide's six sync points: snapshot, reset, replay, recalc.
 
 **Decking:** Sessie state lifecycle (init â†’ edit â†’ snapshot â†’ reset â†’ replay)
 

@@ -27,7 +27,7 @@ De vier structurele problemen:
    staan visueel gelijkwaardig naast elkaar. Welke wijziging geldt voor welke
    sessie, en wat een sessiewissel doet met wat je ziet, is nergens
    uitgelegd. (De global-config-spiegel is precies de plek waar historisch de
-   meeste bugs zaten — zie docs/ontwikkelhandleiding.md "state model".)
+   meeste bugs zaten — zie ontwikkelhandleiding "state model".)
 2. **Effect is onzichtbaar.** Site/horizon wijzigen triggert een volledige
    herbouw; valuation-params alleen een waardeherberekening; forecast-
    defaults een rebuild. De gebruiker ziet één "Opslaan" en merkt pas aan de
@@ -173,7 +173,7 @@ C2 zodat de samengevoegde masterkaart meteen in het registry-patroon landt.
 - **API-compatibiliteit**: `/api/config` behoudt bestaande sleutels naast de
   nieuwe metadata-vorm tot de site-edities gesynct zijn; `test_routes_config`
   moet groen blijven tijdens de migratie.
-- **De zes syncpunten** (docs/ontwikkelhandleiding.md): de registry vervángt de handgeschreven
+- **De zes syncpunten** (ontwikkelhandleiding): de registry vervángt de handgeschreven
   keten niet in één klap — per veld migreren, met de parametrische test als
   vangnet. Velden die nog niet gemigreerd zijn blijven op het oude pad.
 - **Site-edities**: index.html is huisstijlbestand; wijzigingen gaan als

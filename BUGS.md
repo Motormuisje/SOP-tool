@@ -6,7 +6,7 @@ three were confirmed empirically with synthetic fixtures. Severity reflects
 impact on **correctness of numbers** first, stability second.
 
 Status legend: `open` (not fixed), `question` (formula/domain semantics — needs
-client/VBA confirmation before touching, per docs/ontwikkelhandleiding.md rule 4).
+client/VBA confirmation before touching, per docs/ontwikkelhandleiding.md, change-protocol rule 4).
 
 Previously fixed (2026-07-10, commits `5ac412e`..`3562ffa`): reset not restoring
 shift_hours_override; revert pinning capacity/inventory overrides; error tuples
