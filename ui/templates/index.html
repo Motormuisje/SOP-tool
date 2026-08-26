@@ -13594,7 +13594,7 @@ function renderMachineInzet() {
         + '<th class="text-left p-1">Machine</th>'
         + '<th class="text-right p-1" title="Uren per omstelling &mdash; masterdata, geldt overal">Omsteltijd (u)</th>'
         + '<th class="text-right p-1" title="Tarief per omsteluur &mdash; masterdata; leeg = machinetarief uit de machinekosten">Tarief (&euro;/u)</th>'
-        + periods.map(p => `<th class="text-right p-1">${escapeHtml(p)}</th>`).join('')
+        + periods.map(p => `<th class="text-right p-1 whitespace-nowrap">${escapeHtml(p)}</th>`).join('')
         + '<th class="text-right p-1 border-l border-slate-700">Horizon</th></tr>';
 
     const rows = codes.map(code => {
@@ -13604,7 +13604,7 @@ function renderMachineInzet() {
             const { est, count, isOverride, info } = _inzetCount(code, p);
             const uren = info.changeover_hours;
             const label = uren !== null && uren !== undefined
-                ? `${count} &times; = ${_fmtNlNum(uren, 1)} u`
+                ? `<span class="text-slate-500">${count}&times;</span> ${_fmtNlNum(uren, 1)} u`
                     + (info.cost > 0 ? `<br><span class="text-slate-400">${_inzetEur(info.cost)}</span>` : '')
                 : `${count} omst.`;
             const title = `${(info.products || []).length} product(en): ${(info.products || []).join(', ') || '—'}`
@@ -13613,12 +13613,12 @@ function renderMachineInzet() {
                 + (info.window_pct !== null && info.window_pct !== undefined ? ` · ${_fmtNlNum(info.window_pct, 1)}% van het venster` : '')
                 + (hoursPer === null ? ' · geen omsteltijd ingevuld' : '');
             const cls = isOverride ? 'text-amber-300' : (count > 0 ? 'text-slate-200' : 'text-slate-500');
-            return `<td class="p-1 text-right align-top"><button class="font-mono ${cls} hover:underline decoration-dotted text-right" data-inzet-cell="${escapeHtml(p)}"
+            return `<td class="p-1 text-right align-top whitespace-nowrap"><button class="font-mono ${cls} hover:underline decoration-dotted text-right" data-inzet-cell="${escapeHtml(p)}"
                 title="${escapeHtml(title)}" onclick="editInzetCell('${_jsArg(code)}','${_jsArg(p)}', this)">${label}</button></td>`;
         }).join('');
         const total = machine.total || {};
         const totalCell = hoursPer !== null
-            ? `${_fmtNlNum(total.changeovers || 0, 0)} &times; = ${_fmtNlNum(total.changeover_hours || 0, 1)} u`
+            ? `<span class="text-slate-500">${_fmtNlNum(total.changeovers || 0, 0)}&times;</span> ${_fmtNlNum(total.changeover_hours || 0, 1)} u`
               + (total.cost > 0 ? `<br><span class="text-slate-400">${_inzetEur(total.cost)}</span>` : '')
             : `${_fmtNlNum(total.changeovers || 0, 0)} omst.`;
         const rateSource = machine.rate_source === 'omsteltijden' ? 'eigen tarief'
@@ -13629,10 +13629,10 @@ function renderMachineInzet() {
             ? '<span class="text-xs text-amber-300" title="Volgorde is een wat-als van deze sessie">volgorde: wat-als</span>'
             : '';
         const mainRow = `<tr data-inzet-row="${escapeHtml(code)}" class="${isOpen ? 'bg-slate-800/60' : ''}">
-            <td class="p-1 align-top">
+            <td class="p-1 align-top whitespace-nowrap" style="min-width:15rem">
                 <button class="text-left hover:underline decoration-dotted" onclick="toggleInzetDetail('${_jsArg(code)}')"
-                    title="Klik voor de producten en hun volgorde op deze machine">
-                    <span class="inline-block w-3 text-slate-500">${isOpen ? '&#9662;' : '&#9656;'}</span>${escapeHtml(machine.name || code)}<span class="text-slate-500"> &middot; ${escapeHtml(code)}</span>
+                    title="${escapeHtml(machine.name || code)} — klik voor de producten en hun volgorde op deze machine">
+                    <span class="inline-block w-3 text-slate-500">${isOpen ? '&#9662;' : '&#9656;'}</span><span class="font-mono">${escapeHtml(code)}</span><span class="text-slate-400"> ${escapeHtml((machine.name || '').replace(/^Maastricht /, '').slice(0, 26))}</span>
                 </button>
                 <div class="text-xs text-slate-500 pl-3">${(machine.sequence || []).length} product(en) ${seqBadge}</div>
             </td>
@@ -13647,7 +13647,7 @@ function renderMachineInzet() {
                 onchange="saveChangeoverRate(this)">
                 <div class="text-xs ${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(rateSource)}</div></td>
             ${cells}
-            <td class="p-1 text-right align-top font-mono border-l border-slate-700">${totalCell}</td></tr>`;
+            <td class="p-1 text-right align-top font-mono border-l border-slate-700 whitespace-nowrap">${totalCell}</td></tr>`;
         return mainRow + (isOpen ? _inzetDetailRow(code, periods) : '');
     });
 
@@ -13655,9 +13655,9 @@ function renderMachineInzet() {
     const horizon = (data.totals || {}).horizon || {};
     const footer = codes.length ? `<tr class="border-t border-slate-600 text-slate-300 font-semibold">
         <td class="p-1">Totaal</td><td></td><td></td>
-        ${periods.map(p => { const t = by[p] || {}; return `<td class="p-1 text-right font-mono">${_fmtNlNum(t.changeovers || 0, 0)} &times; = ${_fmtNlNum(t.changeover_hours || 0, 1)} u`
+        ${periods.map(p => { const t = by[p] || {}; return `<td class="p-1 text-right font-mono whitespace-nowrap"><span class="text-slate-500">${_fmtNlNum(t.changeovers || 0, 0)}&times;</span> ${_fmtNlNum(t.changeover_hours || 0, 1)} u`
             + (t.cost > 0 ? `<br><span class="text-slate-400 font-normal">${_inzetEur(t.cost)}</span>` : '') + '</td>'; }).join('')}
-        <td class="p-1 text-right font-mono border-l border-slate-700">${_fmtNlNum(horizon.changeovers || 0, 0)} &times; = ${_fmtNlNum(horizon.changeover_hours || 0, 1)} u`
+        <td class="p-1 text-right font-mono border-l border-slate-700 whitespace-nowrap"><span class="text-slate-500">${_fmtNlNum(horizon.changeovers || 0, 0)}&times;</span> ${_fmtNlNum(horizon.changeover_hours || 0, 1)} u`
             + (horizon.cost > 0 ? `<br><span class="text-slate-400 font-normal">${_inzetEur(horizon.cost)}</span>` : '') + `</td></tr>` : '';
 
     document.getElementById('inzetTableBody').innerHTML = rows.join('') + footer
