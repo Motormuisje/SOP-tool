@@ -252,6 +252,7 @@ def install_clean_engine_baseline(
         sess['fte_norm_overrides'] = {}
         engine.fte_norm_overrides = {}
         sess['changeover_overrides'] = {}
+        sess['changeover_sequences'] = {}
         if hasattr(engine, 'recalculate_fte'):
             engine.recalculate_fte([], norm_overrides={})
     # inventory_overrides (L4 starting stock) and capacity_overrides

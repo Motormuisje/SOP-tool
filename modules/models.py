@@ -489,7 +489,13 @@ class ChangeoverTime:
     (MACHINE|VAN|NAAR met de machinewaarde als terugval) toe zonder migratie.
     Rekent in fase 1 nergens in mee: het tabblad toont de geschatte
     omsteluren; doorwerking op het beschikbaarheidsvenster is fase 2.
+
+    ``cost_per_hour`` is het tarief waarmee een omsteluur wordt gewaardeerd
+    (fase 1b): leeg = terugval op het machinetarief uit ``machine_costs``
+    (zelfde bron als de waardeplanning), zodat de kosten van omstellingen
+    zonder extra invulwerk zichtbaar zijn en per machine te overschrijven.
     """
     machine_code: str
     hours_per_changeover: float = 0.0
     description: str = ''
+    cost_per_hour: Optional[float] = None

@@ -173,6 +173,7 @@ def create_sessions_blueprint(
                 else (sess.get('fte_norm_overrides') or {})
             ),
             'changeover_overrides': dict(sess.get('changeover_overrides') or {}),
+            'changeover_sequences': {k: list(v) for k, v in (sess.get('changeover_sequences') or {}).items()},
             'reset_baseline': copy.deepcopy(sess.get('reset_baseline')),
             'forecast_defaults': copy.deepcopy(
                 (getattr(sess.get('engine'), 'config_overrides', None) or {}).get('forecast_defaults')

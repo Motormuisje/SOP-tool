@@ -282,7 +282,8 @@ def _check_benchmark(key, item, _known):
 
 
 def _check_changeover(key, item, known_machines):
-    error = _nonneg_error(key, item, 'hours_per_changeover', 'omsteltijd')
+    error = (_nonneg_error(key, item, 'hours_per_changeover', 'omsteltijd')
+             or _nonneg_error(key, item, 'cost_per_hour', 'tarief per omsteluur'))
     if error:
         return error, []
     warnings = []
