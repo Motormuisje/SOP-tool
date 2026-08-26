@@ -1414,13 +1414,20 @@
                         <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(245,158,11,0.15);color:#fbbf24"
                               title="Fase 2 laat de omsteluren het beschikbaarheidsvenster verlagen; tot die tijd is dit overzicht informatief.">rekent nog niet door in de planning</span>
                     </div>
-                    <p class="text-xs text-slate-500 mb-3">Productiegetallen komen uit de planning (Line 07). Klik een machine voor de
-                        producten die erop draaien en hun <b>volgorde</b> (pijlen = wat-als van deze sessie). Het aantal omstellingen is een
-                        <b>schatting</b>: producten per machine per maand min &eacute;&eacute;n &mdash; klik een celwaarde om het te overschrijven.
-                        Omsteltijd en tarief per machine zijn masterdata (gelden overal); zonder eigen tarief rekent de tabel met het
-                        machinetarief uit de machinekosten. Kosten = omstellingen &times; omsteltijd &times; tarief.</p>
+                    <p class="text-xs text-slate-500 mb-3">Productiegetallen komen uit de planning (Line 07). Kies links een machine; rechts zie je per maand
+                        welke producten erop draaien, in welke <b>volgorde</b> (pijltjes = wat-als van deze sessie) en waar de wissels zitten. Het aantal
+                        omstellingen is een <b>schatting</b>: producten per maand min &eacute;&eacute;n &mdash; klik het getal rechts om het te overschrijven.
+                        Omsteltijd en tarief zijn masterdata (gelden overal); zonder eigen tarief rekent het bord met het machinetarief uit de machinekosten.
+                        Kosten = omstellingen &times; omsteltijd &times; tarief.</p>
                     <div id="inzetKpis" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"></div>
-                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="inzetHead"></thead><tbody id="inzetTableBody"></tbody></table></div>
+                    <div class="flex gap-4" style="min-height:420px">
+                        <div class="rounded-lg p-2 flex flex-col" style="flex:0 0 300px;background:rgba(15,23,42,0.45);border:1px solid rgba(255,255,255,0.08)">
+                            <div id="inzetRailTools"></div>
+                            <div id="inzetRailList" class="flex-1 overflow-y-auto" style="max-height:60vh"></div>
+                            <div id="inzetRailFoot" class="flex justify-between text-xs text-slate-400 border-t border-slate-700 pt-2 mt-2"></div>
+                        </div>
+                        <div id="inzetBoard" class="flex-1 min-w-0 rounded-lg p-3" style="background:rgba(15,23,42,0.45);border:1px solid rgba(255,255,255,0.08)"></div>
+                    </div>
                 </div>
 
                 <div class="card rounded-xl p-6 mb-4">
@@ -13504,9 +13511,14 @@ function _renderFteComparison(variants) {
     }).join('');
 }
 
-// ── Machine-inzet (fase 1 + 1b): omstellingen, volgorde en kosten per machine ──
-// De server rekent (build_machine_inzet); dit blok toont en stuurt alleen.
-let _inzetState = { data: null, overrides: {}, sequences: {}, open: new Set() };
+// ── Machine-inzet (fase 1 + 1b): planbord per machine ─────────────────────────
+// Links alle machines in één lijst (groepen, sortering, zoeken), rechts één
+// machine over alle maanden: producten in volgorde, wissels als gaten, per
+// maand de rekening. De server rekent (build_machine_inzet); dit blok toont
+// en stuurt alleen. Ontwerpkeuze (klant 2026-08-26): niet alle machines als
+// tijdlijn onder elkaar — dat schaalt niet.
+let _inzetState = { data: null, overrides: {}, sequences: {}, selected: null,
+                    sort: 'cost', query: '' };
 
 async function loadMachineInzet() {
     // De combinatiekaart op dit tabblad deelt _fteState met de werkbank.
@@ -13540,7 +13552,7 @@ function _inzetCount(machine, period) {
 }
 
 function _inzetEur(v) {
-    return '€ ' + _fmtNlNum(v, 0);
+    return '€ ' + _fmtNlNum(v, 0);
 }
 
 // Machines die iets te melden hebben: draaiuren in de horizon of een
@@ -13583,128 +13595,224 @@ function _renderInzetKpis(codes) {
                '');
 }
 
+// Sortering van de lijst: kosten (default), omstellingen, of 'zonder
+// omsteltijd eerst' (de invullijst); daarna altijd op code voor stabiliteit.
+function _inzetSortedCodes(codes) {
+    const m = _inzetState.data.machines;
+    const key = {
+        cost: c => -((m[c].total || {}).cost || 0),
+        changeovers: c => -((m[c].total || {}).changeovers || 0),
+        missing: c => (m[c].hours_per_changeover === null ? 0 : 1),
+    }[_inzetState.sort] || (() => 0);
+    return [...codes].sort((a, b) => key(a) - key(b) || (_inzetState.sort === 'missing'
+        ? ((m[b].total || {}).changeovers || 0) - ((m[a].total || {}).changeovers || 0) : 0) || a.localeCompare(b));
+}
+
+function _inzetMatches(code) {
+    const q = String(_inzetState.query || '').trim().toLowerCase();
+    if (!q) return true;
+    const m = _inzetState.data.machines[code];
+    if (code.toLowerCase().includes(q) || String(m.name || '').toLowerCase().includes(q)) return true;
+    return Object.entries(m.product_names || {}).some(([mat, name]) =>
+        mat.toLowerCase().includes(q) || String(name || '').toLowerCase().includes(q));
+}
+
 function renderMachineInzet() {
     const data = _inzetState.data;
     if (!data) return;
-    const periods = data.periods || [];
     const codes = _inzetCodes();
     _renderInzetKpis(codes);
-
-    document.getElementById('inzetHead').innerHTML = '<tr>'
-        + '<th class="text-left p-1">Machine</th>'
-        + '<th class="text-right p-1" title="Uren per omstelling &mdash; masterdata, geldt overal">Omsteltijd (u)</th>'
-        + '<th class="text-right p-1" title="Tarief per omsteluur &mdash; masterdata; leeg = machinetarief uit de machinekosten">Tarief (&euro;/u)</th>'
-        + periods.map(p => `<th class="text-right p-1 whitespace-nowrap">${escapeHtml(p)}</th>`).join('')
-        + '<th class="text-right p-1 border-l border-slate-700">Horizon</th></tr>';
-
-    const rows = codes.map(code => {
-        const machine = data.machines[code];
-        const hoursPer = machine.hours_per_changeover;
-        const cells = periods.map(p => {
-            const { est, count, isOverride, info } = _inzetCount(code, p);
-            const uren = info.changeover_hours;
-            const label = uren !== null && uren !== undefined
-                ? `<span class="text-slate-500">${count}&times;</span> ${_fmtNlNum(uren, 1)} u`
-                    + (info.cost > 0 ? `<br><span class="text-slate-400">${_inzetEur(info.cost)}</span>` : '')
-                : `${count} omst.`;
-            const title = `${(info.products || []).length} product(en): ${(info.products || []).join(', ') || '—'}`
-                + ` · ${_fmtNlNum(info.hours || 0, 0)} draaiuren`
-                + (isOverride ? ` · wat-als (schatting was ${est})` : ' · schatting: producten − 1')
-                + (info.window_pct !== null && info.window_pct !== undefined ? ` · ${_fmtNlNum(info.window_pct, 1)}% van het venster` : '')
-                + (hoursPer === null ? ' · geen omsteltijd ingevuld' : '');
-            const cls = isOverride ? 'text-amber-300' : (count > 0 ? 'text-slate-200' : 'text-slate-500');
-            return `<td class="p-1 text-right align-top whitespace-nowrap"><button class="font-mono ${cls} hover:underline decoration-dotted text-right" data-inzet-cell="${escapeHtml(p)}"
-                title="${escapeHtml(title)}" onclick="editInzetCell('${_jsArg(code)}','${_jsArg(p)}', this)">${label}</button></td>`;
-        }).join('');
-        const total = machine.total || {};
-        const totalCell = hoursPer !== null
-            ? `<span class="text-slate-500">${_fmtNlNum(total.changeovers || 0, 0)}&times;</span> ${_fmtNlNum(total.changeover_hours || 0, 1)} u`
-              + (total.cost > 0 ? `<br><span class="text-slate-400">${_inzetEur(total.cost)}</span>` : '')
-            : `${_fmtNlNum(total.changeovers || 0, 0)} omst.`;
-        const rateSource = machine.rate_source === 'omsteltijden' ? 'eigen tarief'
-            : machine.rate_source === 'machinetarief' ? 'machinetarief' : 'geen tarief';
-        const rateOwn = (data.changeover_times[code] || {}).cost_per_hour;
-        const isOpen = _inzetState.open.has(code);
-        const seqBadge = machine.sequence_source === 'wat-als'
-            ? '<span class="text-xs text-amber-300" title="Volgorde is een wat-als van deze sessie">volgorde: wat-als</span>'
-            : '';
-        const mainRow = `<tr data-inzet-row="${escapeHtml(code)}" class="${isOpen ? 'bg-slate-800/60' : ''}">
-            <td class="p-1 align-top whitespace-nowrap" style="min-width:15rem">
-                <button class="text-left hover:underline decoration-dotted" onclick="toggleInzetDetail('${_jsArg(code)}')"
-                    title="${escapeHtml(machine.name || code)} — klik voor de producten en hun volgorde op deze machine">
-                    <span class="inline-block w-3 text-slate-500">${isOpen ? '&#9662;' : '&#9656;'}</span><span class="font-mono">${escapeHtml(code)}</span><span class="text-slate-400"> ${escapeHtml((machine.name || '').replace(/^Maastricht /, '').slice(0, 26))}</span>
-                </button>
-                <div class="text-xs text-slate-500 pl-3">${(machine.sequence || []).length} product(en) ${seqBadge}</div>
-            </td>
-            <td class="p-1 text-right align-top"><input type="text" value="${hoursPer !== null ? escapeHtml(String(hoursPer)) : ''}"
-                placeholder="—" data-inzet-machine="${escapeHtml(code)}"
-                class="bg-slate-700 rounded px-2 py-0.5 w-16 text-right"
-                onchange="saveChangeoverTime(this)"></td>
-            <td class="p-1 text-right align-top"><input type="text" value="${rateOwn !== null && rateOwn !== undefined ? escapeHtml(String(rateOwn)) : ''}"
-                placeholder="${machine.rate_source === 'machinetarief' ? escapeHtml(_fmtNlNum(machine.rate, 2)) : '—'}"
-                data-inzet-rate="${escapeHtml(code)}" title="${escapeHtml(rateSource)}${machine.rate > 0 ? ': € ' + _fmtNlNum(machine.rate, 2) + '/u' : ''}"
-                class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${machine.rate_source === 'omsteltijden' ? '' : 'text-slate-400'}"
-                onchange="saveChangeoverRate(this)">
-                <div class="text-xs ${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(rateSource)}</div></td>
-            ${cells}
-            <td class="p-1 text-right align-top font-mono border-l border-slate-700 whitespace-nowrap">${totalCell}</td></tr>`;
-        return mainRow + (isOpen ? _inzetDetailRow(code, periods) : '');
-    });
-
-    const by = (data.totals || {}).by_period || {};
-    const horizon = (data.totals || {}).horizon || {};
-    const footer = codes.length ? `<tr class="border-t border-slate-600 text-slate-300 font-semibold">
-        <td class="p-1">Totaal</td><td></td><td></td>
-        ${periods.map(p => { const t = by[p] || {}; return `<td class="p-1 text-right font-mono whitespace-nowrap"><span class="text-slate-500">${_fmtNlNum(t.changeovers || 0, 0)}&times;</span> ${_fmtNlNum(t.changeover_hours || 0, 1)} u`
-            + (t.cost > 0 ? `<br><span class="text-slate-400 font-normal">${_inzetEur(t.cost)}</span>` : '') + '</td>'; }).join('')}
-        <td class="p-1 text-right font-mono border-l border-slate-700 whitespace-nowrap"><span class="text-slate-500">${_fmtNlNum(horizon.changeovers || 0, 0)}&times;</span> ${_fmtNlNum(horizon.changeover_hours || 0, 1)} u`
-            + (horizon.cost > 0 ? `<br><span class="text-slate-400 font-normal">${_inzetEur(horizon.cost)}</span>` : '') + `</td></tr>` : '';
-
-    document.getElementById('inzetTableBody').innerHTML = rows.join('') + footer
-        || `<tr><td colspan="${periods.length + 4}" class="text-center p-4 text-slate-500">Geen machines met draaiuren in deze horizon</td></tr>`;
+    const zichtbaar = _inzetSortedCodes(codes.filter(_inzetMatches));
+    if (!_inzetState.selected || !data.machines[_inzetState.selected]) {
+        _inzetState.selected = zichtbaar[0] || codes[0] || null;
+    }
+    _renderInzetRail(zichtbaar, codes.length);
+    _renderInzetBoard(_inzetState.selected);
 }
 
-// Detailrij: welke producten draaien op deze machine, in welke volgorde
-// (↑/↓ = sessie-wat-als), met hun draaiuren per periode.
-function _inzetDetailRow(code, periods) {
-    const machine = _inzetState.data.machines[code];
+function _renderInzetRail(codes, totaal) {
+    const data = _inzetState.data;
+    const m = data.machines;
+    const maxCost = Math.max(1, ...codes.map(c => (m[c].total || {}).cost || 0));
+    const chip = (key, label) => `<button onclick="setInzetSort('${key}')" class="text-xs px-2 py-0.5 rounded-full ${
+        _inzetState.sort === key ? 'bg-blue-600/40 text-blue-100' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}">${label}</button>`;
+    document.getElementById('inzetRailTools').innerHTML = `
+        <input type="text" id="inzetSearch" value="${escapeHtml(_inzetState.query || '')}" placeholder="Zoek machine of product…"
+            class="w-full bg-slate-700 rounded px-2 py-1 text-xs mb-2" oninput="setInzetQuery(this.value)">
+        <div class="flex flex-wrap gap-1 mb-1">${chip('cost', 'kosten')}${chip('changeovers', 'omstellingen')}${chip('missing', 'zonder tijd eerst')}</div>`;
+
+    // Groeperen op machinegroep, in de volgorde waarin de sortering ze aanlevert.
+    const groups = [];
+    for (const code of codes) {
+        const g = m[code].machine_group || '—';
+        let entry = groups.find(x => x.group === g);
+        if (!entry) { entry = { group: g, codes: [] }; groups.push(entry); }
+        entry.codes.push(code);
+    }
+    const rows = groups.map(({ group, codes: gcodes }) => {
+        const gn = gcodes.reduce((a, c) => a + ((m[c].total || {}).changeovers || 0), 0);
+        const gc = gcodes.reduce((a, c) => a + ((m[c].total || {}).cost || 0), 0);
+        const head = `<div class="flex justify-between text-xs text-slate-500 uppercase tracking-wide px-1 pt-2 pb-0.5" data-inzet-group="${escapeHtml(group)}">
+            <span>${escapeHtml(group)} &middot; ${gcodes.length}</span><span class="font-mono normal-case tracking-normal">${_fmtNlNum(gn, 0)}&times; &middot; ${_inzetEur(gc)}</span></div>`;
+        const items = gcodes.map(code => {
+            const machine = m[code];
+            const t = machine.total || {};
+            const sel = code === _inzetState.selected;
+            const noTime = machine.hours_per_changeover === null;
+            const bar = noTime
+                ? `<div class="h-1.5 rounded" style="border:1px dashed rgba(251,191,36,0.5)"></div>`
+                : `<div class="h-1.5 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-blue-500" style="width:${Math.max(1.5, (t.cost || 0) / maxCost * 100)}%"></div></div>`;
+            const right = noTime
+                ? `<span class="font-mono text-amber-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; geen tijd</span>`
+                : `<span class="font-mono text-slate-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; ${_inzetEur(t.cost || 0)}</span>`;
+            return `<button data-inzet-row="${escapeHtml(code)}" onclick="selectInzetMachine('${_jsArg(code)}')"
+                class="w-full text-left rounded px-1.5 py-1 ${sel ? 'bg-blue-600/20 ring-1 ring-blue-400/60' : 'hover:bg-slate-700/60'}">
+                <div class="flex justify-between gap-2 text-xs"><span><span class="font-mono font-semibold">${escapeHtml(code)}</span>
+                    <span class="text-slate-400">${escapeHtml(String(machine.name || '').replace(/^Maastricht /, '').slice(0, 24))}</span></span>${right}</div>
+                <div class="mt-1">${bar}</div></button>`;
+        }).join('');
+        return head + items;
+    }).join('');
+    const horizon = (data.totals || {}).horizon || {};
+    document.getElementById('inzetRailList').innerHTML = rows
+        || '<div class="text-xs text-slate-500 p-2">Geen machine voldoet aan het filter.</div>';
+    document.getElementById('inzetRailFoot').innerHTML = `<span>${codes.length}${codes.length !== totaal ? ` van ${totaal}` : ''} machines &middot; horizon</span>
+        <span class="font-mono text-slate-200">${_fmtNlNum(horizon.changeovers || 0, 0)}&times; &middot; ${_inzetEur(horizon.cost || 0)}</span>`;
+}
+
+function _inzetAxisMax(machine, periods) {
+    // As per machine: de drukste maand incl. omsteluren, afgerond op 20 u.
+    let max = 0;
+    for (const p of periods) {
+        const cel = machine.per_period[p] || {};
+        max = Math.max(max, (cel.hours || 0) + (cel.changeover_hours || 0));
+    }
+    return Math.max(20, Math.ceil(max / 20) * 20);
+}
+
+function _renderInzetBoard(code) {
+    const data = _inzetState.data;
+    const host = document.getElementById('inzetBoard');
+    if (!code) { host.innerHTML = '<div class="text-sm text-slate-500 p-4">Geen machines met draaiuren in deze horizon.</div>'; return; }
+    const machine = data.machines[code];
+    const periods = data.periods || [];
     const seq = machine.sequence || [];
     const names = machine.product_names || {};
     const hours = machine.product_hours || {};
-    const isWatAls = machine.sequence_source === 'wat-als';
-    const productRows = seq.map((mat, i) => {
-        const per = hours[mat] || {};
-        const totaal = Object.values(per).reduce((a, b) => a + (b || 0), 0);
-        const cells = periods.map(p => `<td class="p-1 text-right font-mono ${per[p] ? 'text-slate-200' : 'text-slate-600'}">${per[p] ? _fmtNlNum(per[p], 0) : '·'}</td>`).join('');
-        return `<tr data-inzet-seq="${escapeHtml(mat)}">
-            <td class="p-1 pl-6">
-                <span class="inline-block w-5 text-slate-500 font-mono">${i + 1}.</span>
-                <button class="text-slate-400 hover:text-slate-100 px-1 ${i === 0 ? 'invisible' : ''}" title="Eerder in de volgorde" onclick="moveInzetProduct('${_jsArg(code)}', ${i}, -1)">&#9650;</button>
-                <button class="text-slate-400 hover:text-slate-100 px-1 ${i === seq.length - 1 ? 'invisible' : ''}" title="Later in de volgorde" onclick="moveInzetProduct('${_jsArg(code)}', ${i}, 1)">&#9660;</button>
-                <span class="font-mono">${escapeHtml(mat)}</span><span class="text-slate-400"> ${escapeHtml(names[mat] || '')}</span>
-            </td>
-            <td class="p-1 text-right text-slate-500 text-xs" colspan="2">draaiuren</td>
-            ${cells}
-            <td class="p-1 text-right font-mono border-l border-slate-700">${_fmtNlNum(totaal, 0)}</td></tr>`;
+    const hoursPer = machine.hours_per_changeover;
+    const total = machine.total || {};
+    const axis = _inzetAxisMax(machine, periods);
+    const palette = ['#2563eb', '#3b82f6', '#60a5fa', '#1d4ed8', '#38bdf8', '#0ea5e9'];
+    const colorOf = {};
+    seq.forEach((mat, i) => { colorOf[mat] = hoursPer === null ? (i % 2 ? '#475569' : '#64748b') : palette[i % palette.length]; });
+    // Kort label: naam tot de verpakkingsspecificatie ("ATH SG40 PO 25:PA:…" → "SG40").
+    const shortName = mat => String(names[mat] || mat).replace(/\s+PO\s.*$/, '').replace(/^ATH /, '').slice(0, 18);
+    const rateOwn = (data.changeover_times[code] || {}).cost_per_hour;
+    const rateSource = machine.rate_source === 'omsteltijden' ? 'eigen tarief'
+        : machine.rate_source === 'machinetarief' ? 'machinetarief' : 'geen tarief';
+    const seqBadge = machine.sequence_source === 'wat-als'
+        ? `<span class="text-xs text-amber-300 border border-amber-400/40 rounded-full px-2" title="Volgorde is een wat-als van deze sessie">volgorde: wat-als</span>
+           <button class="text-xs text-blue-300 hover:underline" onclick="resetInzetSequence('${_jsArg(code)}')">Terug naar standaard</button>`
+        : '<span class="text-xs text-slate-500" title="Grootste run over de horizon eerst">volgorde: standaard</span>';
+    const pct = total.run_hours > 0 && total.changeover_hours > 0
+        ? ` &middot; ${_fmtNlNum(total.changeover_hours / total.run_hours * 100, 1)}% van ${_fmtNlNum(total.run_hours, 0)} draaiuren` : '';
+
+    const header = `
+        <div class="flex flex-wrap justify-between items-start gap-3 mb-2">
+            <div>
+                <div class="flex flex-wrap items-baseline gap-2">
+                    <span class="font-mono font-semibold text-base">${escapeHtml(code)}</span>
+                    <span class="text-slate-400 text-sm">${escapeHtml(machine.name || '')}${machine.machine_group ? ' &middot; groep ' + escapeHtml(machine.machine_group) : ''}</span>
+                    ${seqBadge}
+                </div>
+                <div class="text-xs text-slate-400 mt-0.5">${seq.length} product(en) &middot; horizon
+                    <span class="font-mono text-slate-100">${_fmtNlNum(total.changeovers || 0, 0)}&times;</span>
+                    ${hoursPer !== null ? `&middot; <span class="font-mono text-slate-100">${_fmtNlNum(total.changeover_hours || 0, 1)} u</span> &middot; <span class="font-mono text-slate-100 font-semibold">${_inzetEur(total.cost || 0)}</span>${pct}` : '&middot; <span class="text-amber-300">geen omsteltijd ingevuld</span>'}
+                </div>
+            </div>
+            <div class="flex gap-3 text-xs text-slate-400">
+                <label class="flex flex-col gap-0.5">Omsteltijd (u)
+                    <input type="text" value="${hoursPer !== null ? escapeHtml(String(hoursPer)) : ''}" placeholder="—"
+                        data-inzet-machine="${escapeHtml(code)}" class="bg-slate-700 rounded px-2 py-0.5 w-16 text-right text-slate-100 ${hoursPer === null ? 'ring-1 ring-amber-400/60' : ''}"
+                        onchange="saveChangeoverTime(this)"></label>
+                <label class="flex flex-col gap-0.5">Tarief (&euro;/u) <span class="${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(rateSource)}</span>
+                    <input type="text" value="${rateOwn !== null && rateOwn !== undefined ? escapeHtml(String(rateOwn)) : ''}"
+                        placeholder="${machine.rate_source === 'machinetarief' ? escapeHtml(_fmtNlNum(machine.rate, 2)) : '—'}"
+                        data-inzet-rate="${escapeHtml(code)}" title="${escapeHtml(rateSource)}${machine.rate > 0 ? ': € ' + _fmtNlNum(machine.rate, 2) + '/u' : ''}"
+                        class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${machine.rate_source === 'omsteltijden' ? 'text-slate-100' : 'text-slate-400'}"
+                        onchange="saveChangeoverRate(this)"></label>
+            </div>
+        </div>`;
+
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => `<span>${_fmtNlNum(axis * f, 0)}${f === 1 ? ' u' : ''}</span>`).join('');
+    const axisRow = `<div class="flex gap-2 items-end text-[10px] text-slate-500">
+        <div style="flex:0 0 60px"></div>
+        <div class="flex-1 flex justify-between border-b border-slate-700 pb-0.5">${ticks}</div>
+        <div style="flex:0 0 170px" class="text-right whitespace-nowrap">wissels &middot; uren &middot; kosten</div></div>`;
+
+    const rows = periods.map(p => {
+        const { est, count, isOverride, info } = _inzetCount(code, p);
+        const active = seq.filter(mat => (hours[mat] || {})[p] > 0);
+        const gapW = hoursPer !== null && hoursPer > 0 ? hoursPer / axis * 100 : 0;
+        const segs = active.map((mat, i) => {
+            const h = hours[mat][p];
+            const w = h / axis * 100;
+            const label = w >= 4.5 ? escapeHtml(shortName(mat)) : '';
+            const block = `<div class="flex items-center px-1.5 text-[11px] whitespace-nowrap overflow-hidden" style="flex:0 0 ${w.toFixed(2)}%;min-width:0;background:${colorOf[mat]}"
+                title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — ${_fmtNlNum(h, 1)} u">${label}</div>`;
+            const gap = i < active.length - 1 && gapW > 0
+                ? `<div style="flex:0 0 ${gapW.toFixed(2)}%;min-width:3px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="omstelling ${_fmtNlNum(hoursPer, 1)} u"></div>` : '';
+            return block + gap;
+        }).join('');
+        const uren = info.changeover_hours;
+        const label = uren !== null && uren !== undefined
+            ? `<span class="${isOverride ? 'text-amber-300' : 'text-slate-500'}">${count}&times;</span> ${_fmtNlNum(uren, 1)} u &middot; <span class="font-semibold">${_inzetEur(info.cost || 0)}</span>`
+            : `<span class="${isOverride ? 'text-amber-300' : 'text-slate-400'}">${count} omst.</span>`;
+        const title = `${active.length} product(en) · ${_fmtNlNum(info.hours || 0, 0)} draaiuren`
+            + (isOverride ? ` · wat-als (schatting was ${est})` : ' · schatting: producten − 1')
+            + (info.window_pct !== null && info.window_pct !== undefined ? ` · ${_fmtNlNum(info.window_pct, 1)}% van het venster` : '')
+            + ' · klik om het aantal te overschrijven';
+        return `<div class="flex gap-2 items-center" data-inzet-month="${escapeHtml(p)}">
+            <div class="text-xs text-slate-300" style="flex:0 0 60px">${escapeHtml(p)}</div>
+            <div class="flex-1 flex h-7 rounded overflow-hidden min-w-0" style="background:rgba(51,65,85,0.45)">${segs}</div>
+            <div style="flex:0 0 170px" class="text-right whitespace-nowrap"><button class="font-mono text-xs hover:underline decoration-dotted" data-inzet-cell="${escapeHtml(p)}"
+                title="${escapeHtml(title)}" onclick="editInzetCell('${_jsArg(code)}','${_jsArg(p)}', this)">${label}</button></div>
+        </div>`;
     }).join('');
-    const uitleg = isWatAls
-        ? `<span class="text-amber-300">Volgorde is een wat-als van deze sessie.</span>
-           <button class="ml-2 text-xs bg-slate-700 hover:bg-slate-600 rounded px-2 py-0.5" onclick="resetInzetSequence('${_jsArg(code)}')">Terug naar standaard</button>`
-        : 'Standaardvolgorde: grootste run over de horizon eerst. Verplaats producten met de pijlen; de volgorde gaat mee in de sessie en het scenario.';
-    return `<tr data-inzet-detail="${escapeHtml(code)}" class="bg-slate-800/40"><td colspan="${periods.length + 4}" class="p-0">
-        <table class="w-full text-xs"><tbody>
-            <tr><td class="p-1 pl-6 text-slate-400" colspan="${periods.length + 4}">
-                <b>Producten in volgorde</b> &mdash; ${uitleg}
-                <span class="text-slate-500"> Het aantal omstellingen volgt uit het aantal producten per maand; volgorde-afhankelijke omsteltijden (van&nbsp;&rarr;&nbsp;naar) zijn fase 3.</span>
-            </td></tr>
-            ${productRows || `<tr><td class="p-1 pl-6 text-slate-500" colspan="${periods.length + 4}">Geen producten met draaiuren op deze machine.</td></tr>`}
-        </tbody></table></td></tr>`;
+
+    const chips = seq.map((mat, i) => `<span class="inline-flex items-center gap-1 rounded-full pl-2 pr-1 py-0.5 text-[11px]" style="background:${colorOf[mat]};color:#fff" data-inzet-seq="${escapeHtml(mat)}" title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')}">
+        <span><span class="font-mono opacity-80">${i + 1}</span> ${escapeHtml(shortName(mat))}</span>
+        <button class="opacity-70 hover:opacity-100 ${i === 0 ? 'invisible' : ''}" title="Eerder" onclick="moveInzetProduct('${_jsArg(code)}', ${i}, -1)">&#9664;</button>
+        <button class="opacity-70 hover:opacity-100 ${i === seq.length - 1 ? 'invisible' : ''}" title="Later" onclick="moveInzetProduct('${_jsArg(code)}', ${i}, 1)">&#9654;</button></span>`).join('');
+    const footer = `<div class="flex gap-2 items-start border-t border-slate-700 pt-2 mt-1">
+        <div class="text-xs font-semibold text-slate-300" style="flex:0 0 60px">Volgorde</div>
+        <div class="flex-1 flex flex-wrap gap-1">${chips || '<span class="text-xs text-slate-500">Geen producten met draaiuren op deze machine.</span>'}</div>
+        <div style="flex:0 0 170px" class="text-right text-[11px] text-slate-500">pijltjes = wat-als van deze sessie; het aantal verandert pas met van&rarr;naar-tijden (fase 3)</div></div>`;
+    const legend = `<div class="text-[11px] text-slate-500 flex flex-wrap gap-4 mt-2">
+        <span><span class="inline-block align-middle mr-1" style="width:14px;height:10px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)"></span>omstelling${hoursPer !== null ? ` (${_fmtNlNum(hoursPer, 1)} u)` : ''}</span>
+        <span><span class="inline-block align-middle mr-1 bg-blue-600" style="width:10px;height:10px"></span>product (breedte = draaiuren)</span>
+        ${hoursPer === null ? '<span class="text-amber-300">Vul een omsteltijd in om wissels, uren en kosten te zien.</span>' : ''}</div>`;
+
+    host.innerHTML = header + axisRow + `<div class="flex flex-col gap-1 mt-1">${rows}</div>` + footer + legend;
 }
 
-function toggleInzetDetail(code) {
-    if (_inzetState.open.has(code)) _inzetState.open.delete(code);
-    else _inzetState.open.add(code);
+function selectInzetMachine(code) {
+    _inzetState.selected = code;
     renderMachineInzet();
+}
+
+function setInzetSort(key) {
+    _inzetState.sort = key;
+    renderMachineInzet();
+}
+
+function setInzetQuery(value) {
+    _inzetState.query = value;
+    const codes = _inzetSortedCodes(_inzetCodes().filter(_inzetMatches));
+    _renderInzetRail(codes, _inzetCodes().length);
+    // Het zoekveld is net opnieuw gebouwd: cursor terug aan het einde.
+    const input = document.getElementById('inzetSearch');
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
 }
 
 async function _postInzetSequences(next) {
@@ -13716,7 +13824,7 @@ async function _postInzetSequences(next) {
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Volgorde opslaan mislukt.', 'error', 5000); return; }
     } catch (err) { notify('Volgorde opslaan mislukt: ' + err, 'error', 5000); return; }
-    await loadMachineInzet();   // server rekent; open detailrijen blijven open
+    await loadMachineInzet();   // server rekent; selectie en filters blijven staan
 }
 
 function moveInzetProduct(code, index, delta) {
@@ -13735,9 +13843,9 @@ function resetInzetSequence(code) {
 
 // Omsteltijd en tarief = masterdata: write-through via de gewone PATCH met
 // versiecontrole, zelfde stramien als de bemensingsnormen.
-async function _saveChangeoverField(machine, field, raw, label, { allowNegative = false } = {}) {
+async function _saveChangeoverField(machine, field, raw, label) {
     const parsed = raw === '' ? null : parseLocaleNumber(raw);
-    if (raw !== '' && (Number.isNaN(parsed) || (!allowNegative && parsed < 0))) {
+    if (raw !== '' && (Number.isNaN(parsed) || parsed < 0)) {
         notify(`${label} moet een getal ≥ 0 zijn.`, 'error', 4000);
         renderMachineInzet();
         return;
@@ -13806,7 +13914,7 @@ function editInzetCell(machine, period, button) {
     const input = document.createElement('input');
     input.type = 'text';
     input.value = String(count);
-    input.className = 'bg-slate-700 rounded px-1 py-0.5 w-12 text-right';
+    input.className = 'bg-slate-700 rounded px-1 py-0.5 w-12 text-right text-xs';
     input.dataset.inzetEdit = `${machine}|${period}`;
     button.replaceWith(input);
     input.focus();
