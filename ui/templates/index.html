@@ -1421,7 +1421,7 @@
                         Kosten = omstellingen &times; omsteltijd &times; tarief.</p>
                     <div id="inzetKpis" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"></div>
                     <div class="flex gap-4" style="min-height:420px">
-                        <div class="rounded-lg p-2 flex flex-col" style="flex:0 0 300px;background:rgba(15,23,42,0.45);border:1px solid rgba(255,255,255,0.08)">
+                        <div class="rounded-lg p-2 flex flex-col" style="flex:0 0 400px;background:rgba(15,23,42,0.45);border:1px solid rgba(255,255,255,0.08)">
                             <div id="inzetRailTools"></div>
                             <div id="inzetRailList" class="flex-1 overflow-y-auto" style="max-height:60vh"></div>
                             <div id="inzetRailFoot" class="flex justify-between text-xs text-slate-400 border-t border-slate-700 pt-2 mt-2"></div>
@@ -13652,7 +13652,7 @@ function _renderInzetRail(codes, totaal) {
     const rows = groups.map(({ group, codes: gcodes }) => {
         const gn = gcodes.reduce((a, c) => a + ((m[c].total || {}).changeovers || 0), 0);
         const gc = gcodes.reduce((a, c) => a + ((m[c].total || {}).cost || 0), 0);
-        const head = `<div class="flex justify-between text-xs text-slate-500 uppercase tracking-wide px-1 pt-2 pb-0.5" data-inzet-group="${escapeHtml(group)}">
+        const head = `<div class="flex justify-between items-baseline text-xs text-slate-500 uppercase tracking-wide px-2 pt-3 pb-1 border-b border-slate-700/60" data-inzet-group="${escapeHtml(group)}">
             <span>${escapeHtml(group)} &middot; ${gcodes.length}</span><span class="font-mono normal-case tracking-normal">${_fmtNlNum(gn, 0)}&times; &middot; ${_inzetEur(gc)}</span></div>`;
         const items = gcodes.map(code => {
             const machine = m[code];
@@ -13660,16 +13660,16 @@ function _renderInzetRail(codes, totaal) {
             const sel = code === _inzetState.selected;
             const noTime = machine.hours_per_changeover === null;
             const bar = noTime
-                ? `<div class="h-1.5 rounded" style="border:1px dashed rgba(251,191,36,0.5)"></div>`
-                : `<div class="h-1.5 rounded bg-slate-700 overflow-hidden"><div class="h-full bg-blue-500" style="width:${Math.max(1.5, (t.cost || 0) / maxCost * 100)}%"></div></div>`;
+                ? `<div style="height:8px;border-radius:4px;border:1px dashed rgba(251,191,36,0.5)"></div>`
+                : `<div style="height:8px;border-radius:4px;background:#334155;overflow:hidden"><div style="height:100%;background:#3b82f6;width:${Math.max(1.5, (t.cost || 0) / maxCost * 100)}%"></div></div>`;
             const right = noTime
                 ? `<span class="font-mono text-amber-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; geen tijd</span>`
                 : `<span class="font-mono text-slate-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; ${_inzetEur(t.cost || 0)}</span>`;
             return `<button data-inzet-row="${escapeHtml(code)}" onclick="selectInzetMachine('${_jsArg(code)}')"
-                class="w-full text-left rounded px-1.5 py-1 ${sel ? 'bg-blue-600/20 ring-1 ring-blue-400/60' : 'hover:bg-slate-700/60'}">
-                <div class="flex justify-between gap-2 text-xs"><span><span class="font-mono font-semibold">${escapeHtml(code)}</span>
-                    <span class="text-slate-400">${escapeHtml(String(machine.name || '').replace(/^Maastricht /, '').slice(0, 24))}</span></span>${right}</div>
-                <div class="mt-1">${bar}</div></button>`;
+                class="w-full text-left rounded ${sel ? 'bg-blue-600/20 ring-1 ring-blue-400/60' : 'hover:bg-slate-700/60'}" style="padding:6px 8px">
+                <div style="display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px"><span class="font-mono font-semibold" style="font-size:13px">${escapeHtml(code)}</span>
+                    <span class="text-slate-400" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(machine.name || '')}">${escapeHtml(String(machine.name || '').replace(/^Maastricht /, ''))}</span></div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><div style="flex:1 1 auto;min-width:0">${bar}</div><div class="text-xs" style="flex:0 0 118px;white-space:nowrap;text-align:right">${right}</div></div></button>`;
         }).join('');
         return head + items;
     }).join('');
@@ -13678,6 +13678,51 @@ function _renderInzetRail(codes, totaal) {
         || '<div class="text-xs text-slate-500 p-2">Geen machine voldoet aan het filter.</div>';
     document.getElementById('inzetRailFoot').innerHTML = `<span>${codes.length}${codes.length !== totaal ? ` van ${totaal}` : ''} machines &middot; horizon</span>
         <span class="font-mono text-slate-200">${_fmtNlNum(horizon.changeovers || 0, 0)}&times; &middot; ${_inzetEur(horizon.cost || 0)}</span>`;
+}
+
+// Leesbare, per machine UNIEKE productlabels. SAP-namen zijn
+// "Chalk B38 PO 800:B4S:H4:NB:800": basisnaam, verpakkingstype, gewicht en
+// specificatie. Eerst de basisnaam; botsen er twee, dan het gewicht erbij
+// ("Chalk B38 · 800"); botsen ze nog, dan alleen de specificatievelden die
+// verschillen ("Bentonite D90 · 1000 · H2" naast "· NO"); als laatste het
+// materiaalnummer. Zo blijft het kort waar het kan en precies waar het moet.
+function _inzetLabels(mats, names) {
+    const parse = mat => {
+        const n = String(names[mat] || mat).trim();
+        const m = n.match(/^(.*?)\s+(PO|BB|BULK|IBC|SB|BK|BAG)\b\s*(\S*)$/i);
+        if (!m) return { base: n, pack: '', spec: [] };
+        return { base: m[1].trim(), pack: m[2].toUpperCase(), spec: m[3].split(':').filter(Boolean) };
+    };
+    const info = {};
+    mats.forEach(m => { info[m] = parse(m); });
+    const l1 = m => {
+        const i = info[m];
+        const packPrefix = i.pack && i.pack !== 'PO' ? i.pack + ' ' : '';
+        if (i.spec[0]) return `${i.base} · ${packPrefix}${i.spec[0]}`;
+        return i.pack ? `${i.base} · ${i.pack}` : i.base;
+    };
+    const labels = {};
+    mats.forEach(m => { labels[m] = info[m].base; });
+    const groups = () => {
+        const g = {};
+        mats.forEach(m => { (g[labels[m]] = g[labels[m]] || []).push(m); });
+        return Object.values(g).filter(x => x.length > 1);
+    };
+    groups().forEach(g => g.forEach(m => { labels[m] = l1(m); }));
+    groups().forEach(g => {
+        const maxLen = Math.max(...g.map(m => info[m].spec.length));
+        const diff = [];
+        for (let k = 1; k < maxLen; k++) {
+            const vals = new Set(g.map(m => info[m].spec[k] || ''));
+            if (vals.size > 1) diff.push(k);
+        }
+        g.forEach(m => {
+            const extra = diff.map(k => info[m].spec[k] || '—').join(' ');
+            labels[m] = extra ? `${labels[m]} · ${extra}` : labels[m];
+        });
+    });
+    groups().forEach(g => g.forEach(m => { labels[m] = `${labels[m]} · ${m}`; }));
+    return labels;
 }
 
 function _inzetAxisMax(machine, periods) {
@@ -13705,8 +13750,8 @@ function _renderInzetBoard(code) {
     const palette = ['#2563eb', '#3b82f6', '#60a5fa', '#1d4ed8', '#38bdf8', '#0ea5e9'];
     const colorOf = {};
     seq.forEach((mat, i) => { colorOf[mat] = hoursPer === null ? (i % 2 ? '#475569' : '#64748b') : palette[i % palette.length]; });
-    // Kort label: naam tot de verpakkingsspecificatie ("ATH SG40 PO 25:PA:…" → "SG40").
-    const shortName = mat => String(names[mat] || mat).replace(/\s+PO\s.*$/, '').replace(/^ATH /, '').slice(0, 18);
+    const labels = _inzetLabels(seq, names);
+    const shortName = mat => labels[mat] || mat;
     const rateOwn = (data.changeover_times[code] || {}).cost_per_hour;
     const rateSource = machine.rate_source === 'omsteltijden' ? 'eigen tarief'
         : machine.rate_source === 'machinetarief' ? 'machinetarief' : 'geen tarief';
@@ -13735,7 +13780,7 @@ function _renderInzetBoard(code) {
                     <input type="text" value="${hoursPer !== null ? escapeHtml(String(hoursPer)) : ''}" placeholder="—"
                         data-inzet-machine="${escapeHtml(code)}" class="bg-slate-700 rounded px-2 py-0.5 w-16 text-right text-slate-100 ${hoursPer === null ? 'ring-1 ring-amber-400/60' : ''}"
                         onchange="saveChangeoverTime(this)"></label>
-                <label class="flex flex-col gap-0.5">Tarief (&euro;/u) <span class="${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">${escapeHtml(rateSource)}</span>
+                <label class="flex flex-col gap-0.5"><span>Tarief (&euro;/u) <span class="${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">&middot; ${escapeHtml(rateSource)}</span></span>
                     <input type="text" value="${rateOwn !== null && rateOwn !== undefined ? escapeHtml(String(rateOwn)) : ''}"
                         placeholder="${machine.rate_source === 'machinetarief' ? escapeHtml(_fmtNlNum(machine.rate, 2)) : '—'}"
                         data-inzet-rate="${escapeHtml(code)}" title="${escapeHtml(rateSource)}${machine.rate > 0 ? ': € ' + _fmtNlNum(machine.rate, 2) + '/u' : ''}"
@@ -13757,9 +13802,13 @@ function _renderInzetBoard(code) {
         const segs = active.map((mat, i) => {
             const h = hours[mat][p];
             const w = h / axis * 100;
-            const label = w >= 4.5 ? escapeHtml(shortName(mat)) : '';
-            const block = `<div class="flex items-center px-1.5 text-[11px] whitespace-nowrap overflow-hidden" style="flex:0 0 ${w.toFixed(2)}%;min-width:0;background:${colorOf[mat]}"
-                title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — ${_fmtNlNum(h, 1)} u">${label}</div>`;
+            const label = escapeHtml(shortName(mat));
+            const block = `<div class="inzet-block" draggable="true"
+                style="flex:0 0 ${w.toFixed(2)}%;min-width:0;box-sizing:border-box;background:${colorOf[mat]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;line-height:1.75rem;padding:0 6px;cursor:grab"
+                data-inzet-mat="${escapeHtml(mat)}"
+                ondragstart="_inzetDragStart(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragover="_inzetDragOver(event)"
+                ondragleave="_inzetDragLeave(event)" ondrop="_inzetDrop(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragend="_inzetDragEnd(event)"
+                title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — ${_fmtNlNum(h, 1)} u — sleep om de volgorde te wijzigen">${label}</div>`;
             const gap = i < active.length - 1 && gapW > 0
                 ? `<div style="flex:0 0 ${gapW.toFixed(2)}%;min-width:3px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="omstelling ${_fmtNlNum(hoursPer, 1)} u"></div>` : '';
             return block + gap;
@@ -13780,20 +13829,26 @@ function _renderInzetBoard(code) {
         </div>`;
     }).join('');
 
-    const chips = seq.map((mat, i) => `<span class="inline-flex items-center gap-1 rounded-full pl-2 pr-1 py-0.5 text-[11px]" style="background:${colorOf[mat]};color:#fff" data-inzet-seq="${escapeHtml(mat)}" title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')}">
-        <span><span class="font-mono opacity-80">${i + 1}</span> ${escapeHtml(shortName(mat))}</span>
-        <button class="opacity-70 hover:opacity-100 ${i === 0 ? 'invisible' : ''}" title="Eerder" onclick="moveInzetProduct('${_jsArg(code)}', ${i}, -1)">&#9664;</button>
-        <button class="opacity-70 hover:opacity-100 ${i === seq.length - 1 ? 'invisible' : ''}" title="Later" onclick="moveInzetProduct('${_jsArg(code)}', ${i}, 1)">&#9654;</button></span>`).join('');
+    const chips = seq.map((mat, i) => `<span class="inzet-chip" draggable="true"
+        style="display:inline-flex;align-items:center;gap:6px;border-radius:4px;padding:2px 8px 2px 6px;font-size:11px;cursor:grab;user-select:none;background:${colorOf[mat]};color:#fff" data-inzet-seq="${escapeHtml(mat)}" title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — sleep om te verplaatsen"
+        ondragstart="_inzetDragStart(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragover="_inzetDragOver(event)"
+        ondragleave="_inzetDragLeave(event)" ondrop="_inzetDrop(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragend="_inzetDragEnd(event)">
+        <span class="font-mono" style="font-size:10px;opacity:0.8">${i + 1}</span><span>${escapeHtml(shortName(mat))}</span></span>`).join('');
     const footer = `<div class="flex gap-2 items-start border-t border-slate-700 pt-2 mt-1">
         <div class="text-xs font-semibold text-slate-300" style="flex:0 0 60px">Volgorde</div>
-        <div class="flex-1 flex flex-wrap gap-1">${chips || '<span class="text-xs text-slate-500">Geen producten met draaiuren op deze machine.</span>'}</div>
-        <div style="flex:0 0 170px" class="text-right text-[11px] text-slate-500">pijltjes = wat-als van deze sessie; het aantal verandert pas met van&rarr;naar-tijden (fase 3)</div></div>`;
+        <div style="flex:1 1 auto;display:flex;flex-wrap:wrap;gap:4px" data-inzet-chips="${escapeHtml(code)}">${chips || '<span class="text-xs text-slate-500">Geen producten met draaiuren op deze machine.</span>'}</div>
+        <div style="flex:0 0 170px" class="text-right text-[11px] text-slate-500">sleep een blok of chip; de volgorde is een wat-als van deze sessie</div></div>`;
     const legend = `<div class="text-[11px] text-slate-500 flex flex-wrap gap-4 mt-2">
         <span><span class="inline-block align-middle mr-1" style="width:14px;height:10px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)"></span>omstelling${hoursPer !== null ? ` (${_fmtNlNum(hoursPer, 1)} u)` : ''}</span>
         <span><span class="inline-block align-middle mr-1 bg-blue-600" style="width:10px;height:10px"></span>product (breedte = draaiuren)</span>
         ${hoursPer === null ? '<span class="text-amber-300">Vul een omsteltijd in om wissels, uren en kosten te zien.</span>' : ''}</div>`;
 
     host.innerHTML = header + axisRow + `<div class="flex flex-col gap-1 mt-1">${rows}</div>` + footer + legend;
+    // Een label dat niet past is ruis ("ATH S…"): alleen laten staan als het
+    // hele woord in het blok past; de naam blijft in de tooltip en de chips.
+    host.querySelectorAll('.inzet-block').forEach(el => {
+        if (el.scrollWidth > el.clientWidth + 1) el.textContent = '';
+    });
 }
 
 function selectInzetMachine(code) {
@@ -13825,6 +13880,67 @@ async function _postInzetSequences(next) {
         if (!res.ok || data.error) { notify(data.error || 'Volgorde opslaan mislukt.', 'error', 5000); return; }
     } catch (err) { notify('Volgorde opslaan mislukt: ' + err, 'error', 5000); return; }
     await loadMachineInzet();   // server rekent; selectie en filters blijven staan
+}
+
+// Slepen: een blok (in een maandregel) of een chip (in de volgordebalk)
+// verplaatsen naar vóór of ná een ander product. De volgorde is één lijst
+// per machine, dus slepen in welke maand dan ook verplaatst het product in
+// die ene lijst; de drop-zijde (linker- of rechterhelft van het doel)
+// bepaalt vóór of ná.
+let _inzetDrag = null;
+
+function _inzetDragStart(event, code, mat) {
+    _inzetDrag = { code, mat };
+    event.dataTransfer.effectAllowed = 'move';
+    try { event.dataTransfer.setData('text/plain', mat); } catch (e) { /* oudere browsers */ }
+    event.currentTarget.classList.add('opacity-50');
+}
+
+function _inzetDragOver(event) {
+    if (!_inzetDrag) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const el = event.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const after = (event.clientX - rect.left) > rect.width / 2;
+    el.style.boxShadow = after ? 'inset -3px 0 0 #fbbf24' : 'inset 3px 0 0 #fbbf24';
+}
+
+function _inzetDragLeave(event) {
+    event.currentTarget.style.boxShadow = '';
+}
+
+function _inzetDragEnd(event) {
+    event.currentTarget.classList.remove('opacity-50');
+    document.querySelectorAll('#inzetBoard .inzet-block, #inzetBoard .inzet-chip').forEach(el => { el.style.boxShadow = ''; });
+    _inzetDrag = null;
+}
+
+function _inzetDrop(event, code, targetMat) {
+    event.preventDefault();
+    const el = event.currentTarget;
+    el.style.boxShadow = '';
+    if (!_inzetDrag || _inzetDrag.code !== code) return;
+    const rect = el.getBoundingClientRect();
+    const after = (event.clientX - rect.left) > rect.width / 2;
+    const moving = _inzetDrag.mat;
+    _inzetDrag = null;
+    _inzetDropProduct(code, moving, targetMat, after);
+}
+
+// Zet `mat` vóór (after=false) of ná (after=true) `targetMat` in de
+// volgorde van de machine en sla dat op als sessie-wat-als.
+function _inzetDropProduct(code, mat, targetMat, after) {
+    if (mat === targetMat) return;
+    const seq = [...(_inzetState.data.machines[code].sequence || [])];
+    const from = seq.indexOf(mat);
+    if (from < 0 || !seq.includes(targetMat)) return;
+    seq.splice(from, 1);
+    const to = seq.indexOf(targetMat) + (after ? 1 : 0);
+    seq.splice(to, 0, mat);
+    const huidig = _inzetState.data.machines[code].sequence || [];
+    if (seq.every((m, i) => m === huidig[i])) return;   // niets veranderd
+    _postInzetSequences({ ..._inzetState.sequences, [code]: seq });
 }
 
 function moveInzetProduct(code, index, delta) {

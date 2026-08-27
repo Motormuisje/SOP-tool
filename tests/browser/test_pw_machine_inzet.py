@@ -240,7 +240,7 @@ def test_aantal_is_sessie_wat_als_en_overleeft_herlaad(browser_page):
 
 def test_volgorde_is_wat_als_en_overleeft_herlaad(browser_page):
     """De volgordechips volgen de API (standaard: grootste run eerst). Een
-    pijl verplaatst een product als sessie-wat-als: de API draagt de
+    verplaatsing (programmatisch én via de drop-handler) is sessie-wat-als: de API draagt de
     volgorde, hij overleeft een herlaad, de blokken op het bord volgen, en
     'Terug naar standaard' ruimt hem op. Het aantal verandert niet."""
     page = browser_page
@@ -275,6 +275,18 @@ def test_volgorde_is_wat_als_en_overleeft_herlaad(browser_page):
         assert titels.index(nieuw[0]) < titels.index(nieuw[1]), titels
     na = _api(base_url)
     assert na["machines"][code]["total"]["changeovers"] == api["machines"][code]["total"]["changeovers"]
+
+    # Slepen: het eerste product ná het laatste zetten (de drop-handler zonder muis).
+    with page.expect_response(lambda r: "/api/machine_inzet/sequences" in r.url and r.ok):
+        page.evaluate("([c, s]) => _inzetDropProduct(c, s[0], s[s.length - 1], true)", [code, nieuw])
+    page.wait_for_function(
+        "([c, last]) => _inzetState.data.machines[c].sequence[_inzetState.data.machines[c].sequence.length - 1] === last",
+        arg=[code, nieuw[0]], timeout=15000)
+    gesleept = page.evaluate("(c) => _inzetState.data.machines[c].sequence", code)
+    assert gesleept == nieuw[1:] + nieuw[:1], (gesleept, nieuw)
+    assert page.evaluate("() => document.querySelectorAll('#inzetBoard .inzet-block[draggable=\"true\"]').length > 0")
+    assert page.evaluate("() => document.querySelectorAll('#inzetBoard .inzet-chip[draggable=\"true\"]').length") == len(nieuw)
+    nieuw = gesleept
 
     _open_inzet(page)
     assert page.evaluate("(c) => _inzetState.sequences[c]", code) == nieuw
