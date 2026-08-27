@@ -13752,6 +13752,16 @@ function _renderInzetBoard(code) {
     seq.forEach((mat, i) => { colorOf[mat] = hoursPer === null ? (i % 2 ? '#475569' : '#64748b') : palette[i % palette.length]; });
     const labels = _inzetLabels(seq, names);
     const shortName = mat => labels[mat] || mat;
+    // Korte code voor krappe blokken: het laatste woord van de basisnaam
+    // ("Chalk B38 · 800" → "B38·800", "Glass Fibre GL3B" → "GL3B").
+    const shortCode = mat => {
+        const [base, ...rest] = String(labels[mat] || mat).split(' · ');
+        const woorden = base.trim().split(/\s+/);
+        // Een te kort laatste woord ("LV", "X") zegt niets: dan de laatste twee.
+        const code = woorden.length > 1 && woorden[woorden.length - 1].length < 3
+            ? woorden.slice(-2).join(' ') : woorden[woorden.length - 1];
+        return rest.length ? `${code}·${rest.join('·')}` : code;
+    };
     const rateOwn = (data.changeover_times[code] || {}).cost_per_hour;
     const rateSource = machine.rate_source === 'omsteltijden' ? 'eigen tarief'
         : machine.rate_source === 'machinetarief' ? 'machinetarief' : 'geen tarief';
@@ -13803,14 +13813,14 @@ function _renderInzetBoard(code) {
             const h = hours[mat][p];
             const w = h / axis * 100;
             const label = escapeHtml(shortName(mat));
-            const block = `<div class="inzet-block" draggable="true"
-                style="flex:0 0 ${w.toFixed(2)}%;min-width:0;box-sizing:border-box;background:${colorOf[mat]};overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;line-height:1.75rem;padding:0 6px;cursor:grab"
+            const block = `<div class="inzet-block" draggable="true" data-label-full="${label}" data-label-short="${escapeHtml(shortCode(mat))}" data-label-index="${seq.indexOf(mat) + 1}"
+                style="flex:0 1 ${w.toFixed(2)}%;min-width:20px;box-sizing:border-box;background:${colorOf[mat]};overflow:hidden;white-space:nowrap;font-size:11px;line-height:36px;padding:0 3px;text-align:center;cursor:grab;border-right:1px solid rgba(15,23,42,0.45)"
                 data-inzet-mat="${escapeHtml(mat)}"
                 ondragstart="_inzetDragStart(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragover="_inzetDragOver(event)"
                 ondragleave="_inzetDragLeave(event)" ondrop="_inzetDrop(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragend="_inzetDragEnd(event)"
                 title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — ${_fmtNlNum(h, 1)} u — sleep om de volgorde te wijzigen">${label}</div>`;
             const gap = i < active.length - 1 && gapW > 0
-                ? `<div style="flex:0 0 ${gapW.toFixed(2)}%;min-width:3px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="omstelling ${_fmtNlNum(hoursPer, 1)} u"></div>` : '';
+                ? `<div style="flex:0 0 ${gapW.toFixed(2)}%;min-width:5px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="omstelling ${_fmtNlNum(hoursPer, 1)} u"></div>` : '';
             return block + gap;
         }).join('');
         const uren = info.changeover_hours;
@@ -13823,21 +13833,17 @@ function _renderInzetBoard(code) {
             + ' · klik om het aantal te overschrijven';
         return `<div class="flex gap-2 items-center" data-inzet-month="${escapeHtml(p)}">
             <div class="text-xs text-slate-300" style="flex:0 0 60px">${escapeHtml(p)}</div>
-            <div class="flex-1 flex h-7 rounded overflow-hidden min-w-0" style="background:rgba(51,65,85,0.45)">${segs}</div>
+            <div class="flex-1 flex rounded overflow-hidden min-w-0" style="height:36px;background:rgba(51,65,85,0.45)">${segs}</div>
             <div style="flex:0 0 170px" class="text-right whitespace-nowrap"><button class="font-mono text-xs hover:underline decoration-dotted" data-inzet-cell="${escapeHtml(p)}"
                 title="${escapeHtml(title)}" onclick="editInzetCell('${_jsArg(code)}','${_jsArg(p)}', this)">${label}</button></div>
         </div>`;
     }).join('');
 
-    const chips = seq.map((mat, i) => `<span class="inzet-chip" draggable="true"
-        style="display:inline-flex;align-items:center;gap:6px;border-radius:4px;padding:2px 8px 2px 6px;font-size:11px;cursor:grab;user-select:none;background:${colorOf[mat]};color:#fff" data-inzet-seq="${escapeHtml(mat)}" title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — sleep om te verplaatsen"
-        ondragstart="_inzetDragStart(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragover="_inzetDragOver(event)"
-        ondragleave="_inzetDragLeave(event)" ondrop="_inzetDrop(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragend="_inzetDragEnd(event)">
-        <span class="font-mono" style="font-size:10px;opacity:0.8">${i + 1}</span><span>${escapeHtml(shortName(mat))}</span></span>`).join('');
-    const footer = `<div class="flex gap-2 items-start border-t border-slate-700 pt-2 mt-1">
-        <div class="text-xs font-semibold text-slate-300" style="flex:0 0 60px">Volgorde</div>
-        <div style="flex:1 1 auto;display:flex;flex-wrap:wrap;gap:4px" data-inzet-chips="${escapeHtml(code)}">${chips || '<span class="text-xs text-slate-500">Geen producten met draaiuren op deze machine.</span>'}</div>
-        <div style="flex:0 0 170px" class="text-right text-[11px] text-slate-500">sleep een blok of chip; de volgorde is een wat-als van deze sessie</div></div>`;
+    const legenda = seq.map((mat, i) => `<span class="whitespace-nowrap" title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')}"><span class="inline-block rounded-sm font-mono text-center" style="width:18px;background:${colorOf[mat]};color:#fff;font-size:10px;line-height:15px;margin-right:3px">${i + 1}</span>${escapeHtml(shortName(mat))}</span>`).join('');
+    const footer = `<div class="text-[11px] text-slate-400 mt-2" style="display:flex;flex-wrap:wrap;gap:4px 12px" data-inzet-legend="${escapeHtml(code)}">${legenda}</div>
+        <div class="text-[11px] text-slate-500 border-t border-slate-700 pt-2 mt-2">
+        <b class="text-slate-300">Volgorde wijzigen:</b> sleep een blok op het bord naar links of rechts van een ander product (in welke maand dan ook &mdash; de volgorde geldt voor de hele horizon).
+        De volgorde is een wat-als van deze sessie en gaat mee in het scenario.</div>`;
     const legend = `<div class="text-[11px] text-slate-500 flex flex-wrap gap-4 mt-2">
         <span><span class="inline-block align-middle mr-1" style="width:14px;height:10px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)"></span>omstelling${hoursPer !== null ? ` (${_fmtNlNum(hoursPer, 1)} u)` : ''}</span>
         <span><span class="inline-block align-middle mr-1 bg-blue-600" style="width:10px;height:10px"></span>product (breedte = draaiuren)</span>
@@ -13846,7 +13852,26 @@ function _renderInzetBoard(code) {
     host.innerHTML = header + axisRow + `<div class="flex flex-col gap-1 mt-1">${rows}</div>` + footer + legend;
     // Een label dat niet past is ruis ("ATH S…"): alleen laten staan als het
     // hele woord in het blok past; de naam blijft in de tooltip en de chips.
+    // Smal venster of drukke maand: als de minimumbreedtes samen niet in de
+    // balk passen, krimpt het minimum voor die regel (nooit onder 8 px) zodat
+    // de balk binnen zijn regel blijft en elk product een handvat houdt.
+    host.querySelectorAll('[data-inzet-month]').forEach(row => {
+        const first = row.querySelector('[data-inzet-mat]');
+        if (!first) return;
+        const bar = first.parentElement;
+        const blocks = [...bar.querySelectorAll('.inzet-block')];
+        const gaps = [...bar.children].filter(k => !k.classList.contains('inzet-block'));
+        const som = [...bar.children].reduce((a, k) => a + k.getBoundingClientRect().width, 0);
+        const beschikbaar = bar.getBoundingClientRect().width;
+        if (som > beschikbaar + 0.5 && blocks.length) {
+            const gapPx = gaps.reduce((a, k) => a + k.getBoundingClientRect().width, 0);
+            const minW = Math.max(8, Math.floor((beschikbaar - gapPx) / blocks.length));
+            blocks.forEach(b => { b.style.minWidth = minW + 'px'; });
+        }
+    });
     host.querySelectorAll('.inzet-block').forEach(el => {
+        if (el.scrollWidth > el.clientWidth + 1) el.textContent = el.dataset.labelShort || '';
+        if (el.scrollWidth > el.clientWidth + 1) el.textContent = el.dataset.labelIndex || '';
         if (el.scrollWidth > el.clientWidth + 1) el.textContent = '';
     });
 }
@@ -13912,7 +13937,7 @@ function _inzetDragLeave(event) {
 
 function _inzetDragEnd(event) {
     event.currentTarget.classList.remove('opacity-50');
-    document.querySelectorAll('#inzetBoard .inzet-block, #inzetBoard .inzet-chip').forEach(el => { el.style.boxShadow = ''; });
+    document.querySelectorAll('#inzetBoard .inzet-block').forEach(el => { el.style.boxShadow = ''; });
     _inzetDrag = null;
 }
 

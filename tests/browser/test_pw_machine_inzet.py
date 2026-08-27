@@ -254,8 +254,17 @@ def test_volgorde_is_wat_als_en_overleeft_herlaad(browser_page):
     assert api["machines"][code]["sequence_source"] == "standaard"
     _select(page, code)
 
-    chips = page.evaluate("() => [...document.querySelectorAll('#inzetBoard [data-inzet-seq]')].map(r => r.dataset.inzetSeq)")
-    assert chips == verwacht, (chips, verwacht)
+    def _blokvolgorde():
+        """Per maandregel de productvolgorde van de blokken (materiaalnummers)."""
+        return page.evaluate(
+            "() => [...document.querySelectorAll('#inzetBoard [data-inzet-month]')].map(r =>"
+            " [r.dataset.inzetMonth, [...r.querySelectorAll('[data-inzet-mat]')].map(b => b.dataset.inzetMat)])")
+
+    def _check_blokken(seq):
+        for maand, blokken in _blokvolgorde():
+            assert blokken == [m for m in seq if m in blokken], (maand, blokken, seq)
+            assert len(blokken) == len(api["machines"][code]["per_period"][maand]["products"])
+    _check_blokken(verwacht)
 
     with page.expect_response(lambda r: "/api/machine_inzet/sequences" in r.url and r.ok):
         page.evaluate("(c) => moveInzetProduct(c, 0, 1)", code)
@@ -264,15 +273,7 @@ def test_volgorde_is_wat_als_en_overleeft_herlaad(browser_page):
         arg=code, timeout=15000)
     nieuw = page.evaluate("(c) => _inzetState.data.machines[c].sequence", code)
     assert nieuw[:2] == [verwacht[1], verwacht[0]] and nieuw[2:] == verwacht[2:]
-    assert page.evaluate("() => [...document.querySelectorAll('#inzetBoard [data-inzet-seq]')].map(r => r.dataset.inzetSeq)") == nieuw
-    # De blokken in een maand waarin beide producten draaien staan in de nieuwe volgorde.
-    periode = next((p for p in api["periods"]
-                    if all((api["machines"][code]["product_hours"][m].get(p, 0) or 0) > 0 for m in nieuw[:2])), None)
-    if periode:
-        titels = page.evaluate(
-            "(p) => [...document.querySelectorAll(`#inzetBoard [data-inzet-month=\"${p}\"] .flex-1 > div[title]`)]"
-            ".filter(d => !d.title.startsWith('omstelling')).map(d => d.title.split(' — ')[0])", periode)
-        assert titels.index(nieuw[0]) < titels.index(nieuw[1]), titels
+    _check_blokken(nieuw)
     na = _api(base_url)
     assert na["machines"][code]["total"]["changeovers"] == api["machines"][code]["total"]["changeovers"]
 
@@ -285,7 +286,11 @@ def test_volgorde_is_wat_als_en_overleeft_herlaad(browser_page):
     gesleept = page.evaluate("(c) => _inzetState.data.machines[c].sequence", code)
     assert gesleept == nieuw[1:] + nieuw[:1], (gesleept, nieuw)
     assert page.evaluate("() => document.querySelectorAll('#inzetBoard .inzet-block[draggable=\"true\"]').length > 0")
-    assert page.evaluate("() => document.querySelectorAll('#inzetBoard .inzet-chip[draggable=\"true\"]').length") == len(nieuw)
+    # Elk blok heeft een handvat (minimaal 20 px; in een smal venster krimpt dat tot minimaal 8 px) en de balk blijft binnen zijn regel.
+    assert page.evaluate("() => [...document.querySelectorAll('#inzetBoard .inzet-block')].every(b => b.getBoundingClientRect().width >= 8)")
+    assert page.evaluate("() => [...document.querySelectorAll('#inzetBoard [data-inzet-month]')].every(r => { const first = r.querySelector('[data-inzet-mat]'); if (!first) return true; const bar = first.parentElement; return [...bar.children].reduce((a, k) => a + k.getBoundingClientRect().width, 0) <= bar.getBoundingClientRect().width + 1; })")
+    assert page.evaluate("(c) => document.querySelectorAll(`#inzetBoard [data-inzet-legend=\"${c}\"] span[title]`).length", code) == len(gesleept)
+    _check_blokken(gesleept)
     nieuw = gesleept
 
     _open_inzet(page)
