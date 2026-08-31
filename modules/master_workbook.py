@@ -658,9 +658,15 @@ def absorb_equivalents(previous, incoming):
     would flag those as changes and a confirmed no-op import would churn
     the store. Genuine edits pass through untouched."""
     if isinstance(incoming, dict) and isinstance(previous, dict):
-        for key, value in incoming.items():
+        for key, value in list(incoming.items()):
             if key in previous:
                 incoming[key] = absorb_equivalents(previous[key], value)
+            elif value is None:
+                # Een veld dat in de store nog niet bestond (bv. cost_per_hour
+                # van vóór fase 1b) en uit het werkboek als lege cel terugkomt
+                # is geen wijziging: weglaten, anders meldt elke ongewijzigde
+                # rondgang 'gewijzigd' en bumpt bevestigen de versie.
+                del incoming[key]
         return incoming
     if isinstance(incoming, list) and isinstance(previous, list):
         prev_by_id = {ident: p for p in previous

@@ -1415,7 +1415,7 @@
                               title="Fase 2 laat de omsteluren het beschikbaarheidsvenster verlagen; tot die tijd is dit overzicht informatief.">rekent nog niet door in de planning</span>
                     </div>
                     <p class="text-xs text-slate-500 mb-3">Productiegetallen komen uit de planning (Line 07). Kies links een machine; rechts zie je per maand
-                        welke producten erop draaien, in welke <b>volgorde</b> (pijltjes = wat-als van deze sessie) en waar de wissels zitten. Het aantal
+                        welke producten erop draaien, in welke <b>volgorde</b> (sleep een blok = wat-als van deze sessie) en waar de wissels zitten. Het aantal
                         omstellingen is een <b>schatting</b>: producten per maand min &eacute;&eacute;n &mdash; klik het getal rechts om het te overschrijven.
                         Omsteltijd en tarief zijn masterdata (gelden overal); zonder eigen tarief rekent het bord met het machinetarief uit de machinekosten.
                         Kosten = omstellingen &times; omsteltijd &times; tarief.</p>
@@ -3007,6 +3007,7 @@ async function runCalc() {
         if (data.log) log(data.log.trimEnd());
         log('--- ' + data.summary.total_rows + ' rows | ' + data.summary.line_types_count + ' line types ---');
         await loadResults();
+        _invalidateInzet();
         await loadValueResults();
         await _renderDashboardOrDefer();
         document.getElementById('exportBtn').disabled = false;
@@ -9751,6 +9752,7 @@ function updateTableFromResults(results, valueResults) {
 
 async function refreshAllTabs() {
     if (!state.results) return;
+    _invalidateInzet();
     renderPlanningTable(state.results, state.periods);
     updateTableFromResults(state.results, state.valueResults || null);
     updateEditBadge();
@@ -9985,6 +9987,7 @@ async function resetAllEdits() {
             state.dashboardDirty = true;
             await _refreshDerivedViews({ forceDashboard: true, refreshCapacity: true, refreshInventory: true });
             renderMachineDeltaSummary();
+            _invalidateInzet();
             log('All edits reset to original values.');
             _markAutoSaved();
         } else {
@@ -13520,9 +13523,11 @@ function _renderFteComparison(variants) {
 let _inzetState = { data: null, overrides: {}, sequences: {}, selected: null,
                     sort: 'cost', query: '' };
 
-async function loadMachineInzet() {
-    // De combinatiekaart op dit tabblad deelt _fteState met de werkbank.
-    loadFteWorkbench();
+async function loadMachineInzet({ withFte = true } = {}) {
+    // De combinatiekaart op dit tabblad deelt _fteState met de werkbank —
+    // alleen verversen bij openen en na een masterdata-wijziging, niet bij
+    // elke wat-als (dat kostte per bewerking een volledige FTE-berekening).
+    if (withFte) loadFteWorkbench();
     try {
         const res = await fetch('/api/machine_inzet');
         const data = await res.json();
@@ -13541,6 +13546,18 @@ async function loadMachineInzet() {
     } catch (err) {
         notify('Machine-inzet laden mislukt: ' + err, 'error', 5000);
     }
+}
+
+// Na Bereken, Reset, sessiewissel of scenario-laden is de servertoestand
+// (overrides, volgordes, horizon) veranderd; de clientkopie mag dan nooit
+// meer teruggeschreven worden. Leegmaken, en meteen herladen als het
+// tabblad open staat.
+function _invalidateInzet() {
+    _inzetState.data = null;
+    _inzetState.overrides = {};
+    _inzetState.sequences = {};
+    _inzetState.selected = null;
+    if (_activeTabName === 'inzet') loadMachineInzet();
 }
 
 // Aantal omstellingen voor machine × periode, zoals de server het rekende:
@@ -13623,23 +13640,27 @@ function renderMachineInzet() {
     const codes = _inzetCodes();
     _renderInzetKpis(codes);
     const zichtbaar = _inzetSortedCodes(codes.filter(_inzetMatches));
-    if (!_inzetState.selected || !data.machines[_inzetState.selected]) {
+    if (!_inzetState.selected || !codes.includes(_inzetState.selected)) {
         _inzetState.selected = zichtbaar[0] || codes[0] || null;
     }
+    _renderInzetTools();
     _renderInzetRail(zichtbaar, codes.length);
     _renderInzetBoard(_inzetState.selected);
 }
 
-function _renderInzetRail(codes, totaal) {
-    const data = _inzetState.data;
-    const m = data.machines;
-    const maxCost = Math.max(1, ...codes.map(c => (m[c].total || {}).cost || 0));
+function _renderInzetTools() {
     const chip = (key, label) => `<button onclick="setInzetSort('${key}')" class="text-xs px-2 py-0.5 rounded-full ${
         _inzetState.sort === key ? 'bg-blue-600/40 text-blue-100' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}">${label}</button>`;
     document.getElementById('inzetRailTools').innerHTML = `
         <input type="text" id="inzetSearch" value="${escapeHtml(_inzetState.query || '')}" placeholder="Zoek machine of product…"
             class="w-full bg-slate-700 rounded px-2 py-1 text-xs mb-2" oninput="setInzetQuery(this.value)">
         <div class="flex flex-wrap gap-1 mb-1">${chip('cost', 'kosten')}${chip('changeovers', 'omstellingen')}${chip('missing', 'zonder tijd eerst')}</div>`;
+}
+
+function _renderInzetRail(codes, totaal) {
+    const data = _inzetState.data;
+    const m = data.machines;
+    const maxCost = Math.max(1, ...codes.map(c => (m[c].total || {}).cost || 0));
 
     // Groeperen op machinegroep, in de volgorde waarin de sortering ze aanlevert.
     const groups = [];
@@ -13664,7 +13685,9 @@ function _renderInzetRail(codes, totaal) {
                 : `<div style="height:8px;border-radius:4px;background:#334155;overflow:hidden"><div style="height:100%;background:#3b82f6;width:${Math.max(1.5, (t.cost || 0) / maxCost * 100)}%"></div></div>`;
             const right = noTime
                 ? `<span class="font-mono text-amber-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; geen tijd</span>`
-                : `<span class="font-mono text-slate-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; ${_inzetEur(t.cost || 0)}</span>`;
+                : (machine.rate > 0
+                    ? `<span class="font-mono text-slate-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; ${_inzetEur(t.cost || 0)}</span>`
+                    : `<span class="font-mono text-amber-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; geen tarief</span>`);
             return `<button data-inzet-row="${escapeHtml(code)}" onclick="selectInzetMachine('${_jsArg(code)}')"
                 class="w-full text-left rounded ${sel ? 'bg-blue-600/20 ring-1 ring-blue-400/60' : 'hover:bg-slate-700/60'}" style="padding:6px 8px">
                 <div style="display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px"><span class="font-mono font-semibold" style="font-size:13px">${escapeHtml(code)}</span>
@@ -13675,7 +13698,9 @@ function _renderInzetRail(codes, totaal) {
     }).join('');
     const horizon = (data.totals || {}).horizon || {};
     document.getElementById('inzetRailList').innerHTML = rows
-        || '<div class="text-xs text-slate-500 p-2">Geen machine voldoet aan het filter.</div>';
+        || (totaal === 0
+            ? '<div class="text-xs text-slate-500 p-2">Geen machines met draaiuren of omsteltijd in deze horizon.</div>'
+            : '<div class="text-xs text-slate-500 p-2">Geen machine voldoet aan het filter.</div>');
     document.getElementById('inzetRailFoot').innerHTML = `<span>${codes.length}${codes.length !== totaal ? ` van ${totaal}` : ''} machines &middot; horizon</span>
         <span class="font-mono text-slate-200">${_fmtNlNum(horizon.changeovers || 0, 0)}&times; &middot; ${_inzetEur(horizon.cost || 0)}</span>`;
 }
@@ -13735,9 +13760,34 @@ function _inzetAxisMax(machine, periods) {
     return Math.max(20, Math.ceil(max / 20) * 20);
 }
 
+// Een re-render mag een veld waarin de gebruiker typt niet leegvegen: focus,
+// waarde en caret van het actieve bord-/zoekveld worden bewaard en teruggezet.
+function _inzetCaptureFocus() {
+    const el = document.activeElement;
+    if (!el || !el.matches || !el.matches('#inzetBoard input[data-inzet-machine], #inzetBoard input[data-inzet-rate], #inzetSearch')) return null;
+    const key = el.id === 'inzetSearch' ? 'search' : (el.dataset.inzetMachine !== undefined ? 'machine' : 'rate');
+    return { key, code: el.dataset.inzetMachine || el.dataset.inzetRate || '', value: el.value,
+             start: el.selectionStart, end: el.selectionEnd, defaultValue: el.defaultValue };
+}
+
+function _inzetRestoreFocus(saved) {
+    if (!saved) return;
+    const el = saved.key === 'search' ? document.getElementById('inzetSearch')
+        : document.querySelector(saved.key === 'machine'
+            ? `#inzetBoard input[data-inzet-machine="${CSS.escape(saved.code)}"]`
+            : `#inzetBoard input[data-inzet-rate="${CSS.escape(saved.code)}"]`);
+    if (!el) return;
+    // Alleen een nog niet opgeslagen tekst terugzetten; een net opgeslagen
+    // waarde komt uit de server en mag niet door een oude invoer worden overschreven.
+    if (saved.value !== saved.defaultValue) el.value = saved.value;
+    el.focus();
+    try { el.setSelectionRange(saved.start, saved.end); } catch (e) { /* type=number e.d. */ }
+}
+
 function _renderInzetBoard(code) {
     const data = _inzetState.data;
     const host = document.getElementById('inzetBoard');
+    const focus = _inzetCaptureFocus();
     if (!code) { host.innerHTML = '<div class="text-sm text-slate-500 p-4">Geen machines met draaiuren in deze horizon.</div>'; return; }
     const machine = data.machines[code];
     const periods = data.periods || [];
@@ -13787,11 +13837,11 @@ function _renderInzetBoard(code) {
             </div>
             <div class="flex gap-3 text-xs text-slate-400">
                 <label class="flex flex-col gap-0.5">Omsteltijd (u)
-                    <input type="text" value="${hoursPer !== null ? escapeHtml(String(hoursPer)) : ''}" placeholder="—"
+                    <input type="text" value="${hoursPer !== null ? escapeHtml(_fmtNlNum(hoursPer, 3)) : ''}" placeholder="—"
                         data-inzet-machine="${escapeHtml(code)}" class="bg-slate-700 rounded px-2 py-0.5 w-16 text-right text-slate-100 ${hoursPer === null ? 'ring-1 ring-amber-400/60' : ''}"
                         onchange="saveChangeoverTime(this)"></label>
                 <label class="flex flex-col gap-0.5"><span>Tarief (&euro;/u) <span class="${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">&middot; ${escapeHtml(rateSource)}</span></span>
-                    <input type="text" value="${rateOwn !== null && rateOwn !== undefined ? escapeHtml(String(rateOwn)) : ''}"
+                    <input type="text" value="${rateOwn !== null && rateOwn !== undefined ? escapeHtml(_fmtNlNum(rateOwn, 2)) : ''}"
                         placeholder="${machine.rate_source === 'machinetarief' ? escapeHtml(_fmtNlNum(machine.rate, 2)) : '—'}"
                         data-inzet-rate="${escapeHtml(code)}" title="${escapeHtml(rateSource)}${machine.rate > 0 ? ': € ' + _fmtNlNum(machine.rate, 2) + '/u' : ''}"
                         class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${machine.rate_source === 'omsteltijden' ? 'text-slate-100' : 'text-slate-400'}"
@@ -13809,6 +13859,13 @@ function _renderInzetBoard(code) {
         const { est, count, isOverride, info } = _inzetCount(code, p);
         const active = seq.filter(mat => (hours[mat] || {})[p] > 0);
         const gapW = hoursPer !== null && hoursPer > 0 ? hoursPer / axis * 100 : 0;
+        // Wissels volgen het AANTAL (schatting of wat-als): bij een lager aantal
+        // dan overgangen vallen de laatste gaten weg, bij een hoger aantal komt
+        // het overschot als één breder gat achteraan. Zo tellen bord en getal
+        // altijd hetzelfde.
+        const overgangen = Math.max(0, active.length - 1);
+        const getekend = Math.min(count, overgangen);
+        const overschot = Math.max(0, count - overgangen);
         const segs = active.map((mat, i) => {
             const h = hours[mat][p];
             const w = h / axis * 100;
@@ -13819,17 +13876,18 @@ function _renderInzetBoard(code) {
                 ondragstart="_inzetDragStart(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragover="_inzetDragOver(event)"
                 ondragleave="_inzetDragLeave(event)" ondrop="_inzetDrop(event, '${_jsArg(code)}', '${_jsArg(mat)}')" ondragend="_inzetDragEnd(event)"
                 title="${escapeHtml(mat)} — ${escapeHtml(names[mat] || '')} — ${_fmtNlNum(h, 1)} u — sleep om de volgorde te wijzigen">${label}</div>`;
-            const gap = i < active.length - 1 && gapW > 0
-                ? `<div style="flex:0 0 ${gapW.toFixed(2)}%;min-width:5px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="omstelling ${_fmtNlNum(hoursPer, 1)} u"></div>` : '';
+            const gap = i < getekend && gapW > 0
+                ? `<div class="inzet-gap" style="flex:0 0 ${gapW.toFixed(2)}%;min-width:5px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="omstelling ${_fmtNlNum(hoursPer, 1)} u"></div>` : '';
             return block + gap;
-        }).join('');
+        }).join('') + (overschot > 0 && gapW > 0
+            ? `<div class="inzet-gap" style="flex:0 0 ${(gapW * overschot).toFixed(2)}%;min-width:5px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)" title="${overschot} extra omstelling(en) volgens het wat-als aantal (${_fmtNlNum(hoursPer * overschot, 1)} u)"></div>` : '');
         const uren = info.changeover_hours;
         const label = uren !== null && uren !== undefined
             ? `<span class="${isOverride ? 'text-amber-300' : 'text-slate-500'}">${count}&times;</span> ${_fmtNlNum(uren, 1)} u &middot; <span class="font-semibold">${_inzetEur(info.cost || 0)}</span>`
             : `<span class="${isOverride ? 'text-amber-300' : 'text-slate-400'}">${count} omst.</span>`;
         const title = `${active.length} product(en) · ${_fmtNlNum(info.hours || 0, 0)} draaiuren`
             + (isOverride ? ` · wat-als (schatting was ${est})` : ' · schatting: producten − 1')
-            + (info.window_pct !== null && info.window_pct !== undefined ? ` · ${_fmtNlNum(info.window_pct, 1)}% van het venster` : '')
+            + (info.window_pct !== null && info.window_pct !== undefined ? ` · ${_fmtNlNum(info.window_pct, 1)}% van het groepsvenster (Line 11)` : '')
             + ' · klik om het aantal te overschrijven';
         return `<div class="flex gap-2 items-center" data-inzet-month="${escapeHtml(p)}">
             <div class="text-xs text-slate-300" style="flex:0 0 60px">${escapeHtml(p)}</div>
@@ -13843,13 +13901,15 @@ function _renderInzetBoard(code) {
     const footer = `<div class="text-[11px] text-slate-400 mt-2" style="display:flex;flex-wrap:wrap;gap:4px 12px" data-inzet-legend="${escapeHtml(code)}">${legenda}</div>
         <div class="text-[11px] text-slate-500 border-t border-slate-700 pt-2 mt-2">
         <b class="text-slate-300">Volgorde wijzigen:</b> sleep een blok op het bord naar links of rechts van een ander product (in welke maand dan ook &mdash; de volgorde geldt voor de hele horizon).
-        De volgorde is een wat-als van deze sessie en gaat mee in het scenario.</div>`;
+        De volgorde is een wat-als van deze sessie en gaat mee in het scenario; Reset en een nieuwe berekening zetten hem uit.
+        De volgorde verandert het aantal en de kosten nog niet: omsteltijden per overgang (van&rarr;naar) volgen in fase 3.</div>`;
     const legend = `<div class="text-[11px] text-slate-500 flex flex-wrap gap-4 mt-2">
         <span><span class="inline-block align-middle mr-1" style="width:14px;height:10px;background:repeating-linear-gradient(135deg,#fbbf24 0 3px,#b45309 3px 6px)"></span>omstelling${hoursPer !== null ? ` (${_fmtNlNum(hoursPer, 1)} u)` : ''}</span>
-        <span><span class="inline-block align-middle mr-1 bg-blue-600" style="width:10px;height:10px"></span>product (breedte = draaiuren)</span>
+        <span><span class="inline-block align-middle mr-1 bg-blue-600" style="width:10px;height:10px"></span>product (breedte &asymp; draaiuren; minimaal 20 px als handvat &mdash; exacte uren in de tooltip)</span>
         ${hoursPer === null ? '<span class="text-amber-300">Vul een omsteltijd in om wissels, uren en kosten te zien.</span>' : ''}</div>`;
 
     host.innerHTML = header + axisRow + `<div class="flex flex-col gap-1 mt-1">${rows}</div>` + footer + legend;
+    _inzetRestoreFocus(focus);
     // Een label dat niet past is ruis ("ATH S…"): alleen laten staan als het
     // hele woord in het blok past; de naam blijft in de tooltip en de chips.
     // Smal venster of drukke maand: als de minimumbreedtes samen niet in de
@@ -13887,12 +13947,25 @@ function setInzetSort(key) {
 }
 
 function setInzetQuery(value) {
+    // Alleen de lijst herbouwen: het zoekveld zelf blijft staan, met caret en
+    // IME-samenstelling intact.
     _inzetState.query = value;
     const codes = _inzetSortedCodes(_inzetCodes().filter(_inzetMatches));
     _renderInzetRail(codes, _inzetCodes().length);
-    // Het zoekveld is net opnieuw gebouwd: cursor terug aan het einde.
-    const input = document.getElementById('inzetSearch');
-    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+}
+
+// De volledige set die de server verwacht, opgebouwd uit wat het bord NU
+// als wat-als toont (niet uit een ruwe clientkopie): machines met bron
+// 'wat-als' en hun effectieve volgorde, plus de wijziging.
+function _inzetWatAlsSet(change = {}) {
+    const set = {};
+    for (const [c, m] of Object.entries((_inzetState.data || {}).machines || {})) {
+        if (m.sequence_source === 'wat-als') set[c] = [...(m.sequence || [])];
+    }
+    for (const [c, seq] of Object.entries(change)) {
+        if (seq === null) delete set[c]; else set[c] = seq;
+    }
+    return set;
 }
 
 async function _postInzetSequences(next) {
@@ -13903,12 +13976,13 @@ async function _postInzetSequences(next) {
         });
         const data = await res.json();
         if (!res.ok || data.error) { notify(data.error || 'Volgorde opslaan mislukt.', 'error', 5000); return; }
+        (data.warnings || []).forEach(w => notify(w, 'warning', 6000));
     } catch (err) { notify('Volgorde opslaan mislukt: ' + err, 'error', 5000); return; }
-    await loadMachineInzet();   // server rekent; selectie en filters blijven staan
+    await loadMachineInzet({ withFte: false });   // server rekent; selectie en filters blijven staan
 }
 
-// Slepen: een blok (in een maandregel) of een chip (in de volgordebalk)
-// verplaatsen naar vóór of ná een ander product. De volgorde is één lijst
+// Slepen: een blok in een maandregel verplaatsen naar vóór of ná een
+// ander product. De volgorde is één lijst
 // per machine, dus slepen in welke maand dan ook verplaatst het product in
 // die ene lijst; de drop-zijde (linker- of rechterhelft van het doel)
 // bepaalt vóór of ná.
@@ -13965,26 +14039,33 @@ function _inzetDropProduct(code, mat, targetMat, after) {
     seq.splice(to, 0, mat);
     const huidig = _inzetState.data.machines[code].sequence || [];
     if (seq.every((m, i) => m === huidig[i])) return;   // niets veranderd
-    _postInzetSequences({ ..._inzetState.sequences, [code]: seq });
-}
-
-function moveInzetProduct(code, index, delta) {
-    const seq = [...(_inzetState.data.machines[code].sequence || [])];
-    const target = index + delta;
-    if (target < 0 || target >= seq.length) return;
-    [seq[index], seq[target]] = [seq[target], seq[index]];
-    _postInzetSequences({ ..._inzetState.sequences, [code]: seq });
+    _postInzetSequences(_inzetWatAlsSet({ [code]: seq }));
 }
 
 function resetInzetSequence(code) {
-    const next = { ..._inzetState.sequences };
-    delete next[code];
-    _postInzetSequences(next);
+    _postInzetSequences(_inzetWatAlsSet({ [code]: null }));
 }
 
 // Omsteltijd en tarief = masterdata: write-through via de gewone PATCH met
-// versiecontrole, zelfde stramien als de bemensingsnormen.
-async function _saveChangeoverField(machine, field, raw, label) {
+// versiecontrole, zelfde stramien als de bemensingsnormen. Opslagacties
+// lopen achter elkaar (één keten): omsteltijd invullen en meteen het tarief
+// typen mag geen tweede GET vóór de eerste PATCH opleveren (valse 409 of
+// 'vul eerst een omsteltijd in').
+let _inzetSaveChain = Promise.resolve();
+function _saveChangeoverField(machine, field, raw, label) {
+    const run = () => _saveChangeoverFieldNow(machine, field, raw, label).catch(err => {
+        notify('Opslaan mislukt: ' + err, 'error', 6000);
+    });
+    _inzetSaveChain = _inzetSaveChain.then(run, run);
+    return _inzetSaveChain;
+}
+
+async function _saveChangeoverFieldNow(machine, field, raw, label) {
+    // Na een opslagpoging (geslaagd of geweigerd) toont het veld de
+    // opgeslagen stand: focus loslaten, anders zou de re-render de
+    // ingetypte tekst terugzetten.
+    const actief = document.activeElement;
+    if (actief && actief.dataset && (actief.dataset.inzetMachine === machine || actief.dataset.inzetRate === machine)) actief.blur();
     const parsed = raw === '' ? null : parseLocaleNumber(raw);
     if (raw !== '' && (Number.isNaN(parsed) || parsed < 0)) {
         notify(`${label} moet een getal ≥ 0 zijn.`, 'error', 4000);
@@ -14009,6 +14090,15 @@ async function _saveChangeoverField(machine, field, raw, label) {
             return;
         }
         if (field === 'hours_per_changeover' && raw === '') {
+            const heeftMeer = record && ((record.cost_per_hour !== null && record.cost_per_hour !== undefined && record.cost_per_hour !== '')
+                                         || String(record.description || '').trim() !== '');
+            if (heeftMeer) {
+                // Nooit stil tarief of toelichting mee weggooien: dat is
+                // dataverlies zonder melding. Verwijderen kan bewust via het grid.
+                notify('Deze machine heeft ook een tarief of toelichting; leegmaken zou die mee wissen. Verwijder de regel bewust via Config → Masterdata-tabellen → Omsteltijden.', 'warning', 8000);
+                renderMachineInzet();
+                return;
+            }
             delete value[machine];   // leeg veld = omsteltijd verwijderen
         } else if (field !== 'hours_per_changeover' && !record) {
             notify('Vul eerst een omsteltijd in; het tarief hoort bij die regel.', 'warning', 5000);
@@ -14026,13 +14116,13 @@ async function _saveChangeoverField(machine, field, raw, label) {
         const saved = await patch.json();
         if (patch.status === 409) {
             notify('Iemand anders heeft de omsteltijden gewijzigd; de tabel is ververst — probeer opnieuw.', 'warning', 7000);
-            loadMachineInzet();
+            await loadMachineInzet();
             return;
         }
         if (!patch.ok || saved.error) { notify(saved.error || 'Opslaan mislukt.', 'error', 6000); return; }
         _entityCache = {};
         notify(`${label} opgeslagen (masterdata versie ${saved.version}).`, 'success', 3500);
-        loadMachineInzet();
+        await loadMachineInzet();   // masterdata gewijzigd: ook de FTE-kaart verversen
     } catch (err) {
         notify('Opslaan mislukt: ' + err, 'error', 6000);
     }
@@ -14061,14 +14151,17 @@ function editInzetCell(machine, period, button) {
     input.focus();
     input.select();
     let klaar = false;
+    const terug = () => { if (input.isConnected) input.replaceWith(button); };
     const commit = async () => {
         if (klaar) return; klaar = true;
-        const parsed = parseLocaleNumber(String(input.value).trim());
-        if (Number.isNaN(parsed) || parsed < 0 || parsed !== Math.round(parsed)) {
-            notify('Aantal omstellingen is een geheel getal ≥ 0.', 'error', 4000);
-            renderMachineInzet();
+        const raw = String(input.value).trim();
+        const parsed = parseLocaleNumber(raw);
+        if (raw === '' || Number.isNaN(parsed) || parsed < 0 || parsed !== Math.round(parsed)) {
+            if (raw !== '') notify('Aantal omstellingen is een geheel getal ≥ 0.', 'error', 4000);
+            terug();
             return;
         }
+        if (parsed === count) { terug(); return; }   // ongewijzigd: geen POST, geen herlaad
         const next = { ..._inzetState.overrides };
         const key = `${machine}|${period}`;
         if (parsed === est) delete next[key];
@@ -14079,14 +14172,14 @@ function editInzetCell(machine, period, button) {
                 body: JSON.stringify({ overrides: next }),
             });
             const data = await res.json();
-            if (!res.ok || data.error) { notify(data.error || 'Wat-als opslaan mislukt.', 'error', 5000); renderMachineInzet(); return; }
+            if (!res.ok || data.error) { notify(data.error || 'Wat-als opslaan mislukt.', 'error', 5000); terug(); return; }
             _inzetState.overrides = data.overrides || {};
-        } catch (err) { notify('Wat-als opslaan mislukt: ' + err, 'error', 5000); renderMachineInzet(); return; }
-        await loadMachineInzet();   // de server rekent uren en kosten opnieuw
+        } catch (err) { notify('Wat-als opslaan mislukt: ' + err, 'error', 5000); terug(); return; }
+        await loadMachineInzet({ withFte: false });   // de server rekent uren en kosten opnieuw
     };
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); commit(); }
-        else if (e.key === 'Escape') { klaar = true; renderMachineInzet(); }
+        else if (e.key === 'Escape') { klaar = true; terug(); }
     });
     input.addEventListener('blur', () => commit());
 }
@@ -15084,6 +15177,7 @@ async function switchSession(sessionId) {
         // nieuwe sessie met andermans waarden overschrijven), en de
         // Config-tab moet de waarden van de NIEUWE sessie tonen.
         if (_wasOtherSession) {
+            _invalidateInzet();
             if (_cfgDirty.size) {
                 _cfgClearDirty();
                 notify('Onopgeslagen configuratiewijzigingen verworpen bij sessiewissel.', 'info', 4000);

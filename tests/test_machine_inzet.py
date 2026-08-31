@@ -50,17 +50,22 @@ class TestBerekening:
         assert ma['hours'] == pytest.approx(100.0)
         assert ma['window'] > 0                  # venster van de groep
 
-    def test_schatting_is_producten_min_een_met_ondergrens_nul(self):
-        """Eén product = nul omstellingen; de schatting mag nooit negatief."""
+    def test_schatting_uit_de_route_is_producten_min_een_met_ondergrens_nul(self):
+        """Eén product = nul omstellingen, géén product = nul; twee = één. De
+        schatting komt uit build_machine_inzet zelf, niet uit de test."""
+        from ui.routes.machine_inzet import build_machine_inzet
         data, results = _combo_setup()
         engine = _Engine(data, results)
-        usage = _machine_usage(engine)
-        for machine in usage['machines'].values():
-            for cel in machine['per_period'].values():
-                est = max(0, len(cel['products']) - 1)
-                assert est >= 0
-        # MA draait één product: schatting 0, geen fantoomomstelling.
-        assert len(usage['machines']['MA']['per_period'][PERIOD]['products']) == 1
+        out = build_machine_inzet(engine, {}, {})
+        ma = out['machines']['MA']['per_period'][PERIOD]
+        assert len(ma['products']) == 1 and ma['estimate'] == 0 and ma['changeovers'] == 0
+        assert ma['changeover_hours'] is None and ma['cost'] is None   # geen omsteltijd
+        data2, results2 = _twee_producten_op_ma()
+        out2 = build_machine_inzet(_Engine(data2, results2), {}, {})
+        assert out2['machines']['MA']['per_period'][PERIOD]['estimate'] == 1
+        mb = out2['machines']['MB']['per_period'][PERIOD]
+        assert mb['products'] == [] and mb['estimate'] == 0 and mb['changeovers'] == 0
+        assert out2['totals']['by_period'][PERIOD]['changeovers'] == 1   # alleen MA telt
 
     def test_ruisuren_tellen_niet_als_product(self):
         """Afrondingsruis uit de cascade mag geen omstelling suggereren."""
@@ -102,6 +107,9 @@ class TestRoutes:
             ({'overrides': [1]}, 'object'),
             ({'overrides': {'MA': 2}}, 'MACHINE|PERIODE'),
             ({'overrides': {f'MA|{PERIOD}': 'veel'}}, 'getal'),
+            ({'overrides': {f'MA|{PERIOD}': 'nan'}}, 'getal'),
+            ({'overrides': {f'MA|{PERIOD}': 'inf'}}, 'getal'),
+            ({'overrides': {f'MA|{PERIOD}': True}}, 'getal'),
             ({'overrides': {f'MA|{PERIOD}': -1}}, 'geheel getal'),
             ({'overrides': {f'MA|{PERIOD}': 2.5}}, 'geheel getal'),
         ]:
@@ -115,7 +123,9 @@ class TestRoutes:
                                               'workbook_site': 'NLK1'}
         for call in (lambda: client.get('/api/machine_inzet'),
                      lambda: client.post('/api/machine_inzet/overrides',
-                                         json={'overrides': {}})):
+                                         json={'overrides': {}}),
+                     lambda: client.post('/api/machine_inzet/sequences',
+                                         json={'sequences': {}})):
             resp = call()
             assert resp.status_code == 409
             assert 'NLK1' in resp.get_json()['error']
@@ -141,6 +151,12 @@ class TestDatasetEnPersistentie:
                                             {'PBA01'})
         assert error is None
         assert warnings and 'onbekend' in warnings[0]
+        # nan/inf passeren float() maar zijn geen omsteltijd of tarief.
+        for slecht in ('nan', 'inf', '-inf', float('nan')):
+            error, _ = _check_changeover('PBA01', {'hours_per_changeover': slecht}, {'PBA01'})
+            assert error, slecht
+            error, _ = _check_changeover('PBA01', {'hours_per_changeover': 1, 'cost_per_hour': slecht}, {'PBA01'})
+            assert error, slecht
         # Nul is geldig: sommige wissels kosten geen tijd.
         error, _ = _check_changeover('PBA01', {'hours_per_changeover': 0}, {'PBA01'})
         assert error is None
@@ -245,6 +261,9 @@ class TestVolgorde:
         assert seq == ['PB', 'PA', 'PC'] and source == 'wat-als'   # SPOOK weg, PC erachter
         seq, source = _effective_sequence([], hours)
         assert seq == ['PA', 'PB', 'PC'] and source == 'standaard'
+        # Blijft er van de keuze niets over, dan is het de standaard — en heet het ook zo.
+        seq, source = _effective_sequence(['SPOOK'], hours)
+        assert seq == ['PA', 'PB', 'PC'] and source == 'standaard'
 
     def test_route_valideert_en_persisteert_de_volgorde(self):
         from ui.routes.machine_inzet import create_machine_inzet_blueprint
@@ -270,16 +289,47 @@ class TestVolgorde:
         assert leeg.get_json()['sequences'] == {}
         assert sess['changeover_sequences'] == {}
 
+        # Structurele fouten blijven 400.
         for payload, fragment in [
             ({'sequences': [1]}, 'object'),
-            ({'sequences': {'SPOOK': ['PA']}}, 'onbekende machine'),
             ({'sequences': {'MA': 'PA,PB'}}, 'lijst'),
+            ({'sequences': {'MA': [1, 2]}}, 'lijst'),
             ({'sequences': {'MA': ['PA', 'PA']}}, 'dubbel'),
-            ({'sequences': {'MA': ['PA', 'PX']}}, 'draait niet'),
         ]:
             resp = client.post('/api/machine_inzet/sequences', json=payload)
             assert resp.status_code == 400, payload
             assert fragment in resp.get_json()['error'], resp.get_json()
+
+        # Verouderde entries worden gesnoeid mét waarschuwing — nooit een 400
+        # die álle andere volgorde-acties blokkeert.
+        resp = client.post('/api/machine_inzet/sequences', json={'sequences': {
+            'SPOOK': ['PA'], 'MA': ['PX', 'PB', 'PA'], 'MB': ['PA']}})
+        body = resp.get_json()
+        assert resp.status_code == 200, body
+        assert body['sequences'] == {'MA': ['PB', 'PA']}
+        assert sess['changeover_sequences'] == {'MA': ['PB', 'PA']}
+        assert len(body['warnings']) == 3 and any('SPOOK' in w for w in body['warnings'])
+        assert any('PX' in w for w in body['warnings'])
+
+    def test_spookentry_in_de_sessie_blokkeert_geen_andere_machine(self):
+        """Een opgeslagen volgorde met een product dat niet meer draait (of een
+        machine die weg is) mag de GET niet vervuilen en een POST voor een
+        andere machine niet laten falen."""
+        from ui.routes.machine_inzet import create_machine_inzet_blueprint
+        engine, sess, build = _env2()
+        sess['changeover_sequences'] = {'MA': ['PX', 'PB', 'PA'], 'WEG': ['PA'], 'MB': ['PA']}
+        out = build()
+        assert out['sequences'] == {'MA': ['PB', 'PA']}            # gesnoeid in de payload
+        assert out['machines']['MA']['sequence'] == ['PB', 'PA']
+        assert out['machines']['MA']['sequence_source'] == 'wat-als'
+        app = Flask(__name__)
+        app.config['TESTING'] = True
+        app.register_blueprint(create_machine_inzet_blueprint(lambda: (sess, engine), lambda: None))
+        client = app.test_client()
+        # De client echoot wat hij kreeg (gesnoeid) plus zijn wijziging.
+        resp = client.post('/api/machine_inzet/sequences', json={'sequences': {'MA': ['PB', 'PA']}})
+        assert resp.status_code == 200 and resp.get_json()['warnings'] == []
+        assert sess['changeover_sequences'] == {'MA': ['PB', 'PA']}
 
     def test_volgorde_reist_door_sessiestore_reset_en_duplicaat(self, tmp_path):
         data, results = _twee_producten_op_ma()
@@ -352,6 +402,84 @@ class TestKosten:
         assert ma['per_period'][PERIOD]['changeover_hours'] == pytest.approx(2.0)
         assert ma['per_period'][PERIOD]['cost'] == 0      # uren wel, euro's eerlijk nul
 
+    def test_kosten_uit_onafgeronde_uren(self):
+        """0,125 u (7,5 min) × € 120 = € 15,00 — niet 0,12 u × 120 = € 14,40.
+        Totalen sommeren onafgerond en ronden eenmaal af."""
+        _, _, build = _env2(changeovers={
+            'MA': {'hours_per_changeover': 0.125, 'description': '', 'cost_per_hour': 120.0}},
+            sess_extra={'changeover_overrides': {f'MA|{PERIOD}': 3}})
+        out = build()
+        ma = out['machines']['MA']
+        cel = ma['per_period'][PERIOD]
+        assert cel['changeover_hours'] == pytest.approx(0.38)       # 3 × 0,125 = 0,375 → 2 dec.
+        assert cel['cost'] == pytest.approx(45.0)                   # 0,375 × 120, niet 0,38 × 120
+        andere = [p for p in out['periods'] if p != PERIOD]
+        for p in andere:
+            assert ma['per_period'][p]['cost'] == pytest.approx(15.0)   # 1 × 0,125 × 120
+        n = len(out['periods'])
+        assert ma['total']['cost'] == pytest.approx(45.0 + 15.0 * (n - 1))
+        assert ma['total']['changeover_hours'] == pytest.approx(round(0.375 + 0.125 * (n - 1), 2))
+        assert out['totals']['horizon']['cost'] == pytest.approx(ma['total']['cost'])
+
+    def test_machinetarief_live_uit_de_store_gaat_voor_engine_data(self):
+        """De PATCH-route herbouwt niets: een net gewijzigd machinetarief
+        moet zonder herberekening zichtbaar zijn."""
+        from ui.routes.machine_inzet import build_machine_inzet
+        engine, sess, _ = _env2(machine_costs=self._mc(80.0))
+        ch = {'MA': {'hours_per_changeover': 1.0, 'description': '', 'cost_per_hour': None}}
+        out = build_machine_inzet(engine, sess, ch, machine_costs_live={'MA': 100.0})
+        assert out['machines']['MA']['rate'] == pytest.approx(100.0)
+        assert out['machines']['MA']['rate_source'] == 'machinetarief'
+        assert out['machines']['MA']['per_period'][PERIOD]['cost'] == pytest.approx(100.0)
+        # Storeless: engine.data blijft de bron.
+        out = build_machine_inzet(engine, sess, ch, machine_costs_live=None)
+        assert out['machines']['MA']['rate'] == pytest.approx(80.0)
+        # Store zonder deze machine: terugval op engine.data (werkboek-overlay).
+        out = build_machine_inzet(engine, sess, ch, machine_costs_live={})
+        assert out['machines']['MA']['rate'] == pytest.approx(80.0)
+
+    def test_store_lezen_is_robuust_en_gaat_voor_engine_data(self):
+        """Een handbewerkte store met tekst of lege cellen crasht niet; de
+        store wint van engine.data; storeless valt terug op engine.data."""
+        from ui.routes.machine_inzet import _changeovers_from_store, _machine_costs_from_store
+        engine, _, _ = _env2()
+        engine.data.changeover_times = {
+            'MA': ChangeoverTime(machine_code='MA', hours_per_changeover=1.5, cost_per_hour=95.5)}
+        storeless = _changeovers_from_store(engine, master=None)
+        assert storeless['MA'] == {'hours_per_changeover': 1.5, 'description': '', 'cost_per_hour': 95.5}
+        master = {'changeover_times': {
+            'MA': {'hours_per_changeover': 9, 'cost_per_hour': ''},
+            'MB': {'hours_per_changeover': 'abc', 'cost_per_hour': 'nan', 'description': None},
+            'MC': 'kapot'},
+            'machine_costs': {'MA': {'variable_cost_per_hour': '51.93'}, 'MB': {'variable_cost_per_hour': 'x'}}}
+        uit_store = _changeovers_from_store(engine, master=master)
+        assert uit_store['MA'] == {'hours_per_changeover': 9.0, 'description': '', 'cost_per_hour': None}
+        assert uit_store['MB'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None}
+        assert 'MC' not in uit_store
+        assert _machine_costs_from_store(master) == {'MA': 51.93}
+        assert _machine_costs_from_store(None) is None
+
+    def test_omsteltijd_nul_en_machine_zonder_uren(self):
+        """Omsteltijd 0 is ingevuld (geen gaten, geen euro's, wél 'ingevuld');
+        een machine met omsteltijd maar zonder draaiuren telt overal nul."""
+        _, _, build = _env2(machine_costs=self._mc(80.0), changeovers={
+            'MA': {'hours_per_changeover': 0, 'description': '', 'cost_per_hour': None},
+            'MB': {'hours_per_changeover': 1.0, 'description': '', 'cost_per_hour': 50.0}})
+        out = build()
+        ma, mb = out['machines']['MA'], out['machines']['MB']
+        assert ma['hours_per_changeover'] == 0.0
+        assert ma['per_period'][PERIOD]['changeover_hours'] == 0.0 and ma['per_period'][PERIOD]['cost'] == 0.0
+        assert mb['hours_per_changeover'] == 1.0 and mb['sequence'] == []
+        assert mb['total'] == {'changeovers': 0, 'changeover_hours': 0.0, 'cost': 0.0, 'run_hours': 0.0}
+        assert out['totals']['horizon']['cost'] == 0.0
+
+    def test_expliciet_tarief_nul_is_bron_omsteltijden(self):
+        _, _, build = _env2(machine_costs=self._mc(80.0), changeovers={
+            'MA': {'hours_per_changeover': 1.0, 'description': '', 'cost_per_hour': 0.0}})
+        ma = build()['machines']['MA']
+        assert ma['rate'] == 0.0 and ma['rate_source'] == 'omsteltijden'
+        assert ma['per_period'][PERIOD]['cost'] == 0.0
+
     def test_override_op_aantal_werkt_door_in_uren_en_kosten(self):
         _, _, build = _env2(machine_costs=self._mc(80.0), changeovers={
             'MA': {'hours_per_changeover': 1.0, 'description': '', 'cost_per_hour': None}},
@@ -383,3 +511,85 @@ class TestKosten:
         hydrate_fte_datasets(loader2, {'changeover_times': {
             'PBA03': {'machine_code': 'PBA03', 'hours_per_changeover': 1.0}}})
         assert loader2.changeover_times['PBA03'].cost_per_hour is None
+
+
+class TestSyncpunten:
+    """De omstel-wat-als reist door scenario, duplicaat en sessiestore; Reset
+    én een nieuwe berekening zetten hem uit (gedocumenteerd ontwerp)."""
+
+    def test_scenario_roundtrip_bewaart_overrides_en_volgorde(self):
+        from ui.routes import scenarios as scen_mod
+        src = open(scen_mod.__file__, encoding='utf-8').read()
+        # Beide velden staan in het opslag- én het laadpad (regels zijn de
+        # zes-syncpunten-doctrine; een vergeten pad is precies dit soort lek).
+        assert src.count("'changeover_overrides'") >= 2 and src.count("'changeover_sequences'") >= 2
+
+    def test_scenario_laden_vervangt_volledig(self):
+        """Een scenario zonder de velden (van vóór fase 1b) zet ze leeg — de
+        harde-vervangingsregel van scenario's, zoals bij fte_norm_overrides."""
+        import inspect
+        from ui.routes import scenarios as scen_mod
+        src = inspect.getsource(scen_mod)
+        assert "sess['changeover_sequences'] = {k: list(v) for k, v in (sc.get('changeover_sequences') or {}).items()}" in src
+
+    def test_duplicaat_kopieert_diep(self):
+        from ui.routes import sessions as sess_mod
+        import inspect
+        src = inspect.getsource(sess_mod)
+        assert "'changeover_sequences': {k: list(v) for k, v in (sess.get('changeover_sequences') or {}).items()}" in src
+        assert "'changeover_overrides': dict(sess.get('changeover_overrides') or {})" in src
+
+    def test_bereken_zet_de_wat_als_uit_en_configwijziging_niet(self):
+        data, results = _twee_producten_op_ma()
+        engine = _Engine(data, results)
+        sess = {'id': 's1', 'engine': engine, 'pending_edits': {}, 'machine_overrides': {},
+                'changeover_overrides': {f'MA|{PERIOD}': 5}, 'changeover_sequences': {'MA': ['PB', 'PA']}}
+        install_clean_engine_baseline(sess, engine, lambda m, d: 0.0)   # default = Bereken/Reset
+        assert sess['changeover_overrides'] == {} and sess['changeover_sequences'] == {}
+        sess['changeover_overrides'] = {f'MA|{PERIOD}': 5}
+        sess['changeover_sequences'] = {'MA': ['PB', 'PA']}
+        install_clean_engine_baseline(sess, engine, lambda m, d: 0.0, clear_machine_overrides=False)
+        assert sess['changeover_overrides'] == {f'MA|{PERIOD}': 5}
+        assert sess['changeover_sequences'] == {'MA': ['PB', 'PA']}
+
+
+class TestWerkboekEnImport:
+    def test_werkboek_rondgang_bewaart_leeg_tarief_en_waarde(self, tmp_path):
+        """Lege cel → None (terugval op machinetarief), waarde → waarde, en een
+        ongewijzigde export→import-rondgang meldt geen wijziging."""
+        from tests.master_fixtures import fake_master_loader
+        from modules.master_workbook import absorb_equivalents, export_master_workbook, parse_master_workbook
+        loader = fake_master_loader()
+        loader.changeover_times = {
+            'PBA01': ChangeoverTime(machine_code='PBA01', hours_per_changeover=0.75, cost_per_hour=95.5),
+            'PBA02': ChangeoverTime(machine_code='PBA02', hours_per_changeover=0.5),
+            'PBA03': ChangeoverTime(machine_code='PBA03', hours_per_changeover=0.0, description='geen tijd')}
+        master = json.loads(json.dumps(serialize_master(loader), default=str))
+        path = tmp_path / 'werkboek.xlsx'
+        export_master_workbook(master, path, site='NLX1', store_version=1)
+        parsed, _meta = parse_master_workbook(path)
+        ct = parsed['changeover_times']
+        assert ct['PBA01']['cost_per_hour'] == pytest.approx(95.5)
+        assert ct['PBA02']['cost_per_hour'] is None
+        assert ct['PBA03']['hours_per_changeover'] == 0.0 and ct['PBA03']['description'] == 'geen tijd'
+        assert absorb_equivalents(master['changeover_times'], parsed['changeover_times']) == master['changeover_times']
+
+    def test_record_van_voor_fase_1b_geeft_geen_valse_importdiff(self):
+        """Een store-record zonder cost_per_hour vs. het werkboek dat de kolom
+        leeg teruggeeft: geen wijziging."""
+        from modules.master_workbook import absorb_equivalents
+        previous = {'PBA01': {'machine_code': 'PBA01', 'hours_per_changeover': 2.0, 'description': ''}}
+        incoming = {'PBA01': {'machine_code': 'PBA01', 'hours_per_changeover': 2.0, 'description': '',
+                              'cost_per_hour': None}}
+        assert absorb_equivalents(previous, incoming) == previous
+        # Een écht ingevuld tarief blijft een wijziging.
+        incoming2 = {'PBA01': {'machine_code': 'PBA01', 'hours_per_changeover': 2.0, 'description': '',
+                               'cost_per_hour': 12.0}}
+        assert absorb_equivalents(previous, incoming2) == incoming2
+
+    def test_nonneg_error_weigert_nan_en_inf(self):
+        from ui.routes.master_data import _as_number, _nonneg_error
+        assert _as_number('nan') is None and _as_number('inf') is None and _as_number('1e999') is None
+        assert _as_number('12,5') is None and _as_number('12.5') == 12.5
+        assert _nonneg_error('X', {'v': 'nan'}, 'v', 'tarief')
+        assert _nonneg_error('X', {'v': None}, 'v', 'tarief') is None

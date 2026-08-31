@@ -7,6 +7,7 @@ store requires an explicit confirmation (diff shown first), and edits bump
 the store version. Edits apply at the NEXT calculation — no auto-rebuild.
 """
 
+import math
 import contextlib
 import io
 import threading
@@ -114,10 +115,14 @@ _VERSION_CONFLICT_ERROR = ('De masterdata is intussen door iemand anders gewijzi
 
 
 def _as_number(value):
+    """Eindig getal of None. 'nan'/'inf' passeren float() maar zijn geen
+    tarief of omsteltijd: ze zouden als NaN in de store landen en de JSON
+    van tab en grid onleesbaar maken."""
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def _validate_config_values(value: dict, candidate: dict):

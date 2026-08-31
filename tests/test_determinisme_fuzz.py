@@ -226,3 +226,82 @@ class TestAfleidingFuzz:
             verwacht = max(basis * (1.0 - params['illness_pct'] - params['training_pct']), 0.0)
             assert uitkomst == pytest.approx(verwacht)
             assert uitkomst >= 0
+
+
+class TestFuzzInzetTweeProducten:
+    """De fixture van de werkbank heeft één product per machine; de inzet-
+    rekenkern verdient een fuzz met meerdere producten, willekeurige
+    overrides/volgordes en willekeurige omsteltijd/tarief."""
+
+    def test_invarianten_over_willekeurige_uren_volgordes_en_tarieven(self):
+        import random
+        from modules.models import LineType
+        from tests.test_machine_inzet import _twee_producten_op_ma
+        from ui.routes.machine_inzet import _default_sequence, _machine_usage, build_machine_inzet
+
+        class _E:
+            pass
+        rng = random.Random(20260827)
+        data, results = _twee_producten_op_ma()
+        periodes = list(data.periods)
+        for ronde in range(60):
+            for row in results[LineType.CAPACITY_UTILIZATION.value]:
+                if getattr(row, 'product_type', None) in ('Machine', 'Machine Group'):
+                    continue
+                for p in periodes:
+                    row.values[p] = round(rng.choice([0.0, 0.005, rng.uniform(0.02, 300)]), 3)
+            engine = _E(); engine.data = data; engine.results = results
+            usage = _machine_usage(engine)
+            hours_per = rng.choice([None, 0.0, 0.125, 0.5, 1.5, 3.3333])
+            rate = rng.choice([None, 0.0, 12.5, 120.0])
+            ch = {} if hours_per is None else {'MA': {'hours_per_changeover': hours_per, 'description': '', 'cost_per_hour': rate}}
+            mats = list(usage['machines']['MA']['product_hours'])
+            seq = rng.sample(mats, len(mats)) if mats and rng.random() < 0.7 else []
+            ov = {}
+            for p in periodes:
+                if rng.random() < 0.3:
+                    ov[f'MA|{p}'] = rng.randint(0, 6)
+            sess = {'changeover_overrides': ov, 'changeover_sequences': {'MA': seq} if seq else {}}
+            out = build_machine_inzet(engine, sess, ch)
+            twee = build_machine_inzet(engine, dict(sess), dict(ch))
+            assert json.dumps(out, sort_keys=False) == json.dumps(twee, sort_keys=False), ronde
+            ma = out['machines']['MA']
+            assert sorted(ma['sequence']) == sorted(ma['product_hours']), ronde
+            assert list(ma['product_hours']) == sorted(ma['product_hours'])   # gesorteerd contract
+            if seq:
+                assert ma['sequence'] == seq and ma['sequence_source'] == 'wat-als'
+            else:
+                assert ma['sequence'] == _default_sequence(ma['product_hours']) and ma['sequence_source'] == 'standaard'
+            tot_n = tot_h = tot_c = 0.0
+            for p in periodes:
+                cel = ma['per_period'][p]
+                actief = {m for m in ma['product_hours'] if ma['product_hours'][m].get(p, 0) > 0}
+                assert actief == set(cel['products']), (ronde, p)
+                assert abs(sum(ma['product_hours'][m].get(p, 0) for m in actief) - cel['hours']) <= 0.01 * (len(actief) + 1)
+                assert cel['estimate'] == max(0, len(actief) - 1)
+                verwacht = ov.get(f'MA|{p}', cel['estimate'])
+                assert cel['changeovers'] == verwacht and cel['is_override'] == (f'MA|{p}' in ov)
+                if hours_per is None:
+                    assert cel['changeover_hours'] is None and cel['cost'] is None
+                else:
+                    ruw = verwacht * hours_per
+                    tarief = rate if rate is not None else 0.0
+                    assert cel['changeover_hours'] == pytest.approx(round(ruw, 2))
+                    assert cel['cost'] == pytest.approx(round(ruw * tarief, 2))
+                    tot_n += verwacht; tot_h += ruw; tot_c += ruw * tarief
+            if hours_per is not None:
+                assert ma['total']['changeovers'] == tot_n
+                assert ma['total']['changeover_hours'] == pytest.approx(round(tot_h, 2))
+                assert ma['total']['cost'] == pytest.approx(round(tot_c, 2))
+                assert out['totals']['horizon']['cost'] == pytest.approx(ma['total']['cost'])
+                assert sum(out['totals']['by_period'][p]['cost'] for p in periodes) == pytest.approx(ma['total']['cost'], abs=0.01 * len(periodes))
+            _alles_eindig(out)
+
+    def test_standaardvolgorde_onafhankelijk_van_invoervolgorde(self):
+        import random
+        from ui.routes.machine_inzet import _default_sequence
+        rng = random.Random(7)
+        hours = {f'P{i}': {'2025-01': rng.choice([1.0, 2.0, 2.0, 5.0])} for i in range(12)}
+        items = list(hours.items())
+        rng.shuffle(items)
+        assert _default_sequence(dict(items)) == _default_sequence(dict(sorted(items)))
