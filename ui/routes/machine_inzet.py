@@ -159,8 +159,9 @@ def _effective_sequence(saved: Optional[List[str]],
 def _prune_sequences(sequences: dict, usage: dict) -> Tuple[Dict[str, List[str]], List[str]]:
     """Opgeslagen volgordes snoeien tegen wat er nu draait.
 
-    Verouderde entries (machine weg, product niet meer op de machine, lege
-    lijst) vallen weg met een leesbare waarschuwing. Dit is dezelfde regel
+    Verouderde entries (machine weg, product niet meer op de machine) vallen
+    weg met een leesbare waarschuwing; een lege lijst valt stil weg — dat is
+    het gedocumenteerde 'terug naar de standaardvolgorde' van de POST. Dit is dezelfde regel
     als ``_effective_sequence``, zodat GET en POST hetzelfde contract hebben
     en de client nooit spookproducten terugkrijgt die hij daarna zou echoën.
     """
@@ -171,7 +172,7 @@ def _prune_sequences(sequences: dict, usage: dict) -> Tuple[Dict[str, List[str]]
         code = str(machine)
         info = machines.get(code)
         if info is None:
-            warnings.append(f'Volgorde "{code}": machine draait niet (meer) in deze horizon — weggelaten.')
+            warnings.append(f'Volgorde "{code}": machinecode bestaat niet (meer) in de masterdata — weggelaten.')
             continue
         known = set(info.get('product_hours') or {})
         kept, gone = [], []
@@ -196,7 +197,7 @@ def _changeover_rates(engine, changeovers: dict,
     for code in set(changeovers) | set(getattr(engine.data, 'machines', None) or {}):
         item = changeovers.get(code) or {}
         own = _num(item.get('cost_per_hour'))
-        if own is not None:
+        if own is not None and own >= 0:
             rates[code] = {'rate': own, 'source': 'omsteltijden'}
             continue
         if machine_costs_live is not None and code in machine_costs_live:
@@ -204,6 +205,7 @@ def _changeover_rates(engine, changeovers: dict,
         else:
             mc = machine_costs.get(code)
             rate = _num(getattr(mc, 'variable_cost_per_hour', None)) or 0.0 if mc else 0.0
+        rate = max(rate, 0.0)   # negatief machinetarief = geen tarief
         rates[code] = {'rate': rate, 'source': 'machinetarief' if rate > 0 else None}
     return rates
 
@@ -230,7 +232,7 @@ def build_machine_inzet(engine, sess: dict, changeovers: dict,
     for code, info in usage['machines'].items():
         changeover = changeovers.get(code)
         hours_per = _num(changeover.get('hours_per_changeover')) if changeover else None
-        if changeover and hours_per is None:
+        if changeover and (hours_per is None or hours_per < 0):
             hours_per = 0.0
         rate = rates.get(code, {'rate': 0.0, 'source': None})
         sequence, seq_source = _effective_sequence(sequences.get(code), info['product_hours'])
@@ -311,13 +313,18 @@ def _changeovers_from_store(engine, master: Optional[dict] = None) -> dict:
     """Omsteltijden LIVE uit de store: de motor consumeert ze in fase 1 niet,
     dus de store is de eerlijke bron — engine.data zou een zojuist opgeslagen
     omsteltijd pas na een herberekening tonen. Storeless sessies vallen terug
-    op wat de engine (via hydratie) meekreeg. Niet-numerieke waarden (een
-    handbewerkte store) worden als 'niet ingevuld' gelezen, nooit als crash."""
+    op wat de engine (via hydratie) meekreeg. Onleesbare of negatieve uren in
+    een handbewerkte store worden als 0 gelezen (een record = ingevuld, nooit
+    een crash); een onleesbaar of negatief tarief als 'geen eigen tarief'."""
     def _norm(hours, description, cost):
+        h = _num(hours)
+        c = _num(cost)
         return {
-            'hours_per_changeover': _num(hours) or 0.0,
+            # Een record = ingevuld; onleesbare of negatieve uren tellen als 0.
+            'hours_per_changeover': h if h is not None and h >= 0 else 0.0,
             'description': str(description or ''),
-            'cost_per_hour': _num(cost),
+            # Een negatief tarief is geen tarief: terugval op het machinetarief.
+            'cost_per_hour': c if c is not None and c >= 0 else None,
         }
 
     if master is None:
@@ -341,7 +348,7 @@ def _machine_costs_from_store(master: Optional[dict]) -> Optional[Dict[str, floa
     for code, item in raw.items():
         if isinstance(item, dict):
             rate = _num(item.get('variable_cost_per_hour'))
-            if rate is not None:
+            if rate is not None and rate >= 0:
                 out[str(code)] = rate
     return out
 
@@ -400,6 +407,10 @@ def create_machine_inzet_blueprint(
                 return jsonify({'error': f'Override "{key}": aantal moet een getal zijn.'}), 400
             if parsed < 0 or parsed != int(parsed):
                 return jsonify({'error': f'Override "{key}": aantal omstellingen is een geheel getal ≥ 0.'}), 400
+            if parsed > 10_000:
+                # Een absurde override zou via count × tarief tot inf in de
+                # JSON leiden en het tabblad onlaadbaar maken.
+                return jsonify({'error': f'Override "{key}": aantal omstellingen is onrealistisch groot (maximaal 10.000).'}), 400
             overrides[str(key)] = int(parsed)
         sess['changeover_overrides'] = dict(overrides)
         save_sessions_to_disk()

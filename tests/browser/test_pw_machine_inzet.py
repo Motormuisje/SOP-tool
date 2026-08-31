@@ -35,8 +35,15 @@ def _select(page, code):
         arg=code, timeout=15000)
 
 
+def _nl(v, dec):
+    """nl-NL-formattering in Python (duizendtalpunt, decimale komma, geen
+    volgnullen) — onafhankelijk van de _fmtNlNum van de app."""
+    s = f"{v:,.{dec}f}".rstrip("0").rstrip(".")
+    return s.replace(",", "X").replace(".", ",").replace("X", ".") or "0"
+
+
 def _check_kpis(page, api):
-    """De vier tegels tonen exact de API-formules (nl-NL-opmaak via de app zelf)."""
+    """De vier tegels tonen exact de API-formules (verwachting in Python)."""
     horizon = api["totals"]["horizon"]
     codes = [c for c, m in api["machines"].items()
              if any(cel["hours"] > 0 for cel in m["per_period"].values()) or c in api["changeover_times"]]
@@ -45,7 +52,7 @@ def _check_kpis(page, api):
     zonder_tarief = [c for c in codes if api["machines"][c]["hours_per_changeover"] is not None
                      and not api["machines"][c]["rate"] > 0]
     tegels = page.evaluate("() => [...document.querySelectorAll('#inzetKpis .kpi-card')].map(k => k.textContent.replace(/\\s+/g, ' ').trim())")
-    fmt = lambda v, d: page.evaluate("([v, d]) => _fmtNlNum(v, d)", [v or 0, d])
+    fmt = lambda v, d: _nl(v or 0, d)
     assert tegels[0].startswith("Omstellingen (horizon) " + fmt(horizon["changeovers"], 0)), tegels[0]
     assert f"{len(codes)} machine(s)" in tegels[0] and fmt(horizon["run_hours"], 0) in tegels[0]
     assert tegels[1].startswith("Omsteluren " + fmt(horizon["changeover_hours"], 1) + " u"), tegels[1]
@@ -453,11 +460,20 @@ def test_volgorde_is_wat_als_en_overleeft_herlaad(browser_page):
     assert page.evaluate("(c) => _inzetState.sequences[c]", code) == nieuw
     _select(page, code)
 
-    # Een spookentry in de sessie (machine weg, product weg) mag niets blokkeren:
-    # de server snoeit met een waarschuwing en de volgende actie slaagt.
-    _zet_sequences(base_url, {code: nieuw, "ZZ_SPOOK": ["X"]})
-    _open_inzet(page)
-    assert "ZZ_SPOOK" not in page.evaluate("() => _inzetState.sequences")
+    # Snoei via de UI-route: een POST met een verouderde entry slaagt, de
+    # server snoeit, en de gebruiker ZIET de waarschuwing (notify).
+    page.evaluate(
+        """() => {
+            window.__notes = [];
+            const original = window.notify;
+            window.notify = (msg, ...rest) => { window.__notes.push(String(msg)); return original(msg, ...rest); };
+        }""")
+    with page.expect_response(lambda r: "/api/machine_inzet/sequences" in r.url and r.ok):
+        page.evaluate("([c, s]) => _postInzetSequences({ [c]: s, ZZ_SPOOK: ['X'] })", [code, nieuw])
+    page.wait_for_function(
+        "(c) => _inzetState.data && _inzetState.sequences[c] !== undefined && !('ZZ_SPOOK' in _inzetState.sequences)",
+        arg=code, timeout=15000)
+    assert any("ZZ_SPOOK" in n for n in page.evaluate("() => window.__notes")), "snoei-waarschuwing niet getoond"
     _select(page, code)
     with page.expect_response(lambda r: "/api/machine_inzet/sequences" in r.url and r.ok):
         page.click('#inzetBoard button:has-text("Terug naar standaard")')
@@ -722,4 +738,229 @@ def test_grid_omsteltijden_heeft_optioneel_tariefveld(browser_page, golden_fixtu
     res = requests.patch(base_url + "/api/master_data/changeover_times",
                          json={"value": slecht, "base_version": cur["version"]}, timeout=60)
     assert res.status_code == 400 and "tarief" in res.json()["error"].lower()
+    assert page.js_errors == []
+
+
+def test_opslagketen_omsteltijd_en_tarief_direct_na_elkaar(browser_page, golden_fixture_path):
+    """Omsteltijd invullen en meteen het tarief (zonder op de PATCH te
+    wachten): de keten serialiseert, beide landen in de masterdata, geen
+    'Vul eerst een omsteltijd in' en geen valse 409."""
+    page = browser_page
+    _ensure_store(page.server["base_url"], golden_fixture_path)
+    _open_inzet(page)
+    base_url = page.server["base_url"]
+    api = _api(base_url)
+    machine = next(c for c in sorted(api["machines"])
+                   if api["machines"][c]["total"]["changeovers"] > 0
+                   and api["machines"][c]["hours_per_changeover"] is None)
+    _select(page, machine)
+    page.evaluate(
+        """() => {
+            window.__notes = [];
+            const original = window.notify;
+            window.notify = (msg, ...rest) => { window.__notes.push(String(msg)); return original(msg, ...rest); };
+        }""")
+    try:
+        versie = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()["version"]
+        page.evaluate(
+            """(m) => {
+                const uren = document.querySelector(`input[data-inzet-machine="${m}"]`);
+                const tarief = document.querySelector(`input[data-inzet-rate="${m}"]`);
+                uren.value = '2'; tarief.value = '50';
+                saveChangeoverTime(uren);
+                saveChangeoverRate(tarief);   // direct erachteraan, zonder te wachten
+            }""", machine)
+        page.wait_for_function(
+            "(m) => _inzetState.data && _inzetState.data.machines[m] && _inzetState.data.machines[m].rate === 50"
+            " && _inzetState.data.machines[m].rate_source === 'omsteltijden'"
+            " && _inzetState.data.machines[m].hours_per_changeover === 2", arg=machine, timeout=30000)
+        store = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()
+        assert store["value"][machine]["hours_per_changeover"] == pytest.approx(2.0)
+        assert store["value"][machine]["cost_per_hour"] == pytest.approx(50.0)
+        assert store["version"] == versie + 2
+        notes = page.evaluate("() => window.__notes")
+        assert not any("Vul eerst" in n or "Iemand anders" in n for n in notes), notes
+    finally:
+        _verwijder_record(page.server["base_url"], machine)
+    assert page.js_errors == []
+
+
+def test_typend_veld_wordt_niet_half_gecommit_door_een_herlaad(browser_page, golden_fixture_path):
+    """Terwijl de omsteltijd-PATCH loopt typt de gebruiker het tarief. De
+    re-render na de PATCH mag het half getypte tarief NIET committen (change
+    bij DOM-verwijdering is geen invoer) en niet wegvegen; pas de echte
+    Tab/blur slaat het volledige bedrag op."""
+    page = browser_page
+    _ensure_store(page.server["base_url"], golden_fixture_path)
+    _open_inzet(page)
+    base_url = page.server["base_url"]
+    api = _api(base_url)
+    machine = next(c for c in sorted(api["machines"])
+                   if api["machines"][c]["total"]["changeovers"] > 0
+                   and api["machines"][c]["hours_per_changeover"] is None)
+    _select(page, machine)
+    vastgehouden = []
+
+    def _onderschep(route):
+        if route.request.method == "PATCH":
+            vastgehouden.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/api/master_data/changeover_times", _onderschep)
+    try:
+        uren = page.locator(f'input[data-inzet-machine="{machine}"]')
+        uren.fill("2")
+        uren.dispatch_event("change")           # PATCH wordt vastgehouden
+        tarief = page.locator(f'input[data-inzet-rate="{machine}"]')
+        tarief.click()
+        tarief.type("12")                        # half getypt bedrag
+        for _ in range(100):
+            if vastgehouden:
+                break
+            page.wait_for_timeout(100)
+        assert vastgehouden, "PATCH niet onderschept"
+        vastgehouden[0].continue_()              # opslag rondt af → herlaad + re-render
+        page.unroute("**/api/master_data/changeover_times")   # ná de continue: unroute zou hem zelf al afhandelen
+        page.wait_for_function(
+            "(m) => _inzetState.data && _inzetState.data.machines[m] && _inzetState.data.machines[m].hours_per_changeover === 2",
+            arg=machine, timeout=30000)
+        page.wait_for_timeout(400)               # eventuele (foute) tweede PATCH de kans geven
+        store = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()
+        assert store["value"][machine].get("cost_per_hour") is None, "half getypt tarief is gecommit"
+        # De ingetypte tekst staat er nog; afronden met een echte change slaat 120 op.
+        veld = page.locator(f'input[data-inzet-rate="{machine}"]')
+        assert veld.input_value() == "12"
+        veld.type("0")
+        with page.expect_response(lambda r: "/api/master_data/changeover_times" in r.url
+                                  and r.request.method == "PATCH" and r.ok):
+            veld.dispatch_event("change")
+        page.wait_for_function(
+            "(m) => _inzetState.data && _inzetState.data.machines[m].rate === 120", arg=machine, timeout=30000)
+        store = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()
+        assert store["value"][machine]["cost_per_hour"] == pytest.approx(120.0)
+    finally:
+        try:
+            page.unroute("**/api/master_data/changeover_times")
+        except Exception:
+            pass
+        _verwijder_record(base_url, machine)
+    assert page.js_errors == []
+
+
+def test_duizendtal_invoer_wordt_niet_als_decimaal_gelezen(browser_page, golden_fixture_path):
+    """'1.250' is nl-NL-groepering: opgeslagen als 1250, en het veld toont
+    daarna '1250' (zonder duizendtalpunt) zodat weergave en parser elkaars
+    inverse blijven."""
+    page = browser_page
+    _ensure_store(page.server["base_url"], golden_fixture_path)
+    _open_inzet(page)
+    base_url = page.server["base_url"]
+    api = _api(base_url)
+    machine = next(c for c in sorted(api["machines"])
+                   if api["machines"][c]["total"]["changeovers"] > 0
+                   and api["machines"][c]["hours_per_changeover"] is None)
+    _select(page, machine)
+    try:
+        veld = page.locator(f'input[data-inzet-machine="{machine}"]')
+        veld.fill("1")
+        with page.expect_response(lambda r: "/api/master_data/changeover_times" in r.url
+                                  and r.request.method == "PATCH" and r.ok):
+            veld.dispatch_event("change")
+        page.wait_for_function(
+            "(m) => _inzetState.data && _inzetState.data.machines[m].hours_per_changeover === 1",
+            arg=machine, timeout=30000)
+        tarief = page.locator(f'input[data-inzet-rate="{machine}"]')
+        tarief.fill("1.250")
+        with page.expect_response(lambda r: "/api/master_data/changeover_times" in r.url
+                                  and r.request.method == "PATCH" and r.ok):
+            tarief.dispatch_event("change")
+        page.wait_for_function(
+            "(m) => _inzetState.data && _inzetState.data.machines[m].rate === 1250", arg=machine, timeout=30000)
+        store = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()
+        assert store["value"][machine]["cost_per_hour"] == pytest.approx(1250.0)
+        assert page.input_value(f'input[data-inzet-rate="{machine}"]') == "1250"
+        assert ",25" not in page.input_value(f'input[data-inzet-rate="{machine}"]')
+    finally:
+        _verwijder_record(base_url, machine)
+    assert page.js_errors == []
+
+
+def test_override_gelijk_aan_de_schatting_blijft_opruimbaar(browser_page):
+    """Een wat-als dat toevallig gelijk is aan de schatting blijft amber; de
+    schatting typen ruimt hem alsnog op (de geen-POST-kortsluiting geldt
+    alleen zonder override)."""
+    page = browser_page
+    _open_inzet(page)
+    base_url = page.server["base_url"]
+    doel = page.evaluate(
+        """() => {
+            for (const code of Object.keys(_inzetState.data.machines)) {
+                for (const p of _inzetState.data.periods) {
+                    const { est, isOverride, info } = _inzetCount(code, p);
+                    if (!isOverride && info.hours > 0) return { code, p, est };
+                }
+            }
+            return null;
+        }""")
+    assert doel, "geen cel zonder override gevonden"
+    try:
+        _zet_overrides(base_url, {f"{doel['code']}|{doel['p']}": doel["est"]})
+        _open_inzet(page)
+        _select(page, doel["code"])
+        assert page.evaluate(
+            "(d) => _inzetCount(d.code, d.p).isOverride", doel) is True
+        with page.expect_response(lambda r: "/api/machine_inzet/overrides" in r.url and r.ok):
+            page.evaluate(
+                """(d) => {
+                    const rij = document.querySelector(`#inzetBoard [data-inzet-month="${d.p}"]`);
+                    rij.querySelector('button[data-inzet-cell]').click();
+                    const invoer = rij.querySelector('input[data-inzet-edit]');
+                    invoer.value = String(d.est);
+                    invoer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                }""", doel)
+        page.wait_for_function("() => Object.keys(_inzetState.overrides).length === 0", timeout=15000)
+    finally:
+        _zet_overrides(base_url, {})
+    assert page.js_errors == []
+
+
+def test_reset_ververst_het_bord_via_het_echte_pad(browser_page):
+    """Reset via de echte knopfunctie (resetAllEdits) ververst het bord: de
+    wat-als is weg en de verouderde clientkopie kan niets terugschrijven.
+    Een klik op de al-actieve sessie herlaadt juist NIET (geen onnodige GET)."""
+    page = browser_page
+    _open_inzet(page)
+    base_url = page.server["base_url"]
+    api = _api(base_url)
+    code = _machine_met_minstens(api, 2)
+    if code is None:
+        pytest.skip("geen machine met twee producten in deze fixture")
+    seq = api["machines"][code]["sequence"]
+    try:
+        _zet_sequences(base_url, {code: seq[1:] + seq[:1]})
+        _open_inzet(page)
+        assert page.evaluate("(c) => _inzetState.data.machines[c].sequence_source", code) == "wat-als"
+        page.evaluate("() => { window.confirm = () => true; }")
+        with page.expect_response(lambda r: "/api/machine_inzet" in r.url and r.request.method == "GET" and r.ok):
+            page.evaluate("() => resetAllEdits()")
+        page.wait_for_function(
+            "(c) => _inzetState.data && _inzetState.data.machines[c].sequence_source === 'standaard'",
+            arg=code, timeout=30000)
+        assert requests.get(base_url + "/api/machine_inzet", timeout=60).json()["sequences"] == {}
+        # Volgende actie stuurt alleen de eigen wijziging (kopie is vers).
+        _select(page, code)
+        with page.expect_response(lambda r: "/api/machine_inzet/sequences" in r.url and r.ok) as resp:
+            page.evaluate("([c, s]) => _inzetDropProduct(c, s[0], s[1], true)", [code, seq])
+        assert set(resp.value.request.post_data_json["sequences"]) == {code}
+        # Wissel naar de al-actieve sessie: géén onnodige herlaad van het bord.
+        actief = requests.get(base_url + "/api/sessions", timeout=60).json()["active_session_id"]
+        gets = []
+        page.on("request", lambda r: gets.append(r.url) if "/api/machine_inzet" in r.url and r.method == "GET" else None)
+        page.evaluate("(sid) => switchSession(sid)", actief)
+        page.wait_for_timeout(800)
+        assert gets == [], gets
+    finally:
+        _zet_sequences(base_url, {})
+        _open_inzet(page)
     assert page.js_errors == []

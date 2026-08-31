@@ -556,3 +556,31 @@ def test_delete_last_active_session_leaves_empty_active_session(session_route_ap
     assert session_route_app.sessions == {}
     assert session_route_app.get_active_session_id() is None
     assert session_route_app.save_calls
+
+
+def test_snapshot_kopieert_omstel_wat_als_diep(session_route_app, planning_engine_result):
+    """Een duplicaat neemt aantal-overrides en productvolgordes mee, als
+    eigen kopie: latere wijzigingen in het origineel raken het duplicaat niet."""
+    session_route_app.make_session(
+        "session-a",
+        engine=planning_engine_result,
+        custom_name="Session A",
+        pending_edits={},
+        value_aux_overrides={},
+        machine_overrides={},
+        reset_baseline=None,
+        changeover_overrides={"MA|2025-12": 3},
+        changeover_sequences={"MA": ["PB", "PA"]},
+    )
+    session_route_app.set_active_session_id("session-a")
+    response = session_route_app.client.post("/api/sessions/snapshot", json={"name": "Kopie"})
+    assert response.status_code == 200, response.get_json(silent=True) or response.get_data(as_text=True)
+    new_id = response.get_json()["session"]["id"]
+    kopie = session_route_app.sessions[new_id]
+    assert kopie["changeover_overrides"] == {"MA|2025-12": 3}
+    assert kopie["changeover_sequences"] == {"MA": ["PB", "PA"]}
+    origineel = session_route_app.sessions["session-a"]
+    origineel["changeover_sequences"]["MA"].append("PX")
+    origineel["changeover_overrides"]["MA|2025-12"] = 8
+    assert kopie["changeover_sequences"] == {"MA": ["PB", "PA"]}
+    assert kopie["changeover_overrides"] == {"MA|2025-12": 3}

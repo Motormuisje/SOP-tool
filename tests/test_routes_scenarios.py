@@ -588,3 +588,41 @@ def test_load_is_silent_when_products_match_or_scenario_predates_field(scenarios
             "/api/scenarios/load", json={"scenario_id": scenario_id})
         assert response.status_code == 200
         assert "warnings" not in response.get_json(), scenario_id
+
+
+def test_scenario_roundtrip_bewaart_omstel_wat_als(scenarios_route_app):
+    """Aantal-overrides en productvolgordes van machine-inzet reizen mee in
+    een scenario: opslaan, wijzigen, laden → exact hersteld (diepe kopie)."""
+    sess = scenarios_route_app.sessions["session-a"]
+    sess["changeover_overrides"] = {"MA|2025-12": 4}
+    sess["changeover_sequences"] = {"MA": ["PB", "PA"]}
+    saved = scenarios_route_app.client.post("/api/scenarios/save", json={"name": "Omstel"})
+    assert saved.status_code == 200, saved.get_json(silent=True)
+    scenario_id = next(i for i, sc in scenarios_route_app.scenarios.items() if sc["name"] == "Omstel")
+    sc = scenarios_route_app.scenarios[scenario_id]
+    assert sc["changeover_overrides"] == {"MA|2025-12": 4}
+    assert sc["changeover_sequences"] == {"MA": ["PB", "PA"]}
+
+    # Sessie wijzigt daarna; het scenario mag niet meebewegen (diepe kopie).
+    sess["changeover_sequences"]["MA"].append("PX")
+    sess["changeover_overrides"]["MA|2025-12"] = 9
+    assert sc["changeover_sequences"] == {"MA": ["PB", "PA"]}
+
+    loaded = scenarios_route_app.client.post("/api/scenarios/load", json={"scenario_id": scenario_id})
+    assert loaded.status_code == 200, loaded.get_json(silent=True)
+    assert sess["changeover_overrides"] == {"MA|2025-12": 4}
+    assert sess["changeover_sequences"] == {"MA": ["PB", "PA"]}
+
+
+def test_scenario_van_voor_fase_1b_zet_de_omstel_wat_als_leeg(scenarios_route_app):
+    """Scenario-laden is volledige vervanging: een scenario zonder de velden
+    (opgeslagen vóór fase 1/1b) zet de wat-als op leeg — zoals bij
+    fte_norm_overrides en active_combinations."""
+    sess = scenarios_route_app.sessions["session-a"]
+    sess["changeover_overrides"] = {"MA|2025-12": 4}
+    sess["changeover_sequences"] = {"MA": ["PB", "PA"]}
+    scenarios_route_app.scenarios["legacy"] = _scenario("session-a", "Legacy")
+    assert "changeover_sequences" not in scenarios_route_app.scenarios["legacy"]
+    loaded = scenarios_route_app.client.post("/api/scenarios/load", json={"scenario_id": "legacy"})
+    assert loaded.status_code == 200, loaded.get_json(silent=True)
+    assert sess["changeover_overrides"] == {} and sess["changeover_sequences"] == {}

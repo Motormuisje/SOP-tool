@@ -257,6 +257,8 @@ class TestFuzzInzetTweeProducten:
             ch = {} if hours_per is None else {'MA': {'hours_per_changeover': hours_per, 'description': '', 'cost_per_hour': rate}}
             mats = list(usage['machines']['MA']['product_hours'])
             seq = rng.sample(mats, len(mats)) if mats and rng.random() < 0.7 else []
+            if seq and rng.random() < 0.3:
+                seq.insert(rng.randrange(len(seq) + 1), 'ZZ_SPOOK')   # verouderde entry
             ov = {}
             for p in periodes:
                 if rng.random() < 0.3:
@@ -268,10 +270,14 @@ class TestFuzzInzetTweeProducten:
             ma = out['machines']['MA']
             assert sorted(ma['sequence']) == sorted(ma['product_hours']), ronde
             assert list(ma['product_hours']) == sorted(ma['product_hours'])   # gesorteerd contract
-            if seq:
-                assert ma['sequence'] == seq and ma['sequence_source'] == 'wat-als'
+            kept = [m for m in seq if m in ma['product_hours']]
+            if kept:
+                rest = [m for m in _default_sequence(ma['product_hours']) if m not in kept]
+                assert ma['sequence'] == kept + rest and ma['sequence_source'] == 'wat-als'
+                assert out['sequences'].get('MA') == kept   # gesnoeid, nooit spook
             else:
                 assert ma['sequence'] == _default_sequence(ma['product_hours']) and ma['sequence_source'] == 'standaard'
+                assert 'MA' not in out['sequences']
             tot_n = tot_h = tot_c = 0.0
             for p in periodes:
                 cel = ma['per_period'][p]
@@ -294,7 +300,23 @@ class TestFuzzInzetTweeProducten:
                 assert ma['total']['changeover_hours'] == pytest.approx(round(tot_h, 2))
                 assert ma['total']['cost'] == pytest.approx(round(tot_c, 2))
                 assert out['totals']['horizon']['cost'] == pytest.approx(ma['total']['cost'])
-                assert sum(out['totals']['by_period'][p]['cost'] for p in periodes) == pytest.approx(ma['total']['cost'], abs=0.01 * len(periodes))
+                assert out['totals']['horizon']['changeovers'] == tot_n
+                assert out['totals']['horizon']['changeover_hours'] == pytest.approx(round(tot_h, 2))
+                # Per periode exact: onafgerond gesommeerd, eenmaal afgerond.
+                for p in periodes:
+                    cel = ma['per_period'][p]
+                    tarief = rate if rate is not None else 0.0
+                    ruw = cel['changeovers'] * hours_per
+                    assert out['totals']['by_period'][p]['changeovers'] == cel['changeovers']
+                    assert out['totals']['by_period'][p]['changeover_hours'] == pytest.approx(round(ruw, 2))
+                    assert out['totals']['by_period'][p]['cost'] == pytest.approx(round(ruw * tarief, 2))
+                    if cel['window'] > 0:
+                        assert cel['window_pct'] == pytest.approx(round(ruw / cel['window'] * 100, 2))
+                assert sum(out['totals']['by_period'][p]['cost'] for p in periodes) == pytest.approx(ma['total']['cost'], abs=0.005 * len(periodes) + 1e-9)
+            else:
+                assert ma['total']['changeover_hours'] == 0.0 and ma['total']['cost'] == 0.0
+                assert out['totals']['horizon']['changeover_hours'] == 0.0 and out['totals']['horizon']['cost'] == 0.0
+            assert ma['total']['run_hours'] == pytest.approx(round(sum(ma['per_period'][p]['hours'] for p in periodes), 2), abs=0.02)
             _alles_eindig(out)
 
     def test_standaardvolgorde_onafhankelijk_van_invoervolgorde(self):

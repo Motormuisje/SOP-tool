@@ -112,6 +112,10 @@ class TestRoutes:
             ({'overrides': {f'MA|{PERIOD}': True}}, 'getal'),
             ({'overrides': {f'MA|{PERIOD}': -1}}, 'geheel getal'),
             ({'overrides': {f'MA|{PERIOD}': 2.5}}, 'geheel getal'),
+            # 1e307 × omsteltijd × tarief zou inf in de JSON zetten en het
+            # tabblad onlaadbaar maken.
+            ({'overrides': {f'MA|{PERIOD}': 1e307}}, 'onrealistisch groot'),
+            ({'overrides': {f'MA|{PERIOD}': 10_001}}, 'onrealistisch groot'),
         ]:
             resp = client.post('/api/machine_inzet/overrides', json=payload)
             assert resp.status_code == 400, payload
@@ -456,6 +460,12 @@ class TestKosten:
         assert uit_store['MA'] == {'hours_per_changeover': 9.0, 'description': '', 'cost_per_hour': None}
         assert uit_store['MB'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None}
         assert 'MC' not in uit_store
+        # Negatieve handwaarden zijn geen invoer: uren als 0, tarief als 'geen'.
+        master_neg = {'changeover_times': {'MA': {'hours_per_changeover': -1, 'cost_per_hour': -5}},
+                      'machine_costs': {'MA': {'variable_cost_per_hour': -50}}}
+        neg = _changeovers_from_store(engine, master=master_neg)
+        assert neg['MA'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None}
+        assert _machine_costs_from_store(master_neg) == {}
         assert _machine_costs_from_store(master) == {'MA': 51.93}
         assert _machine_costs_from_store(None) is None
 
@@ -472,6 +482,25 @@ class TestKosten:
         assert mb['hours_per_changeover'] == 1.0 and mb['sequence'] == []
         assert mb['total'] == {'changeovers': 0, 'changeover_hours': 0.0, 'cost': 0.0, 'run_hours': 0.0}
         assert out['totals']['horizon']['cost'] == 0.0
+
+    def test_negatieve_waarden_rekenen_nooit_positief_door(self):
+        """−1 u × −50 €/u mag nooit +€ 50 opleveren: negatieven uit een
+        handbewerkte store of engine.data worden geklemd; nergens −0.0."""
+        import math
+        from modules.models import MachineCost
+        _, _, build = _env2(machine_costs={'MA': MachineCost(plant_code='NLX1', cost_center='MA',
+                                                             variable_cost_per_hour=-50.0)},
+                            changeovers={'MA': {'hours_per_changeover': -1, 'description': '',
+                                                'cost_per_hour': None}})
+        out = build()
+        ma = out['machines']['MA']
+        assert ma['hours_per_changeover'] == 0.0
+        assert ma['rate'] == 0.0 and ma['rate_source'] is None
+        cel = ma['per_period'][PERIOD]
+        assert cel['changeover_hours'] == 0.0 and cel['cost'] == 0.0
+        for waarde in (cel['changeover_hours'], cel['cost'], ma['total']['cost'],
+                       out['totals']['horizon']['cost'], out['totals']['by_period'][PERIOD]['cost']):
+            assert waarde >= 0 and math.copysign(1, waarde) == 1, waarde   # geen -0.0
 
     def test_expliciet_tarief_nul_is_bron_omsteltijden(self):
         _, _, build = _env2(machine_costs=self._mc(80.0), changeovers={
@@ -516,28 +545,6 @@ class TestKosten:
 class TestSyncpunten:
     """De omstel-wat-als reist door scenario, duplicaat en sessiestore; Reset
     én een nieuwe berekening zetten hem uit (gedocumenteerd ontwerp)."""
-
-    def test_scenario_roundtrip_bewaart_overrides_en_volgorde(self):
-        from ui.routes import scenarios as scen_mod
-        src = open(scen_mod.__file__, encoding='utf-8').read()
-        # Beide velden staan in het opslag- én het laadpad (regels zijn de
-        # zes-syncpunten-doctrine; een vergeten pad is precies dit soort lek).
-        assert src.count("'changeover_overrides'") >= 2 and src.count("'changeover_sequences'") >= 2
-
-    def test_scenario_laden_vervangt_volledig(self):
-        """Een scenario zonder de velden (van vóór fase 1b) zet ze leeg — de
-        harde-vervangingsregel van scenario's, zoals bij fte_norm_overrides."""
-        import inspect
-        from ui.routes import scenarios as scen_mod
-        src = inspect.getsource(scen_mod)
-        assert "sess['changeover_sequences'] = {k: list(v) for k, v in (sc.get('changeover_sequences') or {}).items()}" in src
-
-    def test_duplicaat_kopieert_diep(self):
-        from ui.routes import sessions as sess_mod
-        import inspect
-        src = inspect.getsource(sess_mod)
-        assert "'changeover_sequences': {k: list(v) for k, v in (sess.get('changeover_sequences') or {}).items()}" in src
-        assert "'changeover_overrides': dict(sess.get('changeover_overrides') or {})" in src
 
     def test_bereken_zet_de_wat_als_uit_en_configwijziging_niet(self):
         data, results = _twee_producten_op_ma()
