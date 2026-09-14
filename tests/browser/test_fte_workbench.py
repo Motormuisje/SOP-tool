@@ -312,9 +312,11 @@ def test_wat_als_werkstroom_direct_resultaat_en_terugzetten(browser_page):
     tray = page.locator("#fteWhatIfList").inner_text()
     assert "→" in tray, tray
 
-    # Terugzetten herstelt alles exact.
+    # Terugzetten herstelt alles exact. Wachten op de TOESTAND: expect_response
+    # landt vóór de .json()-verwerking die _fteState bijwerkt (audit T1).
     with page.expect_response(lambda r: "/api/fte/norm_overrides" in r.url and r.ok):
         page.evaluate("() => revertFteNorms()")
+    page.wait_for_function("() => Object.keys(_fteState.overrides).length === 0", timeout=15000)
     restored = page.evaluate(
         "(id) => _fteAgg(_fteState.data.lines.find(l => `${l.category}:${l.key}` === id).fte, 'avg')",
         target["rowId"])

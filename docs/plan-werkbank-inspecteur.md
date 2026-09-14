@@ -130,3 +130,26 @@ combineren: kiesmodus, bandbreedte-hint, aanmaken en aanzetten, combinatierij
 met "—", uitzetten, verwijderen; installatieparameters openen in het paneel
 en de editor keert terug naar Config. De bestaande `test_fte_overzicht.py` en
 `test_fte_workbench.py` zijn aangepast aan de verdwenen elementen.
+
+## 7. Audit en reparaties (2026-09-14)
+
+Een onafhankelijke audit van commit `23c018d` leverde zeven bevindingen op
+(F1–F7) en één timinggevoelige bestaande test (T1). Alle zijn hersteld
+binnen het ontwerp; elk foutpad is als regressietest vastgelegd in
+`tests/browser/test_fte_inspector.py` (`test_f1_…` t/m `test_f7_…`).
+
+| # | Bevinding | Reparatie |
+|---|---|---|
+| F1 | Tarief- en combinatieformulier overschreven een nieuwere wijziging van een ander zonder conflict (de verse GET vóór de PATCH beschermde alleen het laatste moment). | Conflictdetectie op de **getoonde** stand: het paneel onthoudt het tarief/de definitie waarop het stoelt (`_fteInspector.labor`, `_fteInspector.comboStore`) en weigert op te slaan als dat veld intussen is veranderd; het toont dan de nieuwe stand (tarief: concept blijft staan; combinatie: concept vervalt). Een "nieuwe functiegroep" die inmiddels bestaat wordt niet overschreven. |
+| F2 | Faalde `/api/machines`, dan herlaadde de werkbank onbegrensd (30 verzoeken per 1,5 s). | `_fteMachinesFailed` stopt de automatische herhaling; de rij toont "—", het machinepaneel "Opnieuw proberen" (`_fteRetryMachines`). |
+| F3 | Na een geweigerde activatie meldde de UI toch "aangemaakt en aangezet". | `fteCombineSave` controleert elk stapresultaat en meldt de werkelijk bereikte toestand: aangezet / opgeslagen / aanzetten mislukt (met herstelweg via het vinkje) / door de motor uitgezet / niet ververst. |
+| F4 | Combinatie-inspecteur zei "rekent stil met € 0" terwijl de motor het `default`-tarief toepaste. | Zelfde tariefresolutie als `fte_engine._rate`: eigen groep, anders `default`, met de vermelding "valt terug op default"; ook in de voorvertoning en de keuzelijst. |
+| F5 | Een paneelopening die nog op het netwerk wachtte overleefde een tabwissel. | Openingsticket (`_fteOpenTicket`/`_fteTicketValid`): sluiten of tabwissel maakt een lopende opening ongeldig; geldt voor regel-, combinatie- en masterdata-paneel en de kiesmodus. |
+| F6 | Wat-als-bediening onbereikbaar bij open masterdata-, combineer- of combinatiepaneel (lade verborgen, voet zonder blok). | Eén gedeeld voetblok (`_fteWhatIfFootHtml`) in alle vier paneeltypen; het masterpaneel rendert zijn voet mee bij elke werkbank-render. |
+| F7 | KPI-telling en verdeler sloten combinatierijen uit terwijl de rij-badge ze wél markeerde. | Eén predicaat (`_fteIsSilentZero`, `_fteIsAssumed`) voor rij, KPI en verdeler. |
+| T1 | `test_wat_als_werkstroom…` las de uren vóór de state bijgewerkt was. | Wacht op de toestand (`overrides` leeg) in plaats van op het HTTP-antwoord. |
+
+Extra, op een nuancering uit het rapport: één doorzet-POST tegelijk
+(`_fteTpBusy`), zodat dubbelklik of Enter+klik geen tweede verzoek stuurt.
+De combinatietest controleert nu ook de aangekondigde FTE-formule.
+
