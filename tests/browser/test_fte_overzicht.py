@@ -198,28 +198,44 @@ def test_stacked_chart_carries_all_groups_plus_indirect(browser_page):
     assert page.js_errors == []
 
 
-def test_assumption_chips_invite_filling_in(browser_page):
-    """Zonder masterstore rekent alles op aannames en zonder tarief: de
-    aannamenstrip en de €0-badges moeten dat als invul-uitnodiging tonen —
-    doctrine 'alles invulbaar', geen stil meetellende defaults."""
+def test_kpi_caveats_invite_filling_in(browser_page):
+    """Zonder masterstore rekent alles op aannames en zonder tarief. Dat staat
+    als kanttekening bij het getal dat het raakt (de KPI-tegel) en als badge
+    op de regel — doctrine 'alles invulbaar', geen stil meetellende defaults.
+    De losse chipstrip bestaat niet meer; de kanttekening opent het paneel op
+    de eerste betreffende regel."""
     page = browser_page
     _open_workbench(page)
 
-    strip = page.locator("#fteAssumptions").inner_text()
-    assert "masterdata is de bron" in strip
+    assert page.evaluate("() => document.getElementById('fteAssumptions')") is None
 
     defaults = page.evaluate(
-        "() => _fteState.data.lines.filter(l => l.operators_source === 'default').length")
+        """() => _fteState.data.lines.filter(l => l.operators_source === 'default'
+                 && l.category !== 'indirect' && !l.combination_id).length""")
     if defaults:
-        assert "aanname 1,0" in strip
-        badge = page.locator('#fteWbBody button:has-text("aanname 1,0")').first
-        expect(badge).to_be_attached()
+        note = page.locator("#fteKpiTotalSub .fte-kpi-note")
+        expect(note).to_be_attached()
+        assert "aanname 1,0" in note.inner_text()
+        expect(page.locator('#fteWbBody button:has-text("aanname 1,0")').first).to_be_attached()
+        note.click()
+        page.wait_for_function(
+            "() => document.getElementById('fteDock').classList.contains('open') && _fteInspector.rowId",
+            timeout=15000)
+        assert page.evaluate(
+            "() => _fteLineByRowId(_fteInspector.rowId).operators_source") == "default"
+        page.keyboard.press("Escape")
+        page.wait_for_function(
+            "() => !document.getElementById('fteDock').classList.contains('open')", timeout=5000)
+    else:
+        assert page.evaluate("() => document.querySelector('#fteKpiTotalSub .fte-kpi-note')") is None
 
     zero_cost = page.evaluate(
         """() => _fteState.data.lines.filter(l => l.category !== 'machine' && !l.combination_id
                  && _fteAgg(l.fte, 'avg') > 0.005 && _fteAgg(l.cost) === 0).length""")
     if zero_cost:
-        assert "zonder loontarief" in strip
+        note = page.locator("#fteKpiCostSub .fte-kpi-note")
+        expect(note).to_be_attached()
+        assert "zonder tarief" in note.inner_text()
         expect(page.locator('#fteWbBody button:has-text("geen tarief")').first).to_be_attached()
     assert page.js_errors == []
 
@@ -271,24 +287,32 @@ def test_comparison_shows_materiality_and_dirty_note(browser_page):
     assert page.js_errors == []
 
 
-def test_machine_rows_carry_throughput_actions(browser_page):
-    """Elke machinerij draagt de ✎-actie (eigen doorzet invullen als override
-    met bronlabel) — het invulpad hoort te zitten waar de planner kijkt, niet
-    drie tabbladen verderop."""
+def test_machine_rows_show_the_effective_throughput(browser_page):
+    """De doorzetkolom toont het getal waarmee de planning rekent — de
+    effectieve doorzet van de Machines-tab — en geen MES/PEER-referenties of
+    sprongen naar Config meer. Aanpassen gebeurt in het paneel van de machine
+    (zie test_fte_inspector.py)."""
     page = browser_page
     _open_workbench(page)
+    page.wait_for_function("() => !!_machinesData", timeout=30000)
 
     report = page.evaluate(
         """() => {
             const rows = [...document.querySelectorAll('#fteWbBody tr[data-fte-row^="machine:"]')];
-            const withEdit = rows.filter(r => r.querySelector('button[onclick^="openFteThroughputGrid"]'));
-            const withMes = rows.filter(r => r.querySelector('button[onclick^="adoptFteBenchmark"]'));
-            const mesLines = _fteState.data.lines.filter(l => l.category === 'machine' && l.throughput_mes);
-            return { rows: rows.length, withEdit: withEdit.length,
-                     withMes: withMes.length, mesLines: mesLines.length };
+            const mismatched = [];
+            for (const r of rows) {
+                const code = r.dataset.fteRow.slice('machine:'.length);
+                const m = _machinesData.machines.find(x => String(x.code) === code);
+                const cell = r.querySelector('td:nth-child(9)').textContent.trim();
+                const expected = m ? _fmtNlNum(_fteEffScope(m), 1) : '…';
+                if (cell !== expected) mismatched.push({ code, cell, expected });
+            }
+            return { rows: rows.length, mismatched,
+                     configJumps: document.querySelectorAll('#fteWbBody [onclick*="showTab("]').length,
+                     oldActions: document.querySelectorAll('#fteWbBody [onclick^="adoptFteBenchmark"], #fteWbBody [onclick^="openFteThroughputGrid"]').length };
         }""")
     assert report["rows"] > 0
-    assert report["withEdit"] == report["rows"], "niet elke machinerij heeft de invul-actie"
-    # De overname-knop bestaat precies waar een MES-meting is (zonder store: 0).
-    assert report["withMes"] == report["mesLines"]
+    assert report["mismatched"] == [], report["mismatched"]
+    assert report["configJumps"] == 0
+    assert report["oldActions"] == 0
     assert page.js_errors == []

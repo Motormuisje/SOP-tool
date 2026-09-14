@@ -679,6 +679,60 @@
             header input[type=number] { width: 40px; }
             .data-table td, .data-table th { font-size: 10px; padding: 3px 4px; }
         }
+    
+
+        /* ── Werkbank-inspecteur: paneel naast de tabel, kiesmodus, KPI-kanttekeningen ── */
+        .fte-split { display: flex; gap: 16px; align-items: flex-start; }
+        .fte-split-main { flex: 1 1 auto; min-width: 0; }
+        .fte-dock { display: none; position: fixed; z-index: 40; flex-direction: column;
+                    background: rgba(15,23,42,0.88); border: 1px solid rgba(148,163,184,0.25);
+                    border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.35); }
+        .fte-dock.open { display: flex; }
+        .fte-dock-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px 10px; border-bottom: 1px solid #334155; }
+        .fte-dock-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px; }
+        .fte-dock-foot { padding: 10px 18px; border-top: 1px solid #334155; font-size: 11px; color: #64748b; }
+        .fte-dock-whatif { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.35); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+        .fte-dock #masterDatasetTitle { display: none; }
+        .fte-dock #masterDatasetBody { max-height: none; overflow: visible; }
+        .fte-dock tr[data-master-field] > td:nth-child(3), .fte-dock tr[data-master-param] > td:nth-child(3),
+        .fte-dock tr[data-master-shift] > td:nth-child(3) { display: none; }
+        /* compacte tabel zolang het paneel open is: geen afbreking, korte labels, Bron en Beschikbaar even weg */
+        .fte-dock-open #fteWbHead th, .fte-dock-open #fteWbBody td { white-space: nowrap; padding: 4px 6px; }
+        .fte-dock-open #fteWbBody td:first-child { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+        .fte-dock-open #fteWbBody td:first-child button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+        .fte-dock-open #fteWbHead th:nth-child(3), .fte-dock-open #fteWbBody td:nth-child(3),
+        .fte-dock-open #fteWbHead th:nth-child(5), .fte-dock-open #fteWbBody td:nth-child(5) { display: none; }
+        .fte-dock-open .fte-pick-hint { display: none; }
+        .fte-dock-open #fteWhatIfTray { display: none !important; }
+        .fte-row-pick { cursor: pointer; }
+        .fte-row-pick:hover > td { background: rgba(59,130,246,0.10); }
+        .fte-row-pick.fte-row-active > td { background: rgba(245,158,11,0.10); box-shadow: inset 3px 0 0 #f59e0b; }
+        .fte-pick-hint { float: right; margin-left: 8px; font-size: 10px; color: #475569; }
+        .fte-row-pick:hover .fte-pick-hint { color: #93c5fd; }
+        .fte-in { background: #334155; border-radius: 4px; padding: 2px 6px; text-align: right; color: #e2e8f0; }
+        .fte-in:focus { outline: 1px solid #3b82f6; }
+        .fte-in.fte-dirty { box-shadow: 0 0 0 1px #fbbf24; }
+        .fte-in.fte-warn { box-shadow: 0 0 0 1px #f59e0b; background: rgba(245,158,11,0.14); }
+        .fte-in:disabled { opacity: .5; }
+        .fte-ins { margin-bottom: 20px; }
+        .fte-ins h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #94a3b8; margin-bottom: 4px; }
+        .fte-ins-note { font-size: 11px; color: #64748b; margin: 2px 0 8px; }
+        .fte-ins-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        .fte-ins-row label { font-size: 12px; color: #cbd5e1; }
+        .fte-btn { font-size: 12px; background: #1e293b; border: 1px solid #475569; border-radius: 6px; padding: 3px 10px; color: #e2e8f0; }
+        .fte-btn:hover { background: #334155; }
+        .fte-btn-primary { font-size: 12px; background: #2563eb; border-radius: 6px; padding: 4px 12px; color: #fff; }
+        .fte-btn-primary:hover { background: #3b82f6; }
+        .fte-btn-primary:disabled { opacity: .45; cursor: default; }
+        .fte-kpi-note { color: #fbbf24; }
+        .fte-kpi-note:hover { color: #fde68a; text-decoration: underline; }
+        .fte-kpi-link { color: #60a5fa; }
+        .fte-kpi-link:hover { color: #bfdbfe; text-decoration: underline; }
+        .fte-row-sel > td { background: rgba(245,158,11,0.10); }
+        .fte-chip { display: inline-flex; align-items: center; gap: 4px; background: #1e293b; border: 1px solid #475569; border-radius: 999px; padding: 2px 8px; font-size: 11px; margin: 2px 4px 2px 0; }
+        #fteCombineBtn.on { background: #f59e0b; color: #0f172a; border-color: #f59e0b; font-weight: 600; }
+        .fte-link { color: #60a5fa; font-size: 11px; }
+        .fte-link:hover { color: #bfdbfe; }
     </style>
 </head>
 <body class="text-gray-100">
@@ -1311,10 +1365,6 @@
                     <div class="kpi-card rounded-xl p-4 text-center"><p class="text-slate-400 text-xs">Ton per FTE</p><p class="text-2xl font-bold" id="fteKpiTonsPerFte">0</p><p class="text-[10px] text-slate-500" id="fteKpiTonsPerFteSub"></p></div>
                 </div>
 
-                <!-- Aannamenstrip: waar de getallen op steunen, elk met een sprong
-                     naar zijn invulpad. Gevuld door _renderFteAssumptions(). -->
-                <div id="fteAssumptions" class="flex flex-wrap gap-2 mb-4 text-[11px]"></div>
-
                 <div id="fteWarnings" class="hidden card rounded-xl p-4 mb-4 border border-amber-500/40">
                     <p class="text-amber-400 text-sm font-semibold mb-1">Let op</p>
                     <ul id="fteWarningList" class="text-xs text-amber-200 list-disc pl-5 space-y-1"></ul>
@@ -1344,6 +1394,7 @@
                     <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
                         <h3 class="font-semibold">Werkbank &mdash; capaciteit, bemensing en kosten</h3>
                         <div class="flex flex-wrap items-center gap-3 text-xs">
+                            <button id="fteCombineBtn" onclick="fteCombineToggleMode()" class="px-2 py-1 rounded-lg border border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700">Combineren</button>
                             <span id="fteRange" class="flex rounded-lg overflow-hidden border border-slate-600">
                                 <button data-range="all" onclick="setFteRange('all')" class="px-2 py-1 bg-blue-600 text-white">hele horizon</button>
                                 <button data-range="next3" onclick="setFteRange('next3')" class="px-2 py-1 bg-slate-800 text-slate-300 hover:bg-slate-700">komende 3 mnd</button>
@@ -1357,26 +1408,24 @@
                             </label>
                         </div>
                     </div>
-                    <div id="fteDirtyBar" class="hidden mb-3 flex items-center justify-between gap-3 bg-amber-500/10 border border-amber-500/40 rounded-lg px-3 py-2">
-                        <span class="text-xs text-amber-200"><span id="fteDirtyCount">0</span> wat-als-wijziging(en) &mdash; rekenen direct mee, nog niet in de masterdata.</span>
-                        <span class="flex gap-2">
-                            <button onclick="revertFteNorms()" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1">Ongedaan maken</button>
-                            <button onclick="saveFteNorms()" class="text-xs bg-blue-600 hover:bg-blue-500 rounded px-3 py-1">Opslaan in masterdata</button>
-                        </span>
+                    <div id="fteWbSplit" class="fte-split">
+                        <div class="overflow-auto fte-split-main"><table class="data-table w-full text-xs"><thead id="fteWbHead"></thead><tbody id="fteWbBody"></tbody></table></div>
+                        <aside id="fteDock" class="fte-dock">
+                            <div class="fte-dock-head">
+                                <div class="min-w-0">
+                                    <p id="fteDockKicker" class="text-[10px] uppercase tracking-wider text-amber-400 mb-0.5"></p>
+                                    <h3 id="fteDockTitle" class="font-semibold text-slate-100 truncate"></h3>
+                                    <p id="fteDockSub" class="text-xs text-slate-500"></p>
+                                </div>
+                                <button onclick="closeFteDrawer()" class="text-slate-400 hover:text-slate-100 text-xl leading-none px-1" title="Sluiten (Esc)">&times;</button>
+                            </div>
+                            <div id="fteDockBody" class="fte-dock-body text-sm"></div>
+                            <div id="fteDockFoot" class="fte-dock-foot"></div>
+                        </aside>
                     </div>
-                    <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteWbHead"></thead><tbody id="fteWbBody"></tbody></table></div>
                     <p class="text-xs text-slate-500 mt-2">Klik een groepsrij om de machines eronder te tonen. Machinerijen zijn detail
                         achter hun groep en tellen niet mee in het totaal (een molengroep is het maximum van zijn machines, geen som).
-                        SAP/MES-waarden zijn beginwaarden: via &#9998; vul je een eigen doorzet in (met bronlabel), via &#8594; neem je
-                        de MES-meting als startwaarde over.</p>
-                </div>
-
-                <!-- Combinatiebeheer is verhuisd naar het tabblad Machine-inzet
-                     (machines bij machines); hier alleen de stand + sprong. -->
-                <div class="card rounded-xl p-4 mb-4 flex items-center justify-between gap-3">
-                    <p class="text-xs text-slate-400"><span id="fteCombiSummary">0</span> machinecombinatie(s) actief in deze sessie
-                        &mdash; combinaties en omstellingen beheer je op het tabblad Machine-inzet.</p>
-                    <button onclick="showTab('inzet')" class="text-xs bg-slate-700 hover:bg-slate-600 rounded px-3 py-1.5">Naar Machine-inzet</button>
+                        Klik een regel om bemensing, tarief en doorzet van die regel te bekijken en aan te passen.</p>
                 </div>
 
                 <!-- Wat-als-paneel rechtsonder: de wijzigingen van het experiment,
@@ -2479,6 +2528,7 @@ function updateHorizonDisplay() {
 }
 
 function showTab(name, btn) {
+    if (name !== 'fte' && typeof closeFteDrawer === 'function') closeFteDrawer();
     document.querySelectorAll('.tab-content').forEach(t => t.classList.add('hidden'));
     document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-slate-400'); });
     document.getElementById(name + '-tab').classList.remove('hidden');
@@ -5883,7 +5933,7 @@ async function openMasterDatasetModal(dataset) {
     document.querySelectorAll('#masterDatasetButtons button').forEach(b => {
         b.style.outline = b.dataset.ds === dataset ? '2px solid #3b82f6' : '';
     });
-    document.getElementById('cfgsec-tabellen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (_fteDrawerMode !== 'master') document.getElementById('cfgsec-tabellen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 let _activeMasterDataset = null;
@@ -6705,6 +6755,7 @@ async function saveMasterDataset(dataset) {
     openMasterDatasetModal(dataset);
     // Suggestielijsten verversen: namen of codes kunnen net gewijzigd zijn.
     _entityCache = {};
+    if (typeof _masterAfterSaveHook === 'function' && await _masterAfterSaveHook(dataset, data)) return;
     notify(`Masterdata opgeslagen (versie ${data.version}). Herbereken sessies om de wijziging toe te passen.`, 'info', 4500);
 }
 
@@ -12695,6 +12746,7 @@ function _fteOperators(line) {
 function renderFteWorkbench() {
     const data = _fteState.data;
     if (!data) return;
+    _fteEnsureMachines();
     const showMachines = document.getElementById('fteShowMachines')?.checked;
 
     const fteAvg = _fteAgg(data.totals.fte, 'avg');
@@ -12720,6 +12772,7 @@ function renderFteWorkbench() {
     _fteKpiSub('fteKpiUtilizationSub', 'avg', null);
     _fteKpiSub('fteKpiCostSub', 'sum', null);
     _fteKpiSub('fteKpiTonsPerFteSub', 'avg', null);
+    _fteRenderKpiCaveats();
 
     const warnBox = document.getElementById('fteWarnings');
     const warnList = document.getElementById('fteWarningList');
@@ -12730,15 +12783,15 @@ function renderFteWorkbench() {
         warnBox.classList.add('hidden');
     }
 
-    _renderFteAssumptions();
     _renderFteHeatmap();
     _renderFteWbChart();
     _renderFteCombinations();
-    const combiSummary = document.getElementById('fteCombiSummary');
-    if (combiSummary) combiSummary.textContent = _fteState.active.length;
     _renderFteTable(showMachines);
     _renderFteValuePanel();
-    _updateFteDirtyBar();
+    _renderFteWhatIfTray();
+    _fteRenderCombineBtn();
+    if (_fteCombine.active) _fteCombineRender();
+    else if (_fteDrawerMode === 'inspector' && _fteInspector.rowId) _fteInspectorRender();
 }
 
 // Sublabel onder een KPI-tegel: wat het getal IS (gemiddelde/som + bereik) en
@@ -12762,36 +12815,6 @@ function _fteKpiSub(id, mode, values) {
         }
     }
     el.innerHTML = `${kind} · ${escapeHtml(scopeLabel)}${peakHtml}`;
-}
-
-// De aannamenstrip: waar de getallen op steunen, elk als chip met een sprong
-// naar het invulpad. Doctrine 'alles invulbaar': een aanname is geen etiket
-// maar een uitnodiging om het echte getal in te vullen.
-function _renderFteAssumptions() {
-    const host = document.getElementById('fteAssumptions');
-    if (!host) return;
-    const lines = (_fteState.data && _fteState.data.lines) || [];
-    const defaults = lines.filter(l => l.operators_source === 'default').length;
-    const zeroCost = lines.filter(l => l.category !== 'machine' && !l.combination_id
-        && _fteAgg(l.fte, 'avg') > 0.005 && _fteAgg(l.cost) === 0).length;
-    const chip = (text, cls, onclick) =>
-        `<button onclick="${onclick}" class="px-2 py-0.5 rounded-full border ${cls}">${text}</button>`;
-    const goto = (dataset) => `showTab('config');setTimeout(() => openMasterDatasetModal('${dataset}'), 150)`;
-    const chips = [
-        chip('bemensingsnormen &amp; tarieven: masterdata is de bron — import vult alleen',
-             'border-slate-600 text-slate-400 hover:text-slate-200', goto('staffing_norms')),
-    ];
-    if (defaults > 0) {
-        chips.push(chip(`${defaults} regel(s) rekenen op aanname 1,0 — vul de norm in`,
-            'border-amber-500/60 text-amber-300 hover:text-amber-200', goto('staffing_norms')));
-    }
-    if (zeroCost > 0) {
-        chips.push(chip(`${zeroCost} regel(s) zonder loontarief rekenen € 0 — vul een tarief in`,
-            'border-red-500/60 text-red-300 hover:text-red-200', goto('labor_rates')));
-    }
-    chips.push(chip('FTE-uren &amp; bezettingsdoel', 'border-slate-600 text-slate-400 hover:text-slate-200',
-                    goto('fte')));
-    host.innerHTML = chips.join('');
 }
 
 // ── Overzichtslaag ─────────────────────────────────────────────────────────
@@ -12914,49 +12937,6 @@ function toggleFteGroup(key) {
     _renderFteTable(document.getElementById('fteShowMachines')?.checked);
 }
 
-// Doorzet invullen vanuit de werkbank: opent het overrides-grid gefilterd op
-// de machine. Zelfde dataset, zelfde PATCH, zelfde eigenaar — alleen de ingang
-// zit nu waar de planner kijkt.
-function openFteThroughputGrid(machine) {
-    showTab('config');
-    setTimeout(() => {
-        openMasterDatasetModal('throughput_overrides');
-        setTimeout(() => {
-            const filter = document.getElementById('masterDatasetFilter');
-            if (filter) { filter.value = machine; filter.dispatchEvent(new Event('input', { bubbles: true })); }
-        }, 200);
-    }, 150);
-}
-
-// 'Neem MES over als beginwaarde': expliciete handeling, geen sluis. De
-// override-sleutel is machine|materiaal en de werkbankregel kent het materiaal
-// niet, dus blind wegschrijven kan niet: de gebruiker maakt de sleutel af in
-// een prompt (machinedeel staat klaar) en er wordt een override-RIJ klaargezet
-// met de MES-waarde en bronlabel 'MES overgenomen' — opslaan blijft de
-// bestaande, gecontroleerde PATCH van het grid.
-function adoptFteBenchmark(machine, value) {
-    showTab('config');
-    setTimeout(() => {
-        openMasterDatasetModal('throughput_overrides');
-        setTimeout(() => {
-            // Sleutelkiezer met de machine vastgezet en een keuzelijst voor
-            // het materiaal — het materiaalnummer wordt gekozen, niet getypt.
-            openMasterKeyPicker('throughput_overrides', {
-                title: `MES overnemen als beginwaarde — ${machine}`,
-                hint: `Kies het materiaal; de override krijgt ${_fmtNlNum(value, 1)} t/u met bronlabel "MES overgenomen".`,
-                prefill: [machine, ''], lockFirst: true,
-            }, key => {
-                const row = _insertMasterRow('throughput_overrides', key,
-                    { throughput_t_per_hour: value, source: 'MES overgenomen' });
-                if (row) {
-                    row.scrollIntoView({ block: 'center' });
-                    notify('MES-waarde staat klaar als beginwaarde — controleer en sla op.', 'info', 6000);
-                }
-            });
-        }, 250);
-    }, 150);
-}
-
 function _renderFteCombinations() {
     const host = document.getElementById('fteCombinations');
     if (!host) return;
@@ -13008,11 +12988,1040 @@ async function toggleFteCombination(id, on) {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Werkbank-inspecteur: één paneel naast de tabel (2026-09)
+//
+// Klik een regel in de werkbank → een gedockt paneel met bemensing, tarief,
+// doorzet en combinaties van díe regel. Geen sprong naar Config; elke opslag
+// ververst de werkbank meteen. Drie invoersoorten met elk één eigenaar:
+//   norm     = sessie-wat-als            (POST /api/fte/norm_overrides)
+//   tarief   = masterdata                (PATCH labor_rates + /api/fte/refresh)
+//   doorzet  = het Machines-mechanisme   (doel-doorzet → OEE, /api/machines/update,
+//                                         dus de héle planning rekent mee)
+// Combineren gebeurt vanuit de tabel (kiesmodus + formulier); MES/PEER en de
+// FTE-eigen doorzet-overrides staan niet meer in de werkbank.
+// Ontwerpnotitie: docs/plan-werkbank-inspecteur.md.
+// ══════════════════════════════════════════════════════════════════════════
 const _FTE_COLUMNS = [
     ['Regel', 'left'], ['Operators/uur', 'right'], ['Bron', 'left'],
     ['Uren', 'right'], ['Beschikbaar', 'right'], ['Benutting', 'right'],
-    ['FTE', 'right'], ['Loonkosten', 'right'], ['Doorzet & benchmark', 'right'],
+    ['FTE', 'right'], ['Loonkosten', 'right'], ['Doorzet (t/u)', 'right'],
 ];
+
+// Invoerveld-weergave zoals de rest van de app: komma, geen duizendtallen.
+function _fteInputNum(v, dec = 2) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '';
+    return n.toLocaleString('nl-NL', { maximumFractionDigits: dec, useGrouping: false });
+}
+function _fteScopeLabel() {
+    const period = document.getElementById('ftePeriod')?.value;
+    if (period) return period;
+    return { next3: 'komende 3 mnd', next6: 'komende 6 mnd' }[_fteState.range] || 'hele horizon';
+}
+function _fteLineByRowId(rowId) {
+    const idx = String(rowId).indexOf(':');
+    const category = String(rowId).slice(0, idx);
+    const key = String(rowId).slice(idx + 1);
+    return (_fteState.data?.lines || []).find(l => l.category === category && String(l.key) === key) || null;
+}
+function _fteGroupMembers(group) {
+    return (_fteState.data?.lines || []).filter(l => l.category === 'machine'
+        && ((l.machine_group || '') === String(group.key) || (l.machine_group || '') === String(group.machine_group || group.key)));
+}
+
+// ── Masterdata-hulpjes (bestaande routes) ────────────────────────────────
+async function _fteMasterGet(dataset) {
+    const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`);
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'laden mislukt');
+    return data;   // { value, version }
+}
+async function _fteMasterPatch(dataset, value, baseVersion) {
+    const res = await fetch(`/api/master_data/${encodeURIComponent(dataset)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value, base_version: baseVersion ?? undefined }),
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+        notify('Iemand anders heeft deze masterdata net gewijzigd. De lijst is herladen; controleer en sla opnieuw op.', 'warning', 8000);
+        return null;
+    }
+    if (!res.ok || data.error) { notify(data.error || 'Opslaan mislukt.', 'error', 6000); return null; }
+    if (data.warnings && data.warnings.length) notify(data.warnings.join(' · '), 'warning', 8000);
+    if (typeof _renderMasterDataStatus === 'function') _renderMasterDataStatus(data);
+    return data;
+}
+// De draaiende engine leest de F2-CF-datasets opnieuw in (bestaande route);
+// de sessie-wat-als en de actieve combinaties blijven staan.
+async function _fteRefreshWorkbench() {
+    try {
+        const res = await fetch('/api/fte/refresh', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || data.error) { notify(data.error || 'Werkbank verversen mislukt.', 'error', 5000); return false; }
+        _fteState.data = data.fte;
+        _fteState.combinations = data.combinations || _fteState.combinations;
+        _fteState.masterVersion = data.master_version ?? _fteState.masterVersion;
+        renderFteWorkbench();
+        return true;
+    } catch (err) { notify('Werkbank verversen mislukt: ' + err, 'error', 5000); return false; }
+}
+
+// ── Het gedockte paneel ──────────────────────────────────────────────────
+// Staat 'fixed' langs de rechterrand van de tabelstrook (sticky kan hier
+// niet: een overflow-voorouder maakt het dood en de strook is nauwelijks
+// hoger dan het paneel). Volgt de strook bij scrollen en resizen, blijft
+// onder de bovenbalk, krimpt mee tot de onderrand van de tabel en verdwijnt
+// zodra de tabel uit beeld is.
+let _fteDrawerMode = null;          // 'inspector' | 'master' | null
+let _fteMasterInlineHome = null;    // waar #masterDatasetInline vandaan komt
+let _masterAfterSaveHook = null;    // saveMasterDataset roept dit na succes
+let _fteDockBar = 0;
+
+function openFteDrawer({ kicker = '', title = '', sub = '', mode = 'inspector' } = {}) {
+    const host = document.getElementById('fteDock');
+    if (!host) return null;
+    if (_fteDrawerMode === 'master' && mode !== 'master') _fteReturnMasterInline();
+    if (mode !== 'inspector') _fteInspector.rowId = null;
+    const fresh = !host.classList.contains('open');
+    _fteDrawerMode = mode;
+    document.getElementById('fteDockKicker').textContent = kicker;
+    document.getElementById('fteDockTitle').textContent = title;
+    document.getElementById('fteDockSub').textContent = sub;
+    host.classList.add('open');
+    document.body.classList.add('fte-dock-open');
+    if (fresh) {
+        _fteDockBar = _fteTopBarBottom();
+        window.addEventListener('scroll', _fteDockPlace, { passive: true });
+        window.addEventListener('resize', _fteDockPlace);
+    }
+    _fteDockPlace();
+    return document.getElementById('fteDockBody');
+}
+function closeFteDrawer() {
+    if (!_fteDrawerMode) return;
+    if (_fteDrawerMode === 'master') _fteReturnMasterInline();
+    if (_fteDrawerMode === 'combine') { _fteCombine.active = false; _fteCombine.selected = new Set(); _fteCombine.form = null; }
+    _fteDrawerMode = null;
+    _fteInspector.rowId = null;
+    _fteDockUnplace();
+    document.getElementById('fteDock')?.classList.remove('open');
+    document.body.classList.remove('fte-dock-open');
+    const b = document.getElementById('fteDockBody'); if (b) b.innerHTML = '';
+    const f = document.getElementById('fteDockFoot'); if (f) f.innerHTML = '';
+    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+    _renderFteWhatIfTray();
+    _fteRenderCombineBtn();
+}
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('masterKeyModal')?.style.display !== 'flex') closeFteDrawer();
+});
+function _fteDockPlace() {
+    const dock = document.getElementById('fteDock');
+    const split = document.getElementById('fteWbSplit');
+    if (!dock || !split || !dock.classList.contains('open')) return;
+    const r = split.getBoundingClientRect();
+    // Het masterdata-formulier (installatiebreed) heeft een uitlegkolom en
+    // krijgt iets meer ruimte dan de inspecteur.
+    const frac = _fteDrawerMode === 'master' ? 0.42 : 0.34;
+    const w = Math.round(Math.min(560, Math.max(360, r.width * frac)));
+    split.style.paddingRight = (w + 16) + 'px';
+    const top = Math.max(_fteDockBar + 12, r.top);
+    // Niet hoger dan het venster, en niet voorbij de onderrand van de
+    // tabelstrook: het paneel hoort bij de tabel en hangt niet over de
+    // kaarten eronder. Wordt de rest te klein, dan is de tabel weg: verbergen.
+    const room = Math.min(window.innerHeight - top - 12, r.bottom - top);
+    dock.style.width = w + 'px';
+    dock.style.left = Math.round(r.right - w) + 'px';
+    dock.style.top = Math.round(top) + 'px';
+    dock.style.maxHeight = Math.max(320, Math.round(room)) + 'px';
+    dock.style.visibility = (room < 160 || r.top > window.innerHeight - 24) ? 'hidden' : '';
+}
+function _fteDockUnplace() {
+    window.removeEventListener('scroll', _fteDockPlace);
+    window.removeEventListener('resize', _fteDockPlace);
+    const split = document.getElementById('fteWbSplit');
+    if (split) split.style.paddingRight = '';
+    const dock = document.getElementById('fteDock');
+    if (dock) { for (const k of ['visibility', 'left', 'top', 'width', 'maxHeight']) dock.style[k] = ''; }
+}
+// Het paneel hoort bij de tabel: wie vanuit de KPI-strook of de chips iets
+// opent, moet de tabel (en dus het paneel) ook zien.
+function _fteScrollToWorkbench() {
+    const split = document.getElementById('fteWbSplit');
+    if (!split) return;
+    const r = split.getBoundingClientRect();
+    const bar = _fteTopBarBottom();
+    if (r.top >= bar && r.top < window.innerHeight * 0.55) return;
+    window.scrollTo({ top: window.scrollY + r.top - (bar + 12), behavior: 'smooth' });
+}
+// Onderkant van een vaste/plakkende bovenbalk (0 als er geen is), zonder
+// aannames over de markup: kijk welk breed, laag element de bovenrand raakt.
+function _fteTopBarBottom() {
+    let bottom = 0;
+    for (const el of document.querySelectorAll('body *')) {
+        const cs = getComputedStyle(el);
+        if ((cs.position !== 'fixed' && cs.position !== 'sticky') || cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = el.getBoundingClientRect();
+        if (r.top <= 0 && r.bottom > 0 && r.height < 160 && r.width > window.innerWidth * 0.5) {
+            bottom = Math.max(bottom, r.bottom);
+        }
+    }
+    return bottom;
+}
+
+// ── Installatiebrede masterdata in het paneel ────────────────────────────
+// Velden zonder regel (FTE-uren, bezettingsdoel, ploegvensters; een
+// indirecte activiteit) bewerk je met de bestaande masterdata-editor, die
+// hiervoor fysiek in het paneel wordt gezet en na sluiten terugkeert naar
+// Config. Opslaan gaat langs de bestaande PATCH en ververst de werkbank.
+function _fteReturnMasterInline() {
+    const inline = document.getElementById('masterDatasetInline');
+    if (inline && _fteMasterInlineHome) {
+        _fteMasterInlineHome.parent.insertBefore(inline, _fteMasterInlineHome.next);
+        inline.style.display = 'none';
+    }
+    _fteMasterInlineHome = null;
+    _masterAfterSaveHook = null;
+}
+async function openFteMasterInDock(dataset, { filter = '', kicker = 'Installatie · masterdata', why = '' } = {}) {
+    const spec = _MASTER_DATASETS[dataset];
+    const inline = document.getElementById('masterDatasetInline');
+    if (!spec || !inline) return;
+    const body = openFteDrawer({
+        kicker, title: spec.label,
+        sub: why || 'Geldt voor alle instanties. Opslaan schrijft naar de masterdata en ververst de werkbank meteen.',
+        mode: 'master',
+    });
+    if (!_fteMasterInlineHome) _fteMasterInlineHome = { parent: inline.parentNode, next: inline.nextSibling };
+    body.innerHTML = '';
+    body.appendChild(inline);
+    _masterAfterSaveHook = async () => {
+        const ok = await _fteRefreshWorkbench();
+        if (ok) notify(`${spec.label} opgeslagen — de werkbank rekent nu met de nieuwe waarden.`, 'success', 4500);
+        return ok;
+    };
+    await openMasterDatasetModal(dataset);
+    const filterEl = document.getElementById('masterDatasetFilter');
+    if (filterEl) { filterEl.value = filter; filterEl.dispatchEvent(new Event('input', { bubbles: true })); }
+    document.getElementById('fteDockFoot').innerHTML = filter
+        ? `Gefilterd op <b class="text-slate-300">${escapeHtml(filter)}</b> — wis het filter om alles te zien. Esc sluit.`
+        : 'Esc sluit.';
+    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+    _fteDockPlace();
+    _fteScrollToWorkbench();
+}
+
+// ── Verdeler voor de aannamenstrip en de rij-etiketten ───────────────────
+// Alles wat aan een regel hangt landt in de inspecteur van die regel;
+// installatiebrede velden landen in het masterdata-formulier in het paneel.
+function _fteOpenDataset(dataset, ctx = {}) {
+    const lines = _fteState.data?.lines || [];
+    if (dataset === 'staffing_norms') {
+        let rowId = ctx.rowId || null;
+        if (!rowId) {
+            const l = lines.find(x => x.operators_source === 'default' && x.category !== 'indirect' && !x.combination_id);
+            if (l) rowId = `${l.category}:${l.key}`;
+        }
+        return rowId ? openFteInspector(rowId, 'norm') : openFteMasterInDock('staffing_norms');
+    }
+    if (dataset === 'labor_rates') {
+        let rowId = ctx.rowId || null;
+        if (!rowId) {
+            const l = lines.find(x => x.category !== 'machine' && !x.combination_id
+                && _fteAgg(x.fte, 'avg') > 0.005 && _fteAgg(x.cost) === 0);
+            if (l) rowId = `${l.category}:${l.key}`;
+        }
+        return rowId ? openFteInspector(rowId, 'rate') : openFteMasterInDock('labor_rates');
+    }
+    return openFteMasterInDock(dataset, { filter: ctx.filter || '' });
+}
+
+// ── Kanttekeningen in de KPI-tegels ──────────────────────────────────────
+// De aannamenstrip is weg. Wat er van waarde was staat nu bij het getal dat
+// het raakt: een amber regel onder 'FTE benodigd' als er op aanname 1,0
+// wordt gerekend, onder 'Loonkosten' als regels stil € 0 tellen, en het
+// bezettingsdoel als klikbare ingang naar de installatieparameters.
+function _fteRenderKpiCaveats() {
+    const data = _fteState.data;
+    if (!data) return;
+    const lines = data.lines || [];
+    const add = (id, html) => {
+        const el = document.getElementById(id);
+        if (el) el.insertAdjacentHTML('beforeend', html);
+    };
+    const assumed = lines.filter(l => l.operators_source === 'default' && l.category !== 'indirect' && !l.combination_id).length;
+    if (assumed) {
+        add('fteKpiTotalSub', ` · <button class="fte-kpi-note" title="De motor rekent hier met een verzonnen 1,0 operator per uur — klik om de norm in te vullen"
+            onclick="_fteOpenDataset('staffing_norms')">${assumed} regel${assumed > 1 ? 's' : ''} op aanname 1,0</button>`);
+    }
+    const zero = lines.filter(l => l.category !== 'machine' && !l.combination_id
+        && _fteAgg(l.fte, 'avg') > 0.005 && _fteAgg(l.cost) === 0).length;
+    if (zero) {
+        add('fteKpiCostSub', ` · <button class="fte-kpi-note" title="Regels met FTE maar zonder loontarief tellen stil € 0 mee — klik om een tarief in te vullen"
+            onclick="_fteOpenDataset('labor_rates')">${zero} regel${zero > 1 ? 's' : ''} zonder tarief</button>`);
+    }
+    const target = Number(data.utilization_rate);
+    if (Number.isFinite(target) && target > 0) {
+        add('fteKpiStaffedSub', ` · <button class="fte-kpi-link" title="Bezettingsdoel, FTE-uren en ploegvensters: installatiebrede parameters (masterdata)"
+            onclick="openFteMasterInDock('fte', { kicker: 'Installatie · FTE-parameters' })">doel ${_fmtNlNum(target * 100, 0)} %</button>`);
+    }
+}
+
+// ── Inspecteur per regel ─────────────────────────────────────────────────
+const _fteInspector = { rowId: null, section: null, labor: null, draft: { rate: null } };
+
+async function openFteInspector(rowId, section = null) {
+    const line = _fteLineByRowId(rowId);
+    if (!line) return;
+    const changed = _fteInspector.rowId !== rowId;
+    _fteInspector.rowId = rowId;
+    _fteInspector.section = section;
+    if (changed) { _fteInspector.draft = { rate: null }; _fteInspector.comboDraft = null; }
+    try {
+        _fteInspector.labor = await _fteMasterGet('labor_rates');
+    } catch (err) {
+        _fteInspector.labor = _fteInspector.labor || { value: {}, version: null };
+    }
+    _fteEnsureMachines();
+    _fteInspectorRender();
+    _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+    _fteScrollToWorkbench();
+}
+
+function _fteInspectorRender() {
+    const line = _fteLineByRowId(_fteInspector.rowId);
+    const combo = _fteComboFromRowId(_fteInspector.rowId);
+    if (combo) { _fteCombinationRender(combo, line); return; }
+    if (!line) { closeFteDrawer(); return; }
+    const lines = _fteState.data?.lines || [];
+    const bodyEl = document.getElementById('fteDockBody');
+    const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
+    const catLabel = { group: 'Machinegroep', machine: 'Machine', indirect: 'Indirecte activiteit' }[line.category] || line.category;
+    const hours = _fteAgg(line.hours), avail = _fteAgg(line.available_hours), load = _fteAgg(line.load_hours || line.hours);
+    const util = avail > 0 ? load / avail : null;
+    const body = openFteDrawer({
+        kicker: catLabel + (line.combination_id ? ` · combinatie ${line.combination_id}` : ''),
+        title: line.label,
+        sub: `${line.key} · ${_fmtNlNum(hours, 0)} u · ${util === null ? '—' : _fmtNlNum(util * 100, 1) + '%'} benutting · `
+           + `${_fmtNlNum(_fteAgg(line.fte, 'avg'), 2)} FTE · € ${_fmtNlNum(_fteAgg(line.cost), 0)} (${_fteScopeLabel()})`,
+        mode: 'inspector',
+    });
+    const sec = (id, title, note, inner) => `<section id="fteIns-${id}" class="fte-ins">
+        <h4>${title}</h4>${note ? `<p class="fte-ins-note">${note}</p>` : ''}${inner}</section>`;
+    let html = '';
+
+    // Bemensing — bestaand wat-als-pad, zelfde handler als de tabelcel.
+    const editable = line.category !== 'indirect' && !line.combination_id;
+    const srcLabel = { staffing_norms: 'norm uit masterdata', line12_coefficient: 'L12-coëfficiënt',
+                       combination: 'combinatie', default: 'aanname 1,0', 'wat-als': 'wat-als' }[line.operators_source]
+                     || line.operators_source || '—';
+    html += sec('norm', 'Bemensing',
+        editable ? 'Wat-als van deze sessie: Enter en het rekent direct mee. Vastleggen via het blok onderaan.'
+                 : 'Deze regel volgt haar combinatie of activiteit; de norm staat daar.',
+        `<div class="fte-ins-row">
+            <label>Operators per draaiuur</label>
+            ${editable
+                ? `<input type="text" class="fte-in w-24 ${line.operators_source === 'wat-als' ? 'fte-dirty' : ''}"
+                        value="${_fteInputNum(line.operators_per_hour, 2)}"
+                        data-fte-cat="${escapeHtml(line.category)}" data-fte-key="${escapeHtml(line.key)}" onchange="onFteNormEdit(this)">`
+                : `<span class="font-mono text-slate-200">${_fmtNlNum(line.operators_per_hour, 3)}</span>`}
+            <span class="${line.operators_source === 'wat-als' ? 'text-amber-300' : line.operators_source === 'default' ? 'text-amber-400' : 'text-slate-500'} text-[11px]">
+                ${escapeHtml(srcLabel)}${line.operators_source === 'default' ? ' — vul de echte norm in' : ''}</span>
+         </div>
+         ${line.category === 'machine' ? '<p class="fte-ins-note">Machinerijen zijn detail: de groepsnorm beweegt de totalen.</p>' : ''}`);
+
+    // Loonkosten — tarief van de functiegroep (masterdata).
+    const fg = line.function_group || 'default';
+    const laborVal = (_fteInspector.labor && _fteInspector.labor.value) || {};
+    const own = laborVal[fg];
+    const rec = own || laborVal['default'] || null;
+    const rateNow = rec ? Number(rec.cost_per_fte_per_year || 0) : null;
+    const draftRate = _fteInspector.draft.rate;
+    html += sec('rate', 'Loonkosten',
+        `Functiegroep <b class="text-slate-300">${escapeHtml(fg)}</b>${!own && rec ? ' (valt terug op "default")' : ''}.
+         Het tarief is masterdata en geldt voor elke regel in deze functiegroep.`,
+        `<div class="fte-ins-row">
+            <label>Kost per FTE per jaar</label>
+            <span class="text-slate-500">€</span>
+            <input type="text" class="fte-in w-28 ${draftRate !== null ? 'fte-dirty' : ''}"
+                   value="${draftRate !== null ? escapeHtml(draftRate) : (rateNow === null ? '' : _fteInputNum(rateNow, 0))}"
+                   placeholder="bv. 65000" oninput="_fteInspector.draft.rate = this.value"
+                   onkeydown="if (event.key === 'Enter') _fteInspectorSaveRate('${_jsArg(fg)}')">
+            <button onclick="_fteInspectorSaveRate('${_jsArg(fg)}')" class="fte-btn-primary">Opslaan tarief</button>
+         </div>
+         <p class="fte-ins-note ${rateNow ? '' : 'text-red-300'}">${rateNow
+            ? `Nu € ${_fmtNlNum(rateNow, 0)} per FTE per jaar → € ${_fmtNlNum(_fteAgg(line.cost), 0)} op deze regel (${_fteScopeLabel()}).`
+            : 'Nog geen tarief: deze regel rekent stil met € 0. Opslaan maakt het tarief aan.'}</p>`);
+
+    // Doorzet — zoals de planning rekent: SAP-routingnorm per product,
+    // gecorrigeerd met de OEE van de machine. Eén knop per machine, via
+    // hetzelfde mechanisme als de Machines-tab (doel-doorzet → OEE).
+    if (line.category === 'machine') {
+        const m = _fteMachineInfo(line.key);
+        const eff = _fteEffScope(m);
+        const edited = !!(m && m.edit_meta && m.edit_meta.oee);
+        const routing = _fteRoutingRows(line.key);
+        html += sec('throughput', 'Doorzet',
+            'Zoals de planning rekent: de SAP-routingnorm per product, gecorrigeerd met de OEE van de machine. '
+            + 'Eén getal per machine: pas de effectieve doorzet aan en planning, bezetting en werkbank rekenen mee. '
+            + 'Wat-als van deze sessie, zoals op de Machines-tab.',
+            m ? `<div class="fte-ins-row">
+                    <label>Effectieve doorzet</label>
+                    <input id="fteInsTpInput" type="text" class="fte-in w-20 ${edited ? 'fte-dirty' : ''}" value="${_fteInputNum(eff, 1)}"
+                           onkeydown="if (event.key === 'Enter') _fteInspectorApplyThroughput('${_jsArg(line.key)}')">
+                    <span class="text-slate-500 text-[11px]">t/u</span>
+                    <button onclick="_fteInspectorApplyThroughput('${_jsArg(line.key)}')" class="fte-btn-primary">Toepassen</button>
+                 </div>
+                 <p class="fte-ins-note">Gemiddeld over ${escapeHtml(_fteScopeLabel())} · rekenfactor (OEE) <b class="text-slate-300">${_fmtNlNum(m.oee * 100, 1)} %</b>
+                    · theoretisch ${_fmtNlNum(m.throughput_theoretical, 1)} t/u${edited
+                        ? ` · <span class="text-amber-300">gewijzigd in deze sessie: OEE ${escapeHtml(m.edit_meta.oee.original_display)} → ${escapeHtml(m.edit_meta.oee.new_display)}</span>
+                           <button class="fte-link" onclick="_fteInspectorResetThroughput('${_jsArg(line.key)}')">terug naar origineel</button>`
+                        : ''}</p>
+                 <p class="text-[11px] text-slate-400 mt-3 mb-1">Routingnorm per product (SAP, leeswaarde) · uren ${escapeHtml(_fteScopeLabel())}</p>
+                 <table class="w-full text-xs"><thead><tr class="text-slate-500">
+                    <th class="text-left p-1 font-normal">Materiaal</th><th class="text-right p-1 font-normal">t/u</th><th class="text-right p-1 font-normal">uren</th></tr></thead><tbody>
+                    ${routing.slice(0, 12).map(r => `<tr>
+                        <td class="p-1"><span class="text-slate-500">${escapeHtml(String(r.material))}</span> ${escapeHtml(r.name)}</td>
+                        <td class="p-1 text-right font-mono">${r.tp === null ? '—' : _fmtNlNum(r.tp, 1)}</td>
+                        <td class="p-1 text-right">${_fmtNlNum(r.hours, 0)}</td></tr>`).join('')
+                      || '<tr><td colspan="3" class="p-2 text-slate-500">Geen producten met volume op deze machine.</td></tr>'}
+                    ${routing.length > 12 ? `<tr><td colspan="3" class="p-1 text-slate-500">… nog ${routing.length - 12} producten</td></tr>` : ''}
+                 </tbody></table>`
+              : '<p class="fte-ins-note">Machinegegevens worden geladen…</p>');
+    } else if (line.category === 'group') {
+        const members = _fteGroupMembers(line);
+        html += sec('throughput', 'Doorzet', 'Doorzet is een eigenschap van de machine. Kies een machine van deze groep om hem aan te passen.',
+            members.length
+                ? `<table class="w-full text-xs"><tbody>${members.map(mm => {
+                    const mi = _fteMachineInfo(mm.key);
+                    const e = _fteEffScope(mi);
+                    const ed = !!(mi && mi.edit_meta && mi.edit_meta.oee);
+                    return `<tr class="cursor-pointer hover:bg-slate-800/60" onclick="openFteInspector('machine:${_jsArg(mm.key)}', 'throughput')">
+                        <td class="p-1">${escapeHtml(mm.label)} <span class="text-slate-500">${escapeHtml(mm.key)}</span></td>
+                        <td class="p-1 text-right font-mono ${ed ? 'text-amber-300' : ''}">${e === null ? '—' : _fmtNlNum(e, 1) + ' t/u'}</td>
+                        <td class="p-1 text-right text-slate-500">OEE ${mi ? _fmtNlNum(mi.oee * 100, 0) + ' %' : '—'}</td>
+                        <td class="p-1 text-right text-slate-500">&rsaquo;</td></tr>`; }).join('')}</tbody></table>`
+                : '<p class="fte-ins-note">Geen machines in deze groep.</p>');
+    } else if (line.category === 'indirect') {
+        html += sec('activity', 'Activiteit', 'Driver, FTE per periode en volumebron staan in de masterdata-tabel.',
+            `<button onclick="openFteMasterInDock('indirect_activities', { filter: '${_jsArg(line.key)}', kicker: 'Indirecte activiteit · masterdata' })" class="fte-btn">Open activiteit ${escapeHtml(line.key)}</button>`);
+    }
+
+    // Combinaties — bestaand sessie-wat-als (toggleFteCombination).
+    const memberKeys = line.category === 'machine' ? [String(line.key)]
+                     : line.category === 'group' ? _fteGroupMembers(line).map(m => String(m.key)) : [];
+    const combos = (_fteState.combinations || []).filter(c => (c.machine_codes || []).some(m => memberKeys.includes(String(m))));
+    if (line.category === 'machine' || line.category === 'group') {
+        const newLink = line.category === 'machine'
+            ? `<button class="fte-link" onclick="fteCombineStart('${_jsArg(line.key)}')">+ nieuwe combinatie met deze machine</button>`
+            : `<button class="fte-link" onclick="fteCombineStart()">+ nieuwe combinatie</button>`;
+        html += sec('combos', 'Machinecombinaties', 'Eén operatorpool over meerdere machines. Aan of uit is een wat-als van deze instantie.',
+            (combos.length
+                ? `<table class="w-full text-xs mb-2"><tbody>${combos.map(c => `<tr class="${c.is_active ? '' : 'opacity-50'}">
+                    <td class="p-1"><input type="checkbox" class="accent-blue-500 align-middle" ${_fteState.active.includes(c.combination_id) ? 'checked' : ''} ${c.is_active ? '' : 'disabled'}
+                           onchange="toggleFteCombination('${_jsArg(c.combination_id)}', this.checked)"></td>
+                    <td class="p-1"><span class="font-medium text-slate-200">${escapeHtml(c.name)}</span>
+                        <span class="block text-[11px] text-slate-400">${escapeHtml((c.machine_codes || []).join(' + '))} · ${_fmtNlNum(c.operators, 2)} operators · ${_fteComboFactorLabel(c, '__none__')}</span></td>
+                    <td class="p-1 text-right"><button class="fte-link" onclick="openFteCombination('${_jsArg(c.combination_id)}')">openen &rsaquo;</button></td></tr>`).join('')}</tbody></table>`
+                : `<p class="fte-ins-note">Geen combinaties met ${line.category === 'machine' ? 'deze machine' : 'machines van deze groep'}.</p>`)
+            + newLink);
+    }
+
+    body.innerHTML = html;
+    // Wat-als van deze sessie in de voet van het paneel (de zwevende lade
+    // blijft verborgen zolang het paneel open is: niets overlapt elkaar).
+    const norms = Object.entries(_fteState.overrides || {});
+    const nameOf = code => (lines.find(l => String(l.key) === String(code)) || {}).label || code;
+    const whatIf = norms.length ? `<div class="fte-dock-whatif">
+        <p class="text-xs font-semibold text-amber-300 mb-1">Wat-als in deze sessie <span class="text-slate-500 font-normal">(${norms.length})</span></p>
+        <div class="text-xs mb-2" style="max-height:110px;overflow-y:auto">${norms.map(([code, spec]) => {
+            const base = _fteState.overrideBase[code] ?? spec.was;
+            return `<div class="flex justify-between gap-3"><span class="text-slate-300 truncate">${escapeHtml(nameOf(code))}</span>
+                <span class="font-mono text-amber-300 whitespace-nowrap">${base === undefined ? '' : _fmtNlNum(base, 2) + ' → '}${_fmtNlNum(spec.operators_per_hour, 2)}</span></div>`;
+        }).join('')}</div>
+        <div class="flex gap-2"><button onclick="saveFteNorms()" class="fte-btn-primary" style="flex:1">Opslaan in masterdata</button>
+            <button onclick="revertFteNorms()" class="fte-btn">Terugzetten</button></div>
+        <p class="text-[10px] text-slate-500 mt-1">Niet opslaan? Een scenario opslaan bewaart deze stand ook.</p></div>` : '';
+    document.getElementById('fteDockFoot').innerHTML = whatIf
+        + '<p>Norm, doorzet en combinaties = wat-als van deze sessie (reizen mee in een scenario). Tarief = masterdata: geldt na opslaan voor alle instanties; de werkbank ververst meteen. Esc sluit.</p>';
+    if (_fteInspector.section) {
+        document.getElementById('fteIns-' + _fteInspector.section)?.scrollIntoView({ block: 'start' });
+        _fteInspector.section = null;
+    } else if (bodyEl) {
+        bodyEl.scrollTop = scrollTop;
+    }
+    _fteDockPlace();
+}
+
+async function _fteInspectorSaveRate(fg) {
+    const raw = _fteInspector.draft.rate;
+    if (raw === null || String(raw).trim() === '') { notify('Vul een tarief in.', 'error', 3500); return; }
+    const parsed = parseLocaleNumber(String(raw).trim());
+    if (Number.isNaN(parsed) || parsed < 0) { notify('Tarief moet een getal ≥ 0 zijn.', 'error', 4000); return; }
+    let fresh;
+    try { fresh = await _fteMasterGet('labor_rates'); } catch (err) { notify('Tarieven laden mislukt: ' + err.message, 'error', 5000); return; }
+    const value = { ...(fresh.value || {}) };
+    value[fg] = { ...(value[fg] || {}), function_group: fg, cost_per_fte_per_year: parsed };
+    const saved = await _fteMasterPatch('labor_rates', value, fresh.version);
+    if (!saved) { _fteInspector.labor = fresh; _fteInspectorRender(); return; }
+    _fteInspector.draft.rate = null;
+    _fteInspector.labor = await _fteMasterGet('labor_rates').catch(() => fresh);
+    await _fteRefreshWorkbench();
+    notify(`Tarief voor "${fg}" opgeslagen (masterdata versie ${saved.version}); werkbank ververst.`, 'success', 4500);
+}
+
+// ── Doorzet zoals de planning rekent (Machines-mechanisme) ───────────────
+function _fteMachineInfo(code) {
+    return ((_machinesData && _machinesData.machines) || []).find(m => String(m.code) === String(code)) || null;
+}
+// Effectieve doorzet gemiddeld over het gekozen bereik (zelfde cijfers als
+// de Machines-tab: output / benodigde uren, per periode).
+function _fteEffScope(m) {
+    if (!m) return null;
+    const byP = m.throughput_effective_by_period || {};
+    const scope = _ftePeriodsInScope().filter(p => p in byP);
+    if (!scope.length) return Number(m.throughput_effective || 0);
+    return scope.reduce((s, p) => s + Number(byP[p] || 0), 0) / scope.length;
+}
+function _fteGroupEffHtml(key) {
+    const g = ((_machinesData && _machinesData.groups) || []).find(x => String(x.group) === String(key));
+    if (!g) return '<span class="text-slate-600">—</span>';
+    const byP = g.throughput_effective_by_period || {};
+    const scope = _ftePeriodsInScope().filter(p => p in byP);
+    const e = scope.length ? scope.reduce((s, p) => s + Number(byP[p] || 0), 0) / scope.length : Number(g.throughput_effective || 0);
+    return `<span class="text-slate-500" title="Effectieve doorzet van de groep (gem. ${escapeHtml(_fteScopeLabel())})">${_fmtNlNum(e, 1)}</span>`;
+}
+// SAP-routingnorm per product: de Line 07-materiaalrijen van de planning
+// (AUX1 = werkcenter, AUX2 = t/u, waarden = uren).
+function _fteRoutingRows(code) {
+    const rows = ((state.results || {})['07. Capacity utilization'] || [])
+        .filter(r => r.product_type !== 'Machine Group' && String(r.aux_column || '') === String(code));
+    const scope = _ftePeriodsInScope();
+    return rows.map(r => {
+        const tp = parseFloat(String(r.aux_2_column ?? '').replace('!', '').replace(',', '.'));
+        const hours = scope.reduce((s, p) => s + Number((r.values || {})[p] || 0), 0);
+        return { material: r.material_number, name: r.material_name || '', tp: Number.isFinite(tp) ? tp : null, hours };
+    }).sort((a, b) => b.hours - a.hours);
+}
+let _fteMachinesLoading = false;
+function _fteEnsureMachines() {
+    if (_machinesData || _fteMachinesLoading || typeof loadMachinesData !== 'function') return;
+    _fteMachinesLoading = true;
+    loadMachinesData().finally(() => {
+        _fteMachinesLoading = false;
+        renderFteWorkbench();
+    });
+}
+async function _fteInspectorApplyThroughput(code) {
+    const m = _fteMachineInfo(code);
+    const input = document.getElementById('fteInsTpInput');
+    if (!m || !input) return;
+    const target = parseLocaleNumber(String(input.value).trim());
+    if (Number.isNaN(target) || target <= 0) { notify('Voer een doorzet groter dan 0 in.', 'warning', 4000); return; }
+    const curEff = _fteEffScope(m);
+    if (!curEff || curEff <= 0) { notify('Huidige doorzet is 0 — evenredig schalen kan niet. Pas de OEE aan op de Machines-tab.', 'warning', 5000); return; }
+    if (Math.abs(target - curEff) < 1e-6) return;
+    // Zelfde omrekening als de Machines-tab: uren = ruwe uren / OEE, dus
+    // doorzet is evenredig met OEE. De backend weigert OEE > 1,5.
+    const newOee = m.oee * (target / curEff);
+    if (newOee > 1.5) {
+        notify(`Niet haalbaar: maximaal ${_fmtNlNum(curEff * (1.5 / m.oee), 1)} t/u bij de OEE-grens van 150 %.`, 'warning', 6000);
+        return;
+    }
+    await _fteInspectorPostOee(code, Math.max(0.01, newOee), { from: curEff, to: target });
+}
+async function _fteInspectorResetThroughput(code) {
+    const m = _fteMachineInfo(code);
+    const meta = m && m.edit_meta && m.edit_meta.oee;
+    if (!meta) return;
+    await _fteInspectorPostOee(code, Number(meta.original) / 100, { reset: true });
+}
+async function _fteInspectorPostOee(code, oee, { from, to, reset = false } = {}) {
+    const m = _fteMachineInfo(code);
+    const before = (typeof _snapshotMachineImpactState === 'function') ? _snapshotMachineImpactState() : null;
+    try {
+        if (typeof setBusy === 'function') setBusy(true, 'Doorzet toepassen (OEE aanpassen)...');
+        const res = await fetch('/api/machines/update', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ machine: code, field: 'oee', value: oee }),
+        });
+        const out = await res.json();
+        if (!res.ok || out.error) { notify(out.error || 'Doorzet toepassen mislukt.', 'error', 5000); return; }
+        if (typeof _machinesUndoDepth !== 'undefined') { _machinesUndoDepth = out.undo_depth || 0; _machinesRedoDepth = out.redo_depth || 0; }
+        if (before && m && typeof _buildMachineDeltaSummary === 'function') {
+            _buildMachineDeltaSummary(before, out, [{
+                machine: code, field: 'oee', field_label: 'Doorzet (via OEE)',
+                old_display: `${_fmtNlNum(from ?? _fteEffScope(m), 2)} (OEE ${_fmtNlNum(m.oee * 100, 1)}%)`,
+                new_display: reset ? `origineel (OEE ${_fmtNlNum(oee * 100, 1)}%)` : `${_fmtNlNum(to, 2)} (OEE ${_fmtNlNum(oee * 100, 1)}%)`,
+            }]);
+        }
+        try { await _applyServerPayload(out, { deltaSource: 'plan', skipDeltaRecording: true, skipDashboard: true }); }
+        catch (e) { console.warn('applyServerPayload na doorzet-edit:', e); }
+        await loadMachinesData();
+        await loadFteWorkbench();
+        const after = _fteEffScope(_fteMachineInfo(code));
+        notify(reset
+            ? `Doorzet ${code} terug naar origineel (OEE ${_fmtNlNum(oee * 100, 1)} %). Planning, bezetting en werkbank zijn meegerekend.`
+            : `Doorzet ${code}: ${_fmtNlNum(from, 1)} → ${_fmtNlNum(after ?? to, 1)} t/u (OEE ${_fmtNlNum(oee * 100, 1)} %). Planning, bezetting en werkbank zijn meegerekend; ongedaan maken kan hier of op de Machines-tab.`,
+            'success', 6000);
+    } catch (err) {
+        notify('Doorzet toepassen mislukt: ' + err, 'error', 5000);
+    } finally {
+        if (typeof setBusy === 'function') setBusy(false);
+    }
+}
+
+// ── Combineren: bemensing koppelen vanuit de werkbank ────────────────────
+// Knop 'Combineren' zet de tabel in kiesmodus: machinerijen krijgen een
+// vinkje, het paneel wordt 'Nieuwe combinatie' en vult zich mee. Aanmaken
+// schrijft de definitie naar de masterdata (bestaande PATCH), laat de motor
+// de datasets opnieuw inlezen en zet de combinatie in deze sessie aan
+// (bestaande route). Doorzetverlies = de bestaande doorzetfactor; loon = de
+// functiegroep van de combinatie met haar tarief. Geen backend.
+const _fteCombine = { active: false, selected: new Set(), form: null };
+
+function _fteComboById(id) {
+    return (_fteState.combinations || []).find(c => String(c.combination_id) === String(id)) || null;
+}
+function _fteComboFromRowId(rowId) {
+    return String(rowId || '').startsWith('group:') ? _fteComboById(String(rowId).slice(6)) : null;
+}
+function _fteActiveComboOf(machine) {
+    return (_fteState.combinations || []).find(c => _fteState.active.includes(c.combination_id)
+        && (c.machine_codes || []).map(String).includes(String(machine))) || null;
+}
+function _fteMachineLine(code) { return _fteLineByRowId('machine:' + code); }
+function _fteComboLoss(combo, code) {
+    const f = Number((combo.throughput_factor_by_machine || {})[code] ?? combo.throughput_factor ?? 1);
+    return Math.round((1 - f) * 1000) / 10;
+}
+function _fteComboFactorLabel(combo, code) {
+    const loss = _fteComboLoss(combo, code);
+    return loss > 0 ? `−${_fmtNlNum(loss, 1)} % doorzet` : 'geen doorzetverlies';
+}
+function _fteFgSelect(current, laborVal, onchangeJs, { allowNew = false } = {}) {
+    const groups = Object.keys(laborVal || {});
+    const opts = [];
+    if (current && !groups.includes(current)) opts.push(current);
+    opts.push(...groups);
+    if (!opts.length) opts.push('default');
+    const rate = fg => laborVal && laborVal[fg] ? `€ ${_fmtNlNum(Number(laborVal[fg].cost_per_fte_per_year || 0), 0)}` : 'geen tarief';
+    return `<select class="fte-in text-left" onchange="${onchangeJs}">
+        ${opts.map(fg => `<option value="${escapeHtml(fg)}" ${fg === current ? 'selected' : ''}>${escapeHtml(fg)} · ${rate(fg)}</option>`).join('')}
+        ${allowNew ? `<option value="__new__" ${current === '__new__' ? 'selected' : ''}>nieuwe functiegroep…</option>` : ''}
+    </select>`;
+}
+
+// ── Kiesmodus ────────────────────────────────────────────────────────────
+function fteCombineToggleMode() { _fteCombine.active ? fteCombineCancel() : fteCombineStart(); }
+function fteCombineStart(preselect = null) {
+    if (_fteDrawerMode && _fteDrawerMode !== 'combine') closeFteDrawer();
+    _fteCombine.active = true;
+    _fteCombine.selected = new Set(preselect ? [String(preselect)] : []);
+    _fteCombine.form = null;
+    // De machines moeten te zien zijn: alle groepen open, machinedetail aan.
+    for (const g of (_fteState.data?.lines || []).filter(l => l.category === 'group' && !l.combination_id)) _fteState.openGroups.add(g.key);
+    const cb = document.getElementById('fteShowMachines');
+    if (cb && !cb.checked) cb.checked = true;
+    _fteEnsureMachines();
+    _fteMasterGet('labor_rates').then(l => { _fteInspector.labor = l; if (_fteCombine.active) _fteCombineRender(); }).catch(() => {});
+    renderFteWorkbench();
+    _fteScrollToWorkbench();
+}
+function fteCombineCancel() {
+    if (_fteDrawerMode === 'combine') { closeFteDrawer(); return; }
+    _fteCombine.active = false;
+    _fteCombine.selected = new Set();
+    _fteCombine.form = null;
+    renderFteWorkbench();
+}
+function fteCombineToggle(code, on) {
+    if (!_fteCombine.active) return;
+    code = String(code);
+    const busy = _fteActiveComboOf(code);
+    if (busy) {
+        notify(`${code} zit al in de actieve combinatie "${busy.name}". Zet die eerst uit.`, 'warning', 5000);
+        renderFteWorkbench();
+        return;
+    }
+    const has = _fteCombine.selected.has(code);
+    const want = on === undefined ? !has : !!on;
+    if (want) _fteCombine.selected.add(code); else _fteCombine.selected.delete(code);
+    renderFteWorkbench();
+}
+function _fteCombineBoxHtml(line) {
+    const code = String(line.key);
+    const busy = _fteActiveComboOf(code);
+    const checked = _fteCombine.selected.has(code);
+    return `<input type="checkbox" class="accent-amber-500 mr-1 align-middle" ${checked ? 'checked' : ''} ${busy ? 'disabled' : ''}
+        title="${busy ? escapeHtml('zit al in ' + busy.name) : 'Kies voor de combinatie'}"
+        onclick="event.stopPropagation()" onchange="fteCombineToggle('${_jsArg(code)}', this.checked)">`;
+}
+function _fteRenderCombineBtn() {
+    const btn = document.getElementById('fteCombineBtn');
+    if (!btn) return;
+    const n = _fteCombine.selected.size;
+    btn.classList.toggle('on', _fteCombine.active);
+    btn.textContent = _fteCombine.active ? `${n} gekozen · annuleren` : 'Combineren';
+    btn.title = _fteCombine.active ? 'Kiesmodus verlaten' : 'Koppel de bemensing van twee of meer machines aan één operatorpool';
+}
+
+// ── Het formulier 'Nieuwe combinatie' ────────────────────────────────────
+function _fteCombineForm() {
+    if (!_fteCombine.form) {
+        _fteCombine.form = { nameTouched: false, opsTouched: false, fgTouched: false, name: '', operators: '1',
+                             loss: '0', perMachine: {}, perMachineOpen: false, fg: '', newFg: '', newRate: '', description: '' };
+    }
+    return _fteCombine.form;
+}
+function _fteCombineMembers() {
+    return [..._fteCombine.selected].map(code => ({ code, line: _fteMachineLine(code), info: _fteMachineInfo(code) }));
+}
+function _fteCombineRate(f, laborVal) {
+    if (f.fg === '__new__') { const r = parseLocaleNumber(String(f.newRate || '')); return Number.isNaN(r) ? null : r; }
+    const rec = laborVal && laborVal[f.fg];
+    return rec ? Number(rec.cost_per_fte_per_year || 0) : null;
+}
+function _fteCombinePreviewHtml() {
+    const f = _fteCombineForm();
+    const members = _fteCombineMembers().filter(m => m.line);
+    const data = _fteState.data;
+    if (members.length < 2 || !data) return '<p class="fte-ins-note">Kies minstens twee machines voor een voorvertoning.</p>';
+    const scope = _ftePeriodsInScope();
+    const monthly = Number(data.fte_hours_per_year || 0) / 12;
+    const ops = parseLocaleNumber(String(f.operators || ''));
+    if (!scope.length || !(monthly > 0) || Number.isNaN(ops)) return '<p class="fte-ins-note">Voorvertoning niet mogelijk.</p>';
+    const lossAll = parseLocaleNumber(String(f.loss || '0'));
+    let fteNow = 0, costNow = 0;
+    const hoursP = {};
+    for (const m of members) {
+        fteNow += _fteAgg(m.line.fte, 'avg');
+        costNow += _fteAgg(m.line.cost);
+        let loss = Number.isNaN(lossAll) ? 0 : lossAll;
+        if (f.perMachineOpen && String(f.perMachine[m.code] ?? '').trim() !== '') {
+            const l = parseLocaleNumber(String(f.perMachine[m.code]));
+            if (!Number.isNaN(l)) loss = l;
+        }
+        const factor = Math.max(0.01, 1 - loss / 100);
+        for (const p of scope) hoursP[p] = Math.max(hoursP[p] || 0, Number((m.line.hours || {})[p] || 0) / factor);
+    }
+    const fteNew = scope.reduce((s, p) => s + hoursP[p] * ops / monthly, 0) / scope.length;
+    const laborVal = (_fteInspector.labor && _fteInspector.labor.value) || {};
+    const rate = _fteCombineRate(f, laborVal);
+    const costNew = rate === null ? null : fteNew * rate / 12 * scope.length;
+    const d = fteNew - fteNow;
+    return `<div class="text-xs">
+        <div class="flex justify-between gap-3"><span class="text-slate-400">Bemensing nu (som van de machinerijen)</span><span class="font-mono">${_fmtNlNum(fteNow, 2)} FTE</span></div>
+        <div class="flex justify-between gap-3"><span class="text-slate-400">Na combinatie ≈</span><span class="font-mono ${d < -0.005 ? 'text-emerald-300' : d > 0.005 ? 'text-amber-300' : ''}">${_fmtNlNum(fteNew, 2)} FTE (${d >= 0 ? '+' : '−'}${_fmtNlNum(Math.abs(d), 2)})</span></div>
+        <div class="flex justify-between gap-3"><span class="text-slate-400">Loonkosten ${escapeHtml(_fteScopeLabel())}</span><span class="font-mono">€ ${_fmtNlNum(costNow, 0)} → ${costNew === null ? '<span class="text-red-300">geen tarief</span>' : '€ ' + _fmtNlNum(costNew, 0)}</span></div>
+        <p class="fte-ins-note mt-1">Bemant het langst draaiende lid, gemiddeld over ${escapeHtml(_fteScopeLabel())}. Het echte cijfer volgt zodra de combinatie aanstaat.</p>
+    </div>`;
+}
+function _fteCombinePreviewRefresh() {
+    const el = document.getElementById('fteCombPreview');
+    if (el) el.innerHTML = _fteCombinePreviewHtml();
+}
+function _fteCombineRender() {
+    if (!_fteCombine.active) return;
+    const f = _fteCombineForm();
+    const members = _fteCombineMembers();
+    const sel = members.map(m => m.code);
+    const label = m => m.line ? m.line.label : (m.info ? m.info.name : m.code);
+    if (!f.nameTouched) f.name = sel.join(' + ');
+    if (!f.opsTouched) f.operators = '1';   // meestal één gedeelde operator
+    const laborVal = (_fteInspector.labor && _fteInspector.labor.value) || {};
+    if (!f.fgTouched) f.fg = members.map(m => m.line?.function_group).find(Boolean) || (Object.keys(laborVal)[0] || 'default');
+
+    const body = openFteDrawer({
+        kicker: 'Nieuwe combinatie', title: 'Bemensing combineren',
+        sub: sel.length < 2 ? 'Vink in de tabel de machines aan die één operatorpool delen.' : `${sel.length} machines · één operatorpool`,
+        mode: 'combine',
+    });
+    const chips = members.length
+        ? members.map(m => `<span class="fte-chip">${escapeHtml(m.code)} <span class="text-slate-400">${escapeHtml(label(m))}</span>
+            <button class="text-slate-500 hover:text-red-300 ml-1" title="Weghalen" onclick="fteCombineToggle('${_jsArg(m.code)}', false)">&times;</button></span>`).join('')
+        : '<span class="fte-ins-note">Nog geen machines gekozen.</span>';
+    const perMachine = f.perMachineOpen ? `<div class="mt-1 mb-2 pl-2 border-l border-slate-700">${members.map(m => `
+        <div class="fte-ins-row mb-1"><label class="w-28 text-slate-400">${escapeHtml(m.code)}</label>
+            <input type="text" class="fte-in w-16" value="${escapeHtml(String(f.perMachine[m.code] ?? ''))}" placeholder="${escapeHtml(String(f.loss))}"
+                   oninput="_fteCombineForm().perMachine['${_jsArg(m.code)}'] = this.value; _fteCombinePreviewRefresh()"><span class="text-slate-500 text-[11px]">%</span></div>`).join('')}</div>` : '';
+    const newFg = f.fg === '__new__' ? `<div class="fte-ins-row mb-1 pl-2 border-l border-slate-700">
+        <input type="text" class="fte-in w-36 text-left" placeholder="naam functiegroep" value="${escapeHtml(f.newFg)}" oninput="_fteCombineForm().newFg = this.value">
+        <span class="text-slate-500">€</span><input type="text" class="fte-in w-24" placeholder="tarief/FTE/jr" value="${escapeHtml(f.newRate)}" oninput="_fteCombineForm().newRate = this.value; _fteCombinePreviewRefresh()"></div>` : '';
+
+    body.innerHTML = `
+        <section class="fte-ins"><h4>Machines</h4><div class="mb-1">${chips}</div>
+            <p class="fte-ins-note">Vink machines aan of uit in de tabel. Een machine kan maar in één actieve combinatie zitten.</p></section>
+        <section class="fte-ins"><h4>Definitie</h4>
+            <div class="fte-ins-row mb-1"><label class="w-28">Naam</label>
+                <input type="text" class="fte-in w-48 text-left" value="${escapeHtml(f.name)}" oninput="const f = _fteCombineForm(); f.name = this.value; f.nameTouched = true"></div>
+            <div class="fte-ins-row mb-1"><label class="w-28">Operators samen</label>
+                <input id="fteCombOpsInput" type="text" class="fte-in w-16" value="${escapeHtml(String(f.operators))}"
+                       oninput="const f = _fteCombineForm(); f.operators = this.value; f.opsTouched = true; _fteCombinePreviewRefresh(); _fteCombineOpsHint()">
+                <span id="fteCombOpsHint">${_fteOpsHintHtml(sel, f.operators)}</span></div>
+            <p class="fte-ins-note">Meestal één gedeelde operator; de pool bemant het langst draaiende lid. Boven de som van de losse normen is combineren duurder dan los bemannen.</p>
+            <div class="fte-ins-row mb-1"><label class="w-28">Doorzetverlies</label>
+                <input type="text" class="fte-in w-16" value="${escapeHtml(String(f.loss))}" oninput="_fteCombineForm().loss = this.value; _fteCombinePreviewRefresh()">
+                <span class="text-slate-500 text-[11px]">%</span>
+                <label class="text-[11px] text-slate-400 flex items-center gap-1"><input type="checkbox" class="accent-amber-500" ${f.perMachineOpen ? 'checked' : ''}
+                    onchange="_fteCombineForm().perMachineOpen = this.checked; _fteCombineRender()"> per machine anders</label></div>
+            ${perMachine}
+            <p class="fte-ins-note">Telt in de uren en de FTE van de werkbank; de planning volgt in fase 2.</p>
+            <div class="fte-ins-row mb-1"><label class="w-28">Loontarief</label>
+                ${_fteFgSelect(f.fg, laborVal, "const f = _fteCombineForm(); f.fg = this.value; f.fgTouched = true; _fteCombineRender()", { allowNew: true })}</div>
+            ${newFg}
+            <p class="fte-ins-note">Een toeslag voor de multi-inzetbare operator geef je als eigen functiegroep met een hoger tarief.</p>
+            <div class="fte-ins-row mb-1"><label class="w-28">Toelichting</label>
+                <input type="text" class="fte-in w-48 text-left" value="${escapeHtml(f.description)}" oninput="_fteCombineForm().description = this.value"></div>
+        </section>
+        <section class="fte-ins"><h4>Effect</h4><div id="fteCombPreview">${_fteCombinePreviewHtml()}</div></section>
+        <div class="flex gap-2 flex-wrap">
+            <button class="fte-btn-primary" onclick="fteCombineSave(true)" ${sel.length < 2 ? 'disabled' : ''}>Aanmaken en aanzetten</button>
+            <button class="fte-btn" onclick="fteCombineSave(false)" ${sel.length < 2 ? 'disabled' : ''}>Alleen opslaan</button>
+            <button class="fte-btn" onclick="fteCombineCancel()">Annuleren</button>
+        </div>`;
+    document.getElementById('fteDockFoot').innerHTML =
+        '<p>Definitie = masterdata, geldt voor alle instanties. Aan of uit = wat-als van deze sessie, reist mee in een scenario. Esc annuleert.</p>';
+    _fteCombineOpsHint();
+    _fteDockPlace();
+}
+// Bandbreedte voor 'operators samen': los = som van de normen van de leden,
+// gedeeld = één operator. Erboven is een combinatie duurder dan los bemannen.
+function _fteOpsBand(codes) {
+    const norms = codes.map(c => Number(_fteMachineLine(c)?.operators_per_hour || 0));
+    const sum = norms.reduce((s, v) => s + v, 0);
+    return { norms, sum };
+}
+function _fteOpsOver(codes, raw) {
+    const band = _fteOpsBand(codes);
+    const ops = parseLocaleNumber(String(raw ?? ''));
+    return !Number.isNaN(ops) && band.sum > 0 && ops > band.sum + 1e-9;
+}
+function _fteOpsHintHtml(codes, raw) {
+    if (!codes.length) return '';
+    const band = _fteOpsBand(codes);
+    const over = _fteOpsOver(codes, raw);
+    const los = band.norms.map(v => _fmtNlNum(v, 2)).join(' + ') + ' = ' + _fmtNlNum(band.sum, 2);
+    return `<span class="text-[11px] ${over ? 'text-amber-300' : 'text-slate-500'}">los: ${los} · gedeeld: 1${over ? ' · meer dan los bemannen' : ''}</span>`;
+}
+function _fteCombineOpsHint() {
+    const f = _fteCombineForm();
+    const codes = [..._fteCombine.selected];
+    const el = document.getElementById('fteCombOpsHint');
+    if (el) el.innerHTML = _fteOpsHintHtml(codes, f.operators);
+    document.getElementById('fteCombOpsInput')?.classList.toggle('fte-warn', _fteOpsOver(codes, f.operators));
+}
+function _fteInsOpsHint(id) {
+    const combo = _fteComboById(id);
+    const d = _fteInspector.comboDraft;
+    if (!combo || !d) return;
+    const codes = combo.machine_codes || [];
+    const el = document.getElementById('fteInsOpsHint');
+    if (el) el.innerHTML = _fteOpsHintHtml(codes, d.operators);
+    document.getElementById('fteInsOpsInput')?.classList.toggle('fte-warn', _fteOpsOver(codes, d.operators));
+}
+function _fteCombineId(name, existing) {
+    let base = 'COMBI_' + String(name).toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24);
+    if (base === 'COMBI_') base = 'COMBI_NIEUW';
+    const taken = new Set((existing || []).map(String));
+    let id = base, n = 2;
+    while (taken.has(id)) id = `${base}_${n++}`;
+    return id;
+}
+async function fteCombineSave(activate) {
+    const f = _fteCombineForm();
+    const sel = [..._fteCombine.selected];
+    if (sel.length < 2) { notify('Kies minstens twee machines.', 'warning', 4000); return; }
+    const name = String(f.name || '').trim() || sel.join(' + ');
+    const ops = parseLocaleNumber(String(f.operators || ''));
+    if (Number.isNaN(ops) || ops < 0) { notify('Operators samen moet een getal ≥ 0 zijn.', 'warning', 4000); return; }
+    const loss = parseLocaleNumber(String(f.loss || '0'));
+    if (Number.isNaN(loss) || loss < 0 || loss >= 100) { notify('Doorzetverlies moet tussen 0 en 99 % liggen.', 'warning', 4000); return; }
+    const factor = Math.round((1 - loss / 100) * 1000) / 1000;
+    const byMachine = {};
+    if (f.perMachineOpen) {
+        for (const code of sel) {
+            const raw = String(f.perMachine[code] ?? '').trim();
+            if (!raw) continue;
+            const l = parseLocaleNumber(raw);
+            if (Number.isNaN(l) || l < 0 || l >= 100) { notify(`Doorzetverlies voor ${code} moet tussen 0 en 99 % liggen.`, 'warning', 4000); return; }
+            const fm = Math.round((1 - l / 100) * 1000) / 1000;
+            if (Math.abs(fm - factor) > 1e-9) byMachine[code] = fm;
+        }
+    }
+    let fg = f.fg;
+    try {
+        if (fg === '__new__') {
+            const newFg = String(f.newFg || '').trim();
+            const rate = parseLocaleNumber(String(f.newRate || ''));
+            if (!newFg) { notify('Geef de nieuwe functiegroep een naam.', 'warning', 4000); return; }
+            if (Number.isNaN(rate) || rate < 0) { notify('Tarief moet een getal ≥ 0 zijn.', 'warning', 4000); return; }
+            const fresh = await _fteMasterGet('labor_rates');
+            const value = { ...(fresh.value || {}) };
+            value[newFg] = { ...(value[newFg] || {}), function_group: newFg, cost_per_fte_per_year: rate };
+            if (!(await _fteMasterPatch('labor_rates', value, fresh.version))) return;
+            fg = newFg;
+        }
+        const fresh = await _fteMasterGet('machine_combinations');
+        const value = { ...(fresh.value || {}) };
+        const id = _fteCombineId(name, Object.keys(value));
+        value[id] = { combination_id: id, name, machine_codes: sel, operators: ops, throughput_factor: factor,
+                      throughput_factor_by_machine: byMachine, function_group: fg || '',
+                      description: String(f.description || '').trim(), is_active: true };
+        if (!(await _fteMasterPatch('machine_combinations', value, fresh.version))) return;
+        await _fteRefreshWorkbench();   // motor leest de nieuwe definitie in
+        if (activate) {
+            const res = await fetch('/api/fte/combinations', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ active_combinations: [...new Set([..._fteState.active, id])] }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                notify(data.error || 'Combinatie aanzetten mislukt.', 'error', 5000);
+            } else {
+                _fteState.data = data.fte;
+                _fteState.active = data.active_combinations || [];
+                const refused = (data.warnings || []).filter(w => w.includes('uitgezet'));
+                if (refused.length) notify(refused.join(' · '), 'warning', 8000);
+            }
+        }
+        closeFteDrawer();
+        openFteCombination(id);
+        notify(activate ? `Combinatie "${name}" aangemaakt en aangezet in deze sessie.`
+                        : `Combinatie "${name}" opgeslagen in de masterdata; nog niet aan.`, 'success', 5000);
+    } catch (err) {
+        notify('Combinatie opslaan mislukt: ' + err, 'error', 6000);
+    }
+}
+
+// ── Inspecteur van een combinatie ────────────────────────────────────────
+function openFteCombination(id) {
+    const combo = _fteComboById(id);
+    if (!combo) return;
+    if (_fteDrawerMode === 'combine') closeFteDrawer();
+    _fteInspector.rowId = 'group:' + id;
+    _fteInspector.section = null;
+    _fteInspector.draft = { rate: null };
+    _fteInspector.comboDraft = null;
+    _fteMasterGet('labor_rates').then(l => { _fteInspector.labor = l; }).catch(() => {}).finally(() => {
+        _fteInspectorRender();
+        _renderFteTable(document.getElementById('fteShowMachines')?.checked);
+        _fteScrollToWorkbench();
+    });
+}
+function _fteCombinationRender(combo, line) {
+    const id = combo.combination_id;
+    const on = _fteState.active.includes(id);
+    const lossAll = _fteComboLoss(combo, '__none__');
+    const d = _fteInspector.comboDraft || (_fteInspector.comboDraft = {
+        operators: _fteInputNum(combo.operators, 2), loss: _fteInputNum(lossAll, 1),
+        fg: combo.function_group || '', description: combo.description || '' });
+    const bodyEl = document.getElementById('fteDockBody');
+    const scrollTop = bodyEl ? bodyEl.scrollTop : 0;
+    const body = openFteDrawer({
+        kicker: `Machinecombinatie · ${on ? 'aan in deze sessie' : 'uit in deze sessie'}`,
+        title: combo.name || id,
+        sub: line ? `${id} · ${_fmtNlNum(_fteAgg(line.hours), 0)} u · ${_fmtNlNum(_fteAgg(line.fte, 'avg'), 2)} FTE · € ${_fmtNlNum(_fteAgg(line.cost), 0)} (${_fteScopeLabel()})`
+                  : `${id} · ${(combo.machine_codes || []).length} machines · rekent niet mee zolang hij uit staat`,
+        mode: 'inspector',
+    });
+    const sec = (sid, title, note, inner) => `<section id="fteIns-${sid}" class="fte-ins">
+        <h4>${title}</h4>${note ? `<p class="fte-ins-note">${note}</p>` : ''}${inner}</section>`;
+    const members = (combo.machine_codes || []).map(code => {
+        const ml = _fteMachineLine(code);
+        return `<tr class="cursor-pointer hover:bg-slate-800/60" onclick="openFteInspector('machine:${_jsArg(code)}')">
+            <td class="p-1">${escapeHtml(ml ? ml.label : code)} <span class="text-slate-500">${escapeHtml(code)}</span></td>
+            <td class="p-1 text-right">${ml ? _fmtNlNum(_fteAgg(ml.hours), 0) + ' u' : '—'}</td>
+            <td class="p-1 text-right text-slate-500">${_fteComboFactorLabel(combo, code)}</td>
+            <td class="p-1 text-right text-slate-500">&rsaquo;</td></tr>`;
+    }).join('');
+    const laborVal = (_fteInspector.labor && _fteInspector.labor.value) || {};
+    const fg = combo.function_group || 'default';
+    const rec = laborVal[fg] || null;
+    const rateNow = rec ? Number(rec.cost_per_fte_per_year || 0) : null;
+    let html = '';
+    html += sec('combo', 'Combinatie',
+        'Eén operatorpool over deze machines; bemant het langst draaiende lid. De definitie is masterdata, aan of uit is een wat-als van deze sessie.',
+        `<label class="flex items-center gap-2 mb-2 text-sm"><input type="checkbox" class="accent-blue-500" ${on ? 'checked' : ''} ${combo.is_active ? '' : 'disabled'}
+                onchange="toggleFteCombination('${_jsArg(id)}', this.checked)"><span>${on ? 'Aan in deze sessie' : 'Uit in deze sessie'}</span></label>
+         <table class="w-full text-xs mb-3"><tbody>${members}</tbody></table>
+         <div class="fte-ins-row mb-1"><label class="w-28">Operators samen</label>
+            <input id="fteInsOpsInput" type="text" class="fte-in w-16" value="${escapeHtml(String(d.operators))}"
+                   oninput="_fteInspector.comboDraft.operators = this.value; _fteInsOpsHint('${_jsArg(id)}')">
+            <span id="fteInsOpsHint">${_fteOpsHintHtml(combo.machine_codes || [], d.operators)}</span></div>
+         <div class="fte-ins-row mb-1"><label class="w-28">Doorzetverlies</label>
+            <input type="text" class="fte-in w-16" value="${escapeHtml(String(d.loss))}" oninput="_fteInspector.comboDraft.loss = this.value">
+            <span class="text-slate-500 text-[11px]">% · telt in de werkbank, de planning volgt in fase 2</span></div>
+         <div class="fte-ins-row mb-1"><label class="w-28">Functiegroep</label>${_fteFgSelect(d.fg, laborVal, "_fteInspector.comboDraft.fg = this.value")}</div>
+         <div class="fte-ins-row mb-2"><label class="w-28">Toelichting</label>
+            <input type="text" class="fte-in w-48 text-left" value="${escapeHtml(String(d.description))}" oninput="_fteInspector.comboDraft.description = this.value"></div>
+         <div class="flex gap-2 flex-wrap">
+            <button class="fte-btn-primary" onclick="_fteCombinationSave('${_jsArg(id)}')">Opslaan definitie</button>
+            <button class="fte-btn" onclick="_fteCombinationDelete('${_jsArg(id)}')">Verwijderen</button></div>`);
+    html += sec('rate', 'Loonkosten',
+        `Functiegroep <b class="text-slate-300">${escapeHtml(fg)}</b>. Het tarief is masterdata en geldt voor elke regel in deze functiegroep.`,
+        `<div class="fte-ins-row">
+            <label>Kost per FTE per jaar</label><span class="text-slate-500">€</span>
+            <input type="text" class="fte-in w-28 ${_fteInspector.draft.rate !== null ? 'fte-dirty' : ''}"
+                   value="${_fteInspector.draft.rate !== null ? escapeHtml(_fteInspector.draft.rate) : (rateNow === null ? '' : _fteInputNum(rateNow, 0))}"
+                   placeholder="bv. 72000" oninput="_fteInspector.draft.rate = this.value"
+                   onkeydown="if (event.key === 'Enter') _fteInspectorSaveRate('${_jsArg(fg)}')">
+            <button onclick="_fteInspectorSaveRate('${_jsArg(fg)}')" class="fte-btn-primary">Opslaan tarief</button></div>
+         <p class="fte-ins-note ${rateNow ? '' : 'text-red-300'}">${rateNow
+            ? `Nu € ${_fmtNlNum(rateNow, 0)} per FTE per jaar${line ? ` → € ${_fmtNlNum(_fteAgg(line.cost), 0)} op deze combinatie (${_fteScopeLabel()})` : ''}.`
+            : 'Nog geen tarief: deze combinatie rekent stil met € 0. Opslaan maakt het tarief aan.'}</p>`);
+    body.innerHTML = html;
+    document.getElementById('fteDockFoot').innerHTML =
+        '<p>Aan of uit reist mee in een scenario. Definitie en tarief zijn masterdata: gelden na opslaan voor alle instanties; de werkbank ververst meteen. Esc sluit.</p>';
+    if (bodyEl) bodyEl.scrollTop = scrollTop;
+    _fteInsOpsHint(id);
+    _fteDockPlace();
+}
+async function _fteCombinationSave(id) {
+    const d = _fteInspector.comboDraft;
+    if (!d) return;
+    const ops = parseLocaleNumber(String(d.operators || ''));
+    if (Number.isNaN(ops) || ops < 0) { notify('Operators samen moet een getal ≥ 0 zijn.', 'warning', 4000); return; }
+    const loss = parseLocaleNumber(String(d.loss || '0'));
+    if (Number.isNaN(loss) || loss < 0 || loss >= 100) { notify('Doorzetverlies moet tussen 0 en 99 % liggen.', 'warning', 4000); return; }
+    try {
+        const fresh = await _fteMasterGet('machine_combinations');
+        const value = { ...(fresh.value || {}) };
+        if (!value[id]) { notify('Combinatie bestaat niet meer in de masterdata.', 'error', 5000); return; }
+        value[id] = { ...value[id], operators: ops, throughput_factor: Math.round((1 - loss / 100) * 1000) / 1000,
+                      function_group: String(d.fg || ''), description: String(d.description || '').trim() };
+        const saved = await _fteMasterPatch('machine_combinations', value, fresh.version);
+        if (!saved) return;
+        _fteInspector.comboDraft = null;
+        await _fteRefreshWorkbench();
+        notify(`Combinatie "${value[id].name || id}" opgeslagen (masterdata versie ${saved.version}).`, 'success', 4500);
+    } catch (err) { notify('Opslaan mislukt: ' + err, 'error', 6000); }
+}
+async function _fteCombinationDelete(id) {
+    const combo = _fteComboById(id);
+    if (!combo) return;
+    if (!confirm(`Combinatie "${combo.name || id}" verwijderen uit de masterdata? Dit geldt voor alle instanties.`)) return;
+    try {
+        if (_fteState.active.includes(id)) {
+            const res = await fetch('/api/fte/combinations', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ active_combinations: _fteState.active.filter(x => x !== id) }),
+            });
+            const data = await res.json();
+            if (res.ok && !data.error) { _fteState.data = data.fte; _fteState.active = data.active_combinations || []; }
+        }
+        const fresh = await _fteMasterGet('machine_combinations');
+        const value = { ...(fresh.value || {}) };
+        delete value[id];
+        const saved = await _fteMasterPatch('machine_combinations', value, fresh.version);
+        if (!saved) return;
+        closeFteDrawer();
+        await _fteRefreshWorkbench();
+        notify(`Combinatie "${combo.name || id}" verwijderd.`, 'success', 4500);
+    } catch (err) { notify('Verwijderen mislukt: ' + err, 'error', 6000); }
+}
+
 
 // Eén rij van de werkbanktabel. Gedeeld door groeps-, machine- en indirecte
 // regels zodat kolommen nooit uit de pas lopen.
@@ -13022,17 +14031,22 @@ function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}
     // Benutting op machinebelasting (load_hours), niet op bemensing: zelfde
     // keuze als de heatmap, de KPI-tegel en FteLine.utilization in de engine.
     const loadHours = _fteAgg(line.load_hours || line.hours);
-    const util = available > 0 ? loadHours / available : null;
+    // Een combinatierij is een operatorpool zonder machinebelasting: geen benutting.
+    const isCombo = line.operators_source === 'combination' && line.category === 'group';
+    const util = (!isCombo && available > 0) ? loadHours / available : null;
     const utilClass = util === null ? 'text-slate-500' : _fteUtilizationClass(util);
     const editable = line.category !== 'indirect' && !line.combination_id;
     const operators = _fteOperators(line);
     const rowId = `${line.category}:${line.key}`;
     const dirty = rowId in _fteState.dirtyNorms;
+    const docked = !!_fteDrawerMode;
+    const combining = _fteCombine.active;
+    // Invoerveld toont het getal zoals de rest van de app (komma).
     const opCell = editable
-        ? `<input type="text" value="${escapeHtml(String(operators))}"
-             class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${dirty ? 'ring-1 ring-amber-400' : ''}"
+        ? `<input type="text" value="${escapeHtml(_fteInputNum(operators, 2))}"
+             class="bg-slate-700 rounded px-2 py-0.5 w-20 text-right ${dirty ? 'ring-1 ring-amber-400' : ''} ${line.operators_source === 'wat-als' ? 'fte-dirty' : ''}"
              data-fte-cat="${escapeHtml(line.category)}" data-fte-key="${escapeHtml(line.key)}"
-             onchange="onFteNormEdit(this)">`
+             onclick="event.stopPropagation()" onchange="onFteNormEdit(this)">`
         : _fmtNlNum(operators, 3);
 
     // Bron als chip. 'default' is geen etiket maar een uitnodiging: de motor
@@ -13041,11 +14055,11 @@ function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}
     let sourceCell;
     if (line.operators_source === 'wat-als') {
         sourceCell = `<span class="px-1.5 py-0.5 rounded-full border border-amber-400/70 text-amber-300 text-[10px]"
-            title="Sessie-wat-als: rekent direct mee, staat nog niet in de masterdata. Opslaan of terugzetten via het paneel rechtsonder.">wat-als</span>`;
+            title="Sessie-wat-als: rekent direct mee, staat nog niet in de masterdata. Opslaan of terugzetten via het paneel.">wat-als</span>`;
     } else if (line.operators_source === 'default' && editable) {
         sourceCell = `<button class="px-1.5 py-0.5 rounded-full border border-amber-500/60 text-amber-300
             hover:text-amber-100 text-[10px]" title="De motor rekent met aanname 1,0 — vul de echte norm in"
-            onclick="this.closest('tr').querySelector('input[data-fte-key]')?.focus()">aanname 1,0</button>`;
+            onclick="event.stopPropagation();this.closest('tr').querySelector('input[data-fte-key]')?.focus()">aanname 1,0</button>`;
     } else {
         const label = { staffing_norms: 'norm', line12_coefficient: 'L12-coëff.',
                         combination: 'combinatie', default: 'default' }[line.operators_source]
@@ -13070,46 +14084,68 @@ function _fteRowHtml(line, { indent = false, hidden = false, chevron = '' } = {}
 
     // Stille € 0 zichtbaar maken: een regel die wél FTE vraagt maar zonder
     // tarief (en zonder 'default') rekent, drukt de loonkosten kunstmatig.
+    // Het etiket opent de inspecteur van deze regel bij het tarief.
     const cost = _fteAgg(line.cost);
     const fteAvg = _fteAgg(line.fte, 'avg');
-    const costCell = (cost === 0 && fteAvg > 0.005 && line.category !== 'machine')
+    const fg = line.function_group || 'default';
+    const silentZero = cost === 0 && fteAvg > 0.005 && line.category !== 'machine';
+    const costCell = silentZero
         ? `<button class="px-1.5 py-0.5 rounded-full border border-red-500/60 text-red-300 hover:text-red-100 text-[10px]"
-             title="Geen loontarief voor deze functiegroep — de regel telt € 0 mee"
-             onclick="showTab('config');setTimeout(() => openMasterDatasetModal('labor_rates'), 150)">€ 0 — geen tarief</button>`
+             title="Geen loontarief voor functiegroep '${escapeHtml(fg)}' — de regel telt € 0 mee"
+             onclick="event.stopPropagation();_fteOpenDataset('labor_rates', { rowId: '${_jsArg(rowId)}' })">${docked ? '€ 0' : '€ 0 — geen tarief'}</button>`
         : _fmtNlNum(cost, 0);
 
-    // Doorzet & benchmark: MES/PEER als beginwaarde-referentie, met ✎ (eigen
-    // doorzet invullen als override) en → (MES overnemen als beginwaarde).
-    // Alleen op machinerijen: overrides zijn machine×product.
+    // Doorzet zoals de planning rekent: effectieve doorzet per machine en
+    // per groep (zelfde cijfers als de Machines-tab). Aanpassen in de
+    // inspecteur van de machine.
     let throughputCell = '—';
-    if (line.category === 'machine') {
-        const mes = line.throughput_mes ? `MES ${_fmtNlNum(line.throughput_mes, 1)}` : '';
-        const peer = line.throughput_peer ? `PEER ${_fmtNlNum(line.throughput_peer, 1)}` : '';
-        const parts = [mes, peer].filter(Boolean).join(' · ') || '—';
-        const adopt = line.throughput_mes
-            ? `<button class="text-blue-400 hover:text-blue-200" title="Neem de MES-meting over als beginwaarde (override met bronlabel)"
-                 onclick="adoptFteBenchmark('${_jsArg(line.key)}', ${Number(line.throughput_mes)})">&#8594;</button>`
-            : '';
-        throughputCell = `<span class="inline-flex items-center gap-1.5">${parts}
-            <button class="text-slate-400 hover:text-slate-200" title="Eigen doorzet invullen (override in de masterdata)"
-                onclick="openFteThroughputGrid('${_jsArg(line.key)}')">&#9998;</button>${adopt}</span>`;
+    if (line.category === 'group') {
+        throughputCell = _fteGroupEffHtml(line.key);
+    } else if (line.category === 'machine') {
+        const mi = _fteMachineInfo(line.key);
+        const e = _fteEffScope(mi);
+        const ed = !!(mi && mi.edit_meta && mi.edit_meta.oee);
+        throughputCell = e === null ? '<span class="text-slate-600">…</span>'
+            : `<span class="${ed ? 'text-amber-300' : ''}" title="Effectieve doorzet zoals de planning rekent (gem. ${escapeHtml(_fteScopeLabel())}); klik de rij om aan te passen">${_fmtNlNum(e, 1)}</span>`;
     }
 
     const labelCell = chevron
-        ? `<button class="text-left w-full" onclick="toggleFteGroup('${_jsArg(line.key)}')">${chevron}
+        ? `<button class="text-left w-full" onclick="event.stopPropagation();toggleFteGroup('${_jsArg(line.key)}')">${chevron}
              ${escapeHtml(line.label)}<span class="text-slate-500"> · ${escapeHtml(line.key)}</span></button>${labelExtra}`
-        : `${indent ? '<span class="inline-block w-4"></span>' : ''}${escapeHtml(line.label)}
+        : `${combining && line.category === 'machine' ? _fteCombineBoxHtml(line) : (indent ? '<span class="inline-block w-4"></span>' : '')}${escapeHtml(line.label)}
            <span class="text-slate-500"> · ${escapeHtml(line.key)}</span>${labelExtra}`;
 
-    return `<tr data-fte-row="${escapeHtml(rowId)}"
-        class="${line.category === 'machine' ? 'text-slate-400' : ''} ${hidden ? 'hidden' : ''}">
-        <td class="p-1">${labelCell}</td>
+    // Een groep waarvan álle machines in een actieve combinatie zitten heeft
+    // haar bemensing daarheen verhuisd: de nul is geen fout maar een verwijzing.
+    let fteCell = _fmtNlNum(fteAvg, 2);
+    if (line.category === 'group' && !line.combination_id && fteAvg < 0.005) {
+        const members = _fteGroupMembers(line);
+        const inCombo = members.map(m => _fteActiveComboOf(m.key)).filter(Boolean);
+        if (members.length && inCombo.length === members.length) {
+            const names = [...new Set(inCombo.map(c => c.name || c.combination_id))].join(', ');
+            fteCell = `<span title="Bemensing zit in combinatie ${escapeHtml(names)}">0 <span class="text-[10px] text-slate-500">via combinatie</span></span>`;
+        }
+    }
+
+    // De hele rij is de ingang naar de inspecteur; in kiesmodus kiest een
+    // klik op een machinerij die machine voor de combinatie.
+    const picked = _fteInspector.rowId === rowId;
+    const selected = combining && line.category === 'machine' && _fteCombine.selected.has(String(line.key));
+    const rowClick = combining
+        ? (line.category === 'machine' ? `fteCombineToggle('${_jsArg(line.key)}')` : '')
+        : `openFteInspector('${_jsArg(rowId)}')`;
+    const rowTitle = combining
+        ? (line.category === 'machine' ? 'Klik: kies deze machine voor de combinatie' : '')
+        : 'Klik: bemensing, tarief, doorzet en combinaties van deze regel';
+    return `<tr data-fte-row="${escapeHtml(rowId)}" ${rowClick ? `onclick="${rowClick}"` : ''} ${rowTitle ? `title="${rowTitle}"` : ''}
+        class="${rowClick ? 'fte-row-pick' : ''} ${line.category === 'machine' ? 'text-slate-400' : ''} ${hidden ? 'hidden' : ''} ${picked && !combining ? 'fte-row-active' : ''} ${selected ? 'fte-row-sel' : ''}">
+        <td class="p-1">${labelCell}<span class="fte-pick-hint">bewerk &rsaquo;</span></td>
         <td class="p-1 text-right">${opCell}</td>
         <td class="p-1">${sourceCell}</td>
         <td class="p-1 text-right">${_fmtNlNum(hours, 0)}</td>
         <td class="p-1 text-right">${available > 0 ? _fmtNlNum(available, 0) : '—'}</td>
         <td class="p-1 text-right ${utilClass}">${util === null ? '—' : _fmtNlNum(util * 100, 1) + '%'}</td>
-        <td class="p-1 text-right">${_fmtNlNum(fteAvg, 2)}</td>
+        <td class="p-1 text-right">${fteCell}</td>
         <td class="p-1 text-right">${costCell}</td>
         <td class="p-1 text-right">${throughputCell}</td>
     </tr>`;
@@ -13255,13 +14291,6 @@ async function _postFteNormOverridesNow(overrides) {
         notify('Wat-als doorrekenen mislukt: ' + err, 'error', 5000);
         return false;
     }
-}
-
-function _updateFteDirtyBar() {
-    const count = Object.keys(_fteState.overrides).length;
-    document.getElementById('fteDirtyCount').textContent = count;
-    document.getElementById('fteDirtyBar').classList.toggle('hidden', count === 0);
-    _renderFteWhatIfTray();
 }
 
 // Het wat-als-paneel rechtsonder: houdt bij wat er in het experiment is

@@ -155,11 +155,11 @@ def test_compare_renders_a_variant_table(browser_page):
     assert page.js_errors == []
 
 
-def test_norm_edit_raises_the_dirty_bar_and_revert_clears_it(browser_page):
+def test_norm_edit_shows_the_what_if_tray_and_revert_clears_it(browser_page):
     page = browser_page
     _open_workbench(page)
 
-    expect(page.locator("#fteDirtyBar")).to_be_hidden()
+    expect(page.locator("#fteWhatIfTray")).to_be_hidden()
     changed = page.evaluate(
         """() => {
             const input = document.querySelector('#fteWbBody input[data-fte-key]');
@@ -170,11 +170,11 @@ def test_norm_edit_raises_the_dirty_bar_and_revert_clears_it(browser_page):
         }""")
     assert changed, "geen bewerkbare bemensingsnorm gevonden in de tabel"
 
-    expect(page.locator("#fteDirtyBar")).to_be_visible()
-    assert page.locator("#fteDirtyCount").inner_text().strip() == "1"
+    expect(page.locator("#fteWhatIfTray")).to_be_visible()
+    assert page.locator("#fteWhatIfList > div").count() == 1
 
     page.evaluate("() => revertFteNorms()")
-    expect(page.locator("#fteDirtyBar")).to_be_hidden()
+    expect(page.locator("#fteWhatIfTray")).to_be_hidden()
     assert page.js_errors == []
 
 
@@ -192,7 +192,7 @@ def test_reopening_the_tab_refreshes_and_keeps_the_what_if(browser_page):
                 input.value = '3';
                 input.dispatchEvent(new Event('change', { bubbles: true }));
             }""")
-    expect(page.locator("#fteDirtyBar")).to_be_visible()
+    expect(page.locator("#fteWhatIfTray")).to_be_visible()
 
     # Tabblad verlaten en terugkomen haalt nieuwe data op; de wat-als komt
     # uit de sessie terug.
@@ -202,7 +202,7 @@ def test_reopening_the_tab_refreshes_and_keeps_the_what_if(browser_page):
         "() => document.querySelectorAll('#fteWbBody tr').length > 0", timeout=30000)
 
     assert page.evaluate("() => Object.keys(_fteState.overrides).length") == 1
-    expect(page.locator("#fteDirtyBar")).to_be_visible()
+    expect(page.locator("#fteWhatIfTray")).to_be_visible()
     assert page.evaluate(
         "() => document.querySelector('#fteWbBody input[data-fte-key]').value") == "3"
 
@@ -228,7 +228,7 @@ def test_invalid_norm_is_refused_without_touching_the_dirty_state(browser_page):
         }""")
     assert page.evaluate("() => Object.keys(_fteState.overrides).length") == 0
     assert [u for u in posted if "/api/fte/norm_overrides" in u] == [],         "een geweigerde invoer mag geen wat-als POSTen"
-    expect(page.locator("#fteDirtyBar")).to_be_hidden()
+    expect(page.locator("#fteWhatIfTray")).to_be_hidden()
 
 
 def test_workbench_knows_the_master_version_it_is_based_on(browser_page):
@@ -320,5 +320,4 @@ def test_wat_als_werkstroom_direct_resultaat_en_terugzetten(browser_page):
         target["rowId"])
     assert abs(restored - base_fte) < 0.01
     expect(page.locator("#fteWhatIfTray")).to_be_hidden()
-    expect(page.locator("#fteDirtyBar")).to_be_hidden()
     assert page.js_errors == []

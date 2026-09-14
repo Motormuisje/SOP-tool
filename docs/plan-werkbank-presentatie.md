@@ -3,6 +3,11 @@
 **Site-scope: uitsluitend Maastricht (NLX1).** Machinevolgorde wisselen is een
 aparte vervolgtaak ná goedkeuring van de werkbank en staat hier bewust niet in.
 
+> **Vervolg 2026-09-14:** de ingangen uit §3 (sprongen naar het Config-grid)
+> zijn vervangen door één paneel naast de tabel; MES/PEER en de FTE-eigen
+> doorzet-overrides staan niet meer in de werkbank en combineren gebeurt
+> vanuit de tabel. Zie [plan-werkbank-inspecteur.md](plan-werkbank-inspecteur.md).
+
 Dit plan verving op 2026-08-06 een eerdere versie, na een richtlijn van de
 klant die het ontwerp fundamenteel kantelt:
 
