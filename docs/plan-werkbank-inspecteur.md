@@ -65,6 +65,17 @@ dubbel met de rij-chips en de doctrine-chip was een etiket.
 wat-als-stand in de voet van het paneel; met het paneel dicht blijft de
 zwevende lade rechtsonder. Nooit allebei.
 
+**Wijzigingslog en tarra** (2026-09-14, klantvraag tijdens de demo). Boven de
+tabel "Doorwerking in de waardeketen" staan de laatste vijf bewerkingen met hun
+effect op FTE, loonkosten, EBITDA en EBIT (hele horizon, dus onafhankelijk van
+het gekozen bereik) en het totaal sinds tarra. Elke bewerking in de werkbank
+zet vooraf een etiket (`_fteNoteAction`: norm, terugzetten, opslaan, tarief,
+doorzet, combinatie aan/uit/aanmaken/wijzigen/verwijderen, masterdata-
+formulier); een verandering zonder etiket komt van buiten de werkbank
+(planning, machines, herberekening) en staat er zo bij. "Tarra" zet het
+nulpunt op de huidige stand en leegt de lijst. Bewaard per instantie in
+`localStorage`; de rekenkern wordt er niet door geraakt.
+
 ## 3. Combineren vanuit de werkbank
 
 De knop "Combineren" (links van de bereikknoppen) zet de tabel in kiesmodus:

@@ -1447,6 +1447,8 @@
                     <h3 class="font-semibold mb-1">Doorwerking in de waardeketen</h3>
                     <p class="text-xs text-slate-500 mb-3">De 20 consolidatieregels blijven ongewijzigd; hieronder staat dezelfde
                         rekenwijze met de loonkosten van de werkbank in plaats van de vaste directe-FTE-kost.</p>
+                    <!-- Wijzigingslog: de laatste bewerkingen met hun effect, en het totaal sinds tarra. -->
+                    <div id="fteValueDelta" class="mb-3"></div>
                     <div class="overflow-auto"><table class="data-table w-full text-xs"><thead id="fteValueHead"></thead><tbody id="fteValueBody"></tbody></table></div>
                 </div>
             </div>
@@ -12786,6 +12788,7 @@ function renderFteWorkbench() {
     _renderFteHeatmap();
     _renderFteWbChart();
     _renderFteCombinations();
+    _fteTrackChange();
     _renderFteTable(showMachines);
     _renderFteValuePanel();
     _renderFteWhatIfTray();
@@ -12967,6 +12970,7 @@ function _renderFteCombinations() {
 }
 
 async function toggleFteCombination(id, on) {
+    _fteNoteAction(`Combinatie ${id} ${on ? 'aan' : 'uit'}`);
     const active = new Set(_fteState.active);
     if (on) active.add(id); else active.delete(id);
     try {
@@ -13200,6 +13204,7 @@ async function openFteMasterInDock(dataset, { filter = '', kicker = 'Installatie
     body.innerHTML = '';
     body.appendChild(inline);
     _masterAfterSaveHook = async () => {
+        _fteNoteAction(`${spec.label} opgeslagen in masterdata`);
         const ok = await _fteRefreshWorkbench();
         if (ok) notify(`${spec.label} opgeslagen — de werkbank rekent nu met de nieuwe waarden.`, 'success', 4500);
         return ok;
@@ -13497,6 +13502,7 @@ async function _fteInspectorSaveRate(fg) {
     if (raw === null || String(raw).trim() === '') { notify('Vul een tarief in.', 'error', 3500); return; }
     const parsed = parseLocaleNumber(String(raw).trim());
     if (Number.isNaN(parsed) || parsed < 0) { notify('Tarief moet een getal ≥ 0 zijn.', 'error', 4000); return; }
+    _fteNoteAction(`Tarief ${fg}: € ${_fmtNlNum(parsed, 0)}`);
     let fresh;
     try { fresh = await _fteMasterGet('labor_rates'); } catch (err) { notify('Tarieven laden mislukt: ' + err.message, 'error', 5000); return; }
     // Conflict op het GETOONDE tarief, niet alleen op de versie van zonet:
@@ -13606,6 +13612,7 @@ async function _fteInspectorResetThroughput(code) {
 async function _fteInspectorPostOee(code, oee, { from, to, reset = false } = {}) {
     if (_fteTpBusy) return;   // dubbelklik of Enter+klik: één verzoek tegelijk
     _fteTpBusy = true;
+    _fteNoteAction(reset ? `Doorzet ${code} terug naar origineel` : `Doorzet ${code}: ${_fmtNlNum(from, 1)} → ${_fmtNlNum(to, 1)} t/u`);
     const m = _fteMachineInfo(code);
     const before = (typeof _snapshotMachineImpactState === 'function') ? _snapshotMachineImpactState() : null;
     try {
@@ -13943,6 +13950,7 @@ async function fteCombineSave(activate) {
         const fresh = await _fteMasterGet('machine_combinations');
         const value = { ...(fresh.value || {}) };
         const id = _fteCombineId(name, Object.keys(value));
+        _fteNoteAction(`Combinatie "${name}" aangemaakt${activate ? ' en aangezet' : ''}`);
         value[id] = { combination_id: id, name, machine_codes: sel, operators: ops, throughput_factor: factor,
                       throughput_factor_by_machine: byMachine, function_group: fg || '',
                       description: String(f.description || '').trim(), is_active: true };
@@ -14124,6 +14132,7 @@ async function _fteCombinationSave(id) {
             notify(`Combinatie "${value[id].name || id}" is intussen door iemand anders gewijzigd. Het paneel toont nu die stand; voer je wijziging opnieuw in.`, 'warning', 9000);
             return;
         }
+        _fteNoteAction(`Combinatie ${value[id].name || id} gewijzigd`);
         value[id] = { ...value[id], operators: ops, throughput_factor: Math.round((1 - loss / 100) * 1000) / 1000,
                       function_group: String(d.fg || ''), description: String(d.description || '').trim() };
         const saved = await _fteMasterPatch('machine_combinations', value, fresh.version);
@@ -14138,6 +14147,7 @@ async function _fteCombinationDelete(id) {
     const combo = _fteComboById(id);
     if (!combo) return;
     if (!confirm(`Combinatie "${combo.name || id}" verwijderen uit de masterdata? Dit geldt voor alle instanties.`)) return;
+    _fteNoteAction(`Combinatie ${combo.name || id} verwijderd`);
     try {
         if (_fteState.active.includes(id)) {
             const res = await fetch('/api/fte/combinations', {
@@ -14360,6 +14370,7 @@ async function onFteNormEdit(input) {
     }
     const line = (_fteState.data.lines || []).find(l => l.category === category && l.key === key);
     if (!line) return;
+    _fteNoteAction(`Norm ${line.label}: ${_fmtNlNum(line.operators_per_hour, 2)} → ${_fmtNlNum(parsed, 2)}`);
     // Basiswaarde vastleggen vóór de eerste override, zodat het paneel
     // 'oud → nieuw' kan tonen en terug-naar-oud de override opruimt.
     if (!(key in _fteState.overrideBase) && line.operators_source !== 'wat-als') {
@@ -14455,6 +14466,7 @@ function _renderFteWhatIfTray() {
 }
 
 function revertFteNorms() {
+    _fteNoteAction('Wat-als normen teruggezet');
     _fteState.overrideBase = {};
     _postFteNormOverrides({});
 }
@@ -14462,6 +14474,7 @@ function revertFteNorms() {
 async function saveFteNorms() {
     const edits = Object.entries(_fteState.overrides);
     if (!edits.length) return;
+    _fteNoteAction('Bemensingsnormen opgeslagen in masterdata');
     try {
         const res = await fetch('/api/master_data/staffing_norms');
         const current = await res.json();
@@ -14563,7 +14576,109 @@ function _fteDeltaClass(diff, higherIsBetter, epsilon = 1e-9) {
     return better ? 'text-green-400' : 'text-red-400';
 }
 
+// ── Wijzigingslog en tarra in het waardepaneel ────────────────────────────
+// Elke bewerking in de werkbank laat een spoor na: wat er veranderde en wat
+// dat deed met FTE, loonkosten, EBITDA en EBIT — over de hele horizon, dus
+// onafhankelijk van het gekozen bereik. "Tarra" zet het nulpunt op de
+// huidige stand; het totaal is altijd huidig − tarra. Per instantie bewaard
+// in localStorage; de rekenkern wordt er niet door geraakt.
+const _FTE_LOG_MAX = 5;
+let _fteLog = { sessionId: undefined, tare: null, entries: [], pending: null };
+function _fteSnapshot() {
+    const data = _fteState.data;
+    if (!data) return null;
+    const sum = m => Object.values(m || {}).reduce((s, v) => s + Number(v || 0), 0);
+    const avg = m => { const v = Object.values(m || {}); return v.length ? sum(m) / v.length : 0; };
+    const impact = data.value_impact || {};
+    return {
+        fte: avg((data.totals || {}).fte),
+        cost: impact.available ? sum(impact.workbench_labor_cost) : sum((data.totals || {}).cost),
+        ebitda: impact.available ? sum(impact.ebitda) : null,
+        ebit: impact.available ? sum(impact.ebit) : null,
+        at: Date.now(),
+    };
+}
+function _fteNoteAction(label) { _fteLog.pending = label; }
+function _fteLogKey() { return 'fteChangeLog:' + (state.activeSessionId || 'geen'); }
+function _fteLogLoad() {
+    if (_fteLog.sessionId === state.activeSessionId) return;
+    _fteLog = { sessionId: state.activeSessionId, tare: null, entries: [], pending: null };
+    try {
+        const raw = localStorage.getItem(_fteLogKey());
+        if (raw) { const s = JSON.parse(raw); _fteLog.tare = s.tare || null; _fteLog.entries = s.entries || []; }
+    } catch (e) { /* geen opslag: alleen voor deze pagina */ }
+}
+function _fteLogSave() {
+    try { localStorage.setItem(_fteLogKey(), JSON.stringify({ tare: _fteLog.tare, entries: _fteLog.entries })); } catch (e) {}
+}
+function _fteSnapDiffers(a, b) {
+    return !a || !b || ['fte', 'cost', 'ebitda', 'ebit'].some(k => Math.abs(Number(a[k] || 0) - Number(b[k] || 0)) > 1e-6);
+}
+// Na elke render: nieuwe stand ≠ laatst gelogde stand → regel erbij. Het
+// etiket komt van de bewerking die het veroorzaakte (_fteNoteAction); zonder
+// etiket kwam de verandering van buiten de werkbank (planning, machines,
+// herberekening) en staat dat er eerlijk bij.
+function _fteTrackChange() {
+    _fteLogLoad();
+    const now = _fteSnapshot();
+    if (!now) return;
+    if (!_fteLog.tare) { _fteLog.tare = now; _fteLog.entries = []; _fteLog.pending = null; _fteLogSave(); return; }
+    const last = _fteLog.entries.length ? _fteLog.entries[_fteLog.entries.length - 1].after : _fteLog.tare;
+    if (_fteSnapDiffers(now, last)) {
+        _fteLog.entries.push({ label: _fteLog.pending || 'Wijziging buiten de werkbank (planning, machines of herberekening)', before: last, after: now });
+        if (_fteLog.entries.length > 50) _fteLog.entries = _fteLog.entries.slice(-50);
+        _fteLogSave();
+    }
+    _fteLog.pending = null;
+}
+function fteTare() {
+    _fteLogLoad();
+    const now = _fteSnapshot();
+    if (!now) return;
+    _fteLog.tare = now; _fteLog.entries = []; _fteLog.pending = null;
+    _fteLogSave();
+    _renderFteValueDelta();
+    notify('Tarra gezet: de totale verandering telt vanaf nu.', 'info', 3000);
+}
+function _renderFteValueDelta() {
+    const host = document.getElementById('fteValueDelta');
+    if (!host) return;
+    _fteLogLoad();
+    const now = _fteSnapshot();
+    const tare = _fteLog.tare;
+    if (!now || !tare) { host.innerHTML = ''; return; }
+    const money = v => (v >= 0 ? '+€ ' : '−€ ') + _fmtNlNum(Math.abs(v), 0);
+    const cols = [
+        ['fte', 'FTE', v => (v >= 0 ? '+' : '−') + _fmtNlNum(Math.abs(v), 2), _FTE_MATERIALITY.fte_avg, false],
+        ['cost', 'Loonkosten', money, _FTE_MATERIALITY.labor_cost_total, false],
+    ];
+    if (now.ebitda !== null && tare.ebitda !== null) {
+        cols.push(['ebitda', 'EBITDA', money, _FTE_MATERIALITY.ebitda_total, true]);
+        cols.push(['ebit', 'EBIT', money, _FTE_MATERIALITY.ebitda_total, true]);
+    }
+    const cell = (v, fmt, thr, hib) => Math.abs(v) < thr
+        ? `<span class="text-slate-500" title="exact: ${_fmtNlNum(v, 2)}">&asymp; 0</span>`
+        : `<span class="${_fteDeltaClass(v, hib, thr)}">${fmt(v)}</span>`;
+    const deltas = (a, b) => cols.map(([k, , fmt, thr, hib]) =>
+        `<td class="p-1 text-right font-mono">${cell(Number(a[k] || 0) - Number(b[k] || 0), fmt, thr, hib)}</td>`).join('');
+    const time = t => new Date(t).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+    const entries = _fteLog.entries.slice(-_FTE_LOG_MAX).reverse();
+    const total = _fteLog.entries.length;
+    host.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+            <p class="text-xs text-slate-400">Laatste ${_FTE_LOG_MAX} bewerkingen en de totale verandering sinds tarra (${time(tare.at)}), hele horizon.</p>
+            <button onclick="fteTare()" class="fte-btn" title="Zet het nulpunt op de huidige stand; de lijst begint opnieuw">Tarra</button>
+        </div>
+        <table class="w-full text-xs" data-fte-log>
+            <thead><tr class="text-slate-500"><th class="text-left p-1 font-normal">Bewerking</th>${cols.map(c => `<th class="text-right p-1 font-normal">${c[1]}</th>`).join('')}</tr></thead>
+            <tbody>${entries.map(e => `<tr data-fte-log-entry><td class="p-1"><span class="text-slate-500">${time(e.after.at)}</span> ${escapeHtml(e.label)}</td>${deltas(e.after, e.before)}</tr>`).join('')
+                || `<tr><td class="p-2 text-slate-500" colspan="${cols.length + 1}">Nog geen bewerkingen sinds tarra.</td></tr>`}
+            <tr class="border-t border-slate-700 font-semibold" data-fte-log-total><td class="p-1">Totaal sinds tarra${total > _FTE_LOG_MAX ? ` (${total} bewerkingen)` : ''}</td>${deltas(now, tare)}</tr>
+            </tbody>
+        </table>`;
+}
+
 function _renderFteValuePanel() {
+    _renderFteValueDelta();
     const impact = (_fteState.data || {}).value_impact || {};
     const head = document.getElementById('fteValueHead');
     const body = document.getElementById('fteValueBody');
