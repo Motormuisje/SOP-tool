@@ -264,8 +264,9 @@ def test_install_clean_engine_baseline_captures_snapshot_and_clears_overrides():
     assert sess["reset_baseline"]["machines"]["M1"]["shift_hours_computed"] == pytest.approx(520.0)
     assert sess["machine_overrides"] == {}
     assert sess["machine_undo"] == []
-    # Current production behavior invalidates machine_undo only; machine_redo is untouched.
-    assert sess["machine_redo"] == [{"machine": "M1"}]
+    # A surviving redo entry would re-apply a machine value from before the
+    # calculate and persist it as an override (BUGS.md L12).
+    assert sess["machine_redo"] == []
 
 
 def test_install_clean_engine_baseline_preserves_overrides_when_flag_false():

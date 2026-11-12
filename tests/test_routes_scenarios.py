@@ -172,8 +172,26 @@ def test_save_scenario_snapshots_current_engine(scenarios_route_app):
     assert LineType.TOTAL_DEMAND.value in saved["results"]
     assert LineType.CONSOLIDATION.value in saved["value_results"]
     assert saved["pending_edits"]
-    assert saved["valuation_params"] == {"1": 1.0}
+    # The engine's own valuation parameters: all eight, not only the keys the
+    # global mirror happened to hold.
+    assert saved["valuation_params"] == {"1": 1.0, **{str(k): 0.0 for k in range(2, 9)}}
     assert saved["purchased_and_produced"] == "MAT-1:0.25"
+
+
+def test_save_scenario_takes_vp_and_pap_from_the_engine_not_the_stale_mirror(scenarios_route_app):
+    """BUGS.md M14. The global mirror lags after deleting the active instance
+    and after upload+calculate; a scenario then stored another instance's VP
+    and PAP, and loading it wrote them into this engine."""
+    engine_data = scenarios_route_app.engine.data
+    engine_data.valuation_params.direct_fte_cost_per_month = 7.0
+    engine_data.purchased_and_produced = {"MAT-9": 0.6}
+
+    response = scenarios_route_app.client.post("/api/scenarios/save", json={"name": "Live"})
+
+    assert response.status_code == 200, response.get_json(silent=True)
+    saved = scenarios_route_app.scenarios[response.get_json()["scenario_id"]]
+    assert saved["valuation_params"]["1"] == 7.0
+    assert saved["purchased_and_produced"] == "MAT-9:0.6"
 
 
 def test_save_scenario_persists_to_scenario_store(scenarios_route_app):

@@ -538,6 +538,40 @@ def test_switch_session_missing_session_returns_404(session_route_app):
 
 
 @pytest.mark.no_fixture
+def test_delete_active_session_mirrors_the_promoted_session(
+    session_route_app,
+    planning_engine_result,
+):
+    """BUGS.md M14. Deleting the active instance promotes the next one without
+    a switch; its state must reach the global mirror, or the Config tab shows
+    and saves the PAP and forecast defaults of the instance just deleted."""
+    session_route_app.make_session("session-a", engine=None)
+    session_route_app.make_session("session-b", engine=planning_engine_result)
+    session_route_app.set_active_session_id("session-a")
+    session_route_app.sync_calls.clear()
+
+    response = session_route_app.client.delete("/api/sessions/session-a")
+
+    assert response.status_code == 200, response.get_json(silent=True)
+    assert response.get_json()["active_session_id"] == "session-b"
+    assert session_route_app.sync_calls == [planning_engine_result]
+
+
+def test_delete_inactive_session_leaves_the_mirror_alone(
+    session_route_app,
+    planning_engine_result,
+):
+    session_route_app.make_session("session-a", engine=planning_engine_result)
+    session_route_app.make_session("session-b", engine=planning_engine_result)
+    session_route_app.set_active_session_id("session-b")
+    session_route_app.sync_calls.clear()
+
+    response = session_route_app.client.delete("/api/sessions/session-a")
+
+    assert response.status_code == 200, response.get_json(silent=True)
+    assert session_route_app.sync_calls == []
+
+
 def test_delete_session_missing_session_returns_404(session_route_app):
     response = session_route_app.client.delete("/api/sessions/missing")
 
