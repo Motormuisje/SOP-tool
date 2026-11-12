@@ -8,6 +8,8 @@ normen op de aanname of de L12-coëfficiënt rekenen en er nog geen loontarief
 bestaat, dus de toestand waarin de chips en badges móéten verschijnen.
 """
 
+import datetime
+
 import pytest
 from playwright.sync_api import expect
 
@@ -119,27 +121,88 @@ def test_groups_start_collapsed_and_open_on_click(browser_page):
     assert page.js_errors == []
 
 
-def test_range_presets_aggregate_over_the_chosen_window(browser_page):
-    """'Komende 3 maanden' moet exact het gemiddelde over dat venster tonen.
-    De presets bestaan omdat het horizongemiddelde de piek wegpoetst waarover
-    de planner deze cyclus beslist."""
-    page = browser_page
-    _open_workbench(page)
+def _freeze_browser_month(page, period, *, month_offset=0):
+    """Zet de browserklok op de 15e van `period` ('YYYY-MM'), eventueel een
+    aantal maanden verschoven. 'Komende N maanden' rekent vanaf de echte
+    kalendermaand; zonder vaste klok hangt de uitslag van de testdatum af (de
+    fixture-horizon eindigt in een vaste maand, de kalender loopt door)."""
+    year, month = (int(part) for part in period.split("-"))
+    index = year * 12 + (month - 1) + month_offset
+    frozen = datetime.datetime(index // 12, index % 12 + 1, 15, 12, 0, 0)
+    page.clock.set_fixed_time(frozen)
+    seen = page.evaluate(
+        "() => { const d = new Date(); return [d.getFullYear(), d.getMonth() + 1]; }")
+    assert seen == [frozen.year, frozen.month], f"browserklok niet bevroren: {seen}"
 
-    result = page.evaluate(
-        """() => {
-            setFteRange('next3');
+
+def _range_preset_state(page, preset="next3"):
+    return page.evaluate(
+        """(preset) => {
+            setFteRange(preset);
             const scope = _ftePeriodsInScope();
             const totals = _fteState.data.totals.fte;
             const expected = scope.reduce((s, p) => s + Number(totals[p] || 0), 0) / scope.length;
             const shown = parseLocaleNumber(document.getElementById('fteKpiTotal').textContent);
             const sub = document.getElementById('fteKpiTotalSub').textContent;
             setFteRange('all');
-            return { scopeLen: scope.length, expected, shown, sub };
-        }""")
-    assert result["scopeLen"] == 3
+            return { scope, expected, shown, sub, periods: _fteState.data.periods };
+        }""", preset)
+
+
+def test_range_presets_aggregate_over_the_chosen_window(browser_page):
+    """'Komende 3 maanden' moet exact het gemiddelde over dat venster tonen.
+    De presets bestaan omdat het horizongemiddelde de piek wegpoetst waarover
+    de planner deze cyclus beslist."""
+    page = browser_page
+    _open_workbench(page)
+    periods = page.evaluate("() => _fteState.data.periods")
+    assert len(periods) >= 6, periods
+    _freeze_browser_month(page, periods[2])
+
+    result = _range_preset_state(page)
+    assert result["scope"] == periods[2:5]
     assert abs(result["shown"] - result["expected"]) < 0.005, result
     assert "komende 3 mnd" in result["sub"]
+    assert "einde horizon" not in result["sub"]
+    assert page.js_errors == []
+
+
+def test_range_preset_at_end_of_horizon_names_the_real_window(browser_page):
+    """Staat de kalender op de laatste horizonmaand, dan is er nog één maand
+    'komend'. Het venster schuift niet terug naar verstreken maanden, en het
+    label zegt over hoeveel maanden er werkelijk gemiddeld wordt — een tegel
+    'komende 3 mnd' die over één maand middelt, wordt als kwartaalcijfer
+    overgenomen."""
+    page = browser_page
+    _open_workbench(page)
+    periods = page.evaluate("() => _fteState.data.periods")
+    _freeze_browser_month(page, periods[-1])
+
+    result = _range_preset_state(page)
+    assert result["scope"] == periods[-1:]
+    assert abs(result["shown"] - result["expected"]) < 0.005, result
+    assert "komende 1 mnd (einde horizon)" in result["sub"]
+
+    six = _range_preset_state(page, "next6")
+    assert six["scope"] == periods[-1:]
+    assert "komende 1 mnd (einde horizon)" in six["sub"]
+    assert page.js_errors == []
+
+
+def test_range_preset_outside_the_horizon_falls_back_to_its_start(browser_page):
+    """Een sessie van een oude cyclus: de kalender ligt voorbij de horizon.
+    Een lege selectie zou stil nul tonen, dus het venster valt terug op het
+    begin van de horizon."""
+    page = browser_page
+    _open_workbench(page)
+    periods = page.evaluate("() => _fteState.data.periods")
+    _freeze_browser_month(page, periods[-1], month_offset=1)
+
+    result = _range_preset_state(page)
+    assert result["scope"] == periods[:3]
+    assert abs(result["shown"] - result["expected"]) < 0.005, result
+    assert "komende 3 mnd" in result["sub"]
+    assert "einde horizon" not in result["sub"]
     assert page.js_errors == []
 
 

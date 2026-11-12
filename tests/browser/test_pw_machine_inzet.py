@@ -663,17 +663,21 @@ def test_tarief_en_kosten_volgen_uit_omsteltijd_en_masterdata(browser_page, gold
     assert page.js_errors == []
 
 
-def test_combinaties_wonen_nu_hier_en_werkbank_toont_de_stand(browser_page):
-    """De combinatiekaart is verhuisd: hij staat op Machine-inzet, en de
-    werkbank toont alleen nog de stand met een sprong hierheen."""
+def test_combinaties_wonen_hier_en_werkbank_heeft_een_eigen_ingang(browser_page):
+    """De combinatiekaart staat op Machine-inzet. De werkbank toonde daarna
+    alleen de stand met een sprong hierheen; sinds de inspecteur
+    (docs/plan-werkbank-inspecteur.md §3) is die standregel vervangen door een
+    eigen ingang: de knop 'Combineren'. Deze test pinde nog de standregel en
+    faalde sinds die verdween."""
     page = browser_page
     _open_inzet(page)
     assert page.evaluate(
         "() => document.getElementById('fteCombinations').closest('.tab-content').id") == "inzet-tab"
     page.evaluate("() => showTab('fte')")
-    expect(page.locator("#fteCombiSummary")).to_be_attached()
-    page.wait_for_function(
-        "() => document.getElementById('fteCombiSummary').textContent !== ''", timeout=15000)
+    expect(page.locator("#fteCombineBtn")).to_have_text("Combineren", timeout=15000)
+    assert page.evaluate(
+        "() => document.getElementById('fteCombineBtn').closest('.tab-content').id") == "fte-tab"
+    expect(page.locator("#fteCombiSummary")).to_have_count(0)
     page.evaluate("() => showTab('inzet')")
     expect(page.locator("#inzet-tab")).to_be_visible()
     assert page.js_errors == []

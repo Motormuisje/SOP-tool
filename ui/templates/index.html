@@ -12699,7 +12699,16 @@ function _ftePeriodsInScope() {
     const periods = (_fteState.data && _fteState.data.periods) || [];
     const period = document.getElementById('ftePeriod')?.value || '';
     if (period) return [period];
-    const n = { next3: 3, next6: 6 }[_fteState.range];
+    return _fteRangePeriods();
+}
+
+// Het bereik zonder de maandkeuze. Ligt de huidige maand vlak voor het einde
+// van de horizon, dan telt 'komende N maanden' minder dan N periodes: er IS
+// niet meer horizon. Het venster wordt dan niet teruggeschoven (dat zou
+// verstreken maanden 'komend' noemen); _fteRangeLabel meldt het echte aantal.
+function _fteRangePeriods() {
+    const periods = (_fteState.data && _fteState.data.periods) || [];
+    const n = _FTE_RANGE_MONTHS[_fteState.range];
     if (!n) return periods;
     const now = new Date();
     const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -12777,6 +12786,8 @@ function renderFteWorkbench() {
     _fteRenderKpiCaveats();
 
     const warnBox = document.getElementById('fteWarnings');
+const _FTE_RANGE_MONTHS = { next3: 3, next6: 6 };
+
     const warnList = document.getElementById('fteWarningList');
     if ((data.warnings || []).length) {
         warnList.innerHTML = data.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
@@ -12789,6 +12800,16 @@ function renderFteWorkbench() {
     _renderFteWbChart();
     _renderFteCombinations();
     _fteTrackChange();
+// Eén bron voor het bereiklabel onder de tegels en in het waardepaneel. Het
+// label noemt het aantal maanden waarover werkelijk gemiddeld wordt: een tegel
+// 'komende 3 mnd' die over één maand middelt, wordt als kwartaalcijfer gelezen.
+function _fteRangeLabel() {
+    const n = _FTE_RANGE_MONTHS[_fteState.range];
+    if (!n) return 'hele horizon';
+    const len = _fteRangePeriods().length;
+    return len > 0 && len < n ? `komende ${len} mnd (einde horizon)` : `komende ${n} mnd`;
+}
+
     _renderFteTable(showMachines);
     _renderFteValuePanel();
     _renderFteWhatIfTray();
@@ -12806,8 +12827,7 @@ function _fteKpiSub(id, mode, values) {
     const el = document.getElementById(id);
     if (!el) return;
     const single = document.getElementById('ftePeriod')?.value || '';
-    const scopeLabel = single ? single
-        : { all: 'hele horizon', next3: 'komende 3 mnd', next6: 'komende 6 mnd' }[_fteState.range] || '';
+    const scopeLabel = single ? single : _fteRangeLabel();
     const kind = mode === 'avg' ? 'gem.' : 'som';
     let peakHtml = '';
     if (!single && values) {
@@ -13022,7 +13042,7 @@ function _fteInputNum(v, dec = 2) {
 function _fteScopeLabel() {
     const period = document.getElementById('ftePeriod')?.value;
     if (period) return period;
-    return { next3: 'komende 3 mnd', next6: 'komende 6 mnd' }[_fteState.range] || 'hele horizon';
+    return _fteRangeLabel();
 }
 function _fteLineByRowId(rowId) {
     const idx = String(rowId).indexOf(':');
