@@ -115,7 +115,10 @@ def run_cli(file_path: str, output_path: str = None, planning_month: str = None,
             db_export_df.to_excel(db_path, index=False)
             print(f"  DB export written to: {db_path}")
         else:
-            db_default = str(Path(output_path).stem) + '_DB_Export.xlsx'
+            # Next to the planning workbook. Path.stem alone dropped the
+            # directory, so the export landed in the current working directory.
+            _out = Path(output_path)
+            db_default = str(_out.with_name(_out.stem + '_DB_Export.xlsx'))
             db_export_df = db_exporter.export_to_dataframe()
             db_export_df.to_excel(db_default, index=False)
             print(f"  DB export written to: {db_default}")
@@ -158,13 +161,17 @@ def run_test():
     test_file = next((p for p in candidates if p.exists()), None)
 
     if not test_file:
+        # Exit non-zero: a self-test that could not run must not look like a
+        # self-test that passed.
         print("Test file not found. Set SOP_TEST_FILE or place a test file in uploads/.")
-        return
+        sys.exit(2)
 
     print("Running test...")
     from ui.paths import default_app_data_root
     output_dir = default_app_data_root() / 'exports'
-    output_dir.mkdir(exist_ok=True)
+    # parents=True: on a fresh data folder (new machine, SOP_APP_DATA_DIR set to
+    # an empty location) the self-test crashed before it had run anything.
+    output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / 'SOP_Python_Calculated.xlsx'
     engine = run_cli(
         str(test_file),
@@ -238,5 +245,11 @@ if __name__ == '__main__':
         print("=" * 60)
         traceback.print_exc()
         print("=" * 60)
-        input("\nDruk op Enter om te sluiten...")
+        # Keep the window open for a double-click start, but never wait on a
+        # keypress nobody can give (scheduled task, pipe, service).
+        if sys.stdin is not None and sys.stdin.isatty():
+            try:
+                input("\nDruk op Enter om te sluiten...")
+            except EOFError:
+                pass
         sys.exit(1)

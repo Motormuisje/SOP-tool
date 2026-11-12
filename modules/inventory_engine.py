@@ -237,6 +237,12 @@ class InventoryEngine:
             # - First-flexible with actual == 0 OR beyond: recompute heuristic
             # This mirrors Excel's live-formula recalculation after ProcessPurchaseReceipts.
             running_stock = initial_stock
+            # The raw needs of the first pass describe a plan this re-run
+            # replaces. Left in place they flagged a MOQ warning on a month
+            # that is now locked by a PO actual, or whose need disappeared
+            # (BUGS.md L3). The loop below records the need of every month it
+            # recomputes; the receipts themselves are untouched by this.
+            purch_raw_need.clear()
             for i, period in enumerate(self.periods):
                 demand = total_demand.get(period, 0.0)
                 raw_need = target_values[period] - running_stock + demand

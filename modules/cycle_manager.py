@@ -51,16 +51,36 @@ class CycleManager:
         """
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         parquet_df = df.copy()
-        for column in parquet_df.select_dtypes(include=["object"]).columns:
+        for column in parquet_df.columns:
+            # Text columns, named by dtype instead of select_dtypes("object"):
+            # pandas 3 gives text its own dtype and still lets "object" select
+            # it, but warns that pandas 4 will stop doing so.
+            dtype = parquet_df[column].dtype
+            if not (pd.api.types.is_object_dtype(dtype) or isinstance(dtype, pd.StringDtype)):
+                continue
             parquet_df[column] = parquet_df[column].map(
                 lambda value: None
                 if pd.api.types.is_scalar(value) and pd.isna(value)
                 else str(value)
             )
-        parquet_df.to_parquet(self._path, index=False)
-        meta = {"planning_month": planning_month or ""}
-        with open(self._meta_path, "w") as f:
-            json.dump(meta, f)
+        # Write next to the target and swap in: a reader (or a crash) halfway
+        # through a direct write saw a truncated parquet, which load_previous_
+        # cycle reports as "no previous cycle" (BUGS.md L7). os.replace is
+        # atomic on the same volume; the snapshot is swapped before its
+        # metadata so a reader never pairs new metadata with an old snapshot.
+        tmp_path = self._path.with_name(self._path.name + ".tmp")
+        tmp_meta_path = self._meta_path.with_name(self._meta_path.name + ".tmp")
+        try:
+            parquet_df.to_parquet(tmp_path, index=False)
+            meta = {"planning_month": planning_month or ""}
+            with open(tmp_meta_path, "w") as f:
+                json.dump(meta, f)
+            os.replace(tmp_path, self._path)
+            os.replace(tmp_meta_path, self._meta_path)
+        finally:
+            for leftover in (tmp_path, tmp_meta_path):
+                if leftover.is_file():
+                    leftover.unlink()
         print(f"  Previous-cycle snapshot saved -> {self._path}")
 
     def load_metadata(self) -> dict:
