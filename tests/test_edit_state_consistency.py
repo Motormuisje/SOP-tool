@@ -127,7 +127,8 @@ def test_replay_survives_an_edit_that_removes_its_own_pending_key(monkeypatch):
     apply_volume_change then pops its key from pending_edits. Iterating the
     live dict raised 'dictionary changed size during iteration' and failed
     the whole rebuild (switch, calculate, warmup)."""
-    monkeypatch.setattr(replay_module, "recalculate_fte_results", lambda engine, sess: None)
+    # raising=False: this hook only exists in editions that carry the workbench.
+    monkeypatch.setattr(replay_module, "recalculate_fte_results", lambda engine, sess: None, raising=False)
     lt = LineType.DEMAND_FORECAST.value
     sess = {"pending_edits": {
         pending_edit_key(lt, "MAT-A", "", "2025-01"): {"original": 1.0, "new_value": 2.0},
