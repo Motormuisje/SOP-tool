@@ -1,3 +1,4 @@
+import contextlib
 import os
 import shutil
 import socket
@@ -114,8 +115,15 @@ def _upload_and_calculate(base_url: str, golden_fixture_path: Path) -> dict:
     }
 
 
-@pytest.fixture(scope="session")
-def server(golden_fixture_path):
+@contextlib.contextmanager
+def _running_server(golden_fixture_path, *, record=False):
+    """Start een app-instantie op een eigen datamap, upload en reken door.
+
+    Als contextmanager zodat zowel de gedeelde session-fixture als een test
+    die een SCHONE server nodig heeft (een gescripte werksessie bijvoorbeeld)
+    dezelfde startlogica gebruiken. Zonder die scheiding hing het resultaat
+    van een stateful test af van wat er toevallig eerder in de sessie draaide.
+    """
     app_data_dir = Path(tempfile.mkdtemp(prefix="sop-browser-app-data-"))
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -148,13 +156,17 @@ def server(golden_fixture_path):
         if startup_seconds > 60:
             pytest.fail(f"Server startup exceeded 60s: {startup_seconds:.2f}s")
         calculation = _upload_and_calculate(base_url, golden_fixture_path)
-        _REPORT["startup_seconds"] = startup_seconds
-        _REPORT["periods_expected"] = calculation["periods"]
+        if record:
+            _REPORT["startup_seconds"] = startup_seconds
+            _REPORT["periods_expected"] = calculation["periods"]
         yield {
             "base_url": base_url,
             "session_id": calculation["session_id"],
             "startup_seconds": startup_seconds,
             "expected_periods": calculation["periods"],
+            # Tests die willen controleren wat er op SCHIJF staat (en dus een
+            # herstart zou terugvinden) hebben de datamap nodig.
+            "app_data_dir": app_data_dir,
         }
     finally:
         process.terminate()
@@ -165,6 +177,24 @@ def server(golden_fixture_path):
             process.wait(timeout=10)
         log_file.close()
         shutil.rmtree(app_data_dir, ignore_errors=True)
+
+
+@pytest.fixture(scope="session")
+def server(golden_fixture_path):
+    with _running_server(golden_fixture_path, record=True) as running:
+        yield running
+
+
+@pytest.fixture(scope="module")
+def own_server(golden_fixture_path):
+    """Een verse server voor één testmodule.
+
+    Voor gescripte scenario's die masterdata importeren, sessies dupliceren en
+    scenario's laden: die moeten vanaf een bekende begintoestand starten,
+    anders hangt de uitkomst af van wat er eerder in de suite draaide.
+    """
+    with _running_server(golden_fixture_path) as running:
+        yield running
 
 
 @pytest.fixture
