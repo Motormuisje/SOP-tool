@@ -9,6 +9,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
+`requirements.txt` begrenst elke bibliotheek op de versies waarmee de testsuite
+(inclusief de gouden cijfers) gedraaid is. Moet een installatie exact de geteste
+omgeving opleveren, gebruik dan `pip install -r requirements-lock.txt`
+(Python 3.10). Testgereedschap staat apart in `requirements-dev.txt`.
+
 Daarna opent de app normaal op:
 
 ```text
@@ -33,6 +38,7 @@ python main.py
 ## Tests
 
 ```powershell
+pip install -r requirements-dev.txt                 # pytest + Playwright (eenmalig)
 python -m pytest tests -q --ignore=tests/browser   # snelle suite (incl. golden)
 python main.py --test                              # zelftest van de app
 python -m pytest tests/browser -q                  # browsertests (Playwright)

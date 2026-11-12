@@ -1,10 +1,19 @@
-pandas>=1.5.0
-numpy>=1.21.0
-flask>=2.0.0
-openpyxl>=3.0.0
-pyarrow>=10.0.0
-matplotlib>=3.7.0
-
-# browser tests
-playwright
-pytest-playwright
+# Runtime dependencies of the planning tool.
+#
+# The ranges cover what the test suite (golden numbers included) has been run
+# against: the lower bound is the long-tested set on Python 3.10, the upper
+# bound the newest releases on Python 3.12 (pandas 3.1, numpy 2.5; 2026-11).
+# The caps keep an install on a new machine from pulling a major version
+# nobody has run the numbers on: pandas already announces that its text-column
+# handling changes again in 4.0.
+#
+# For an install that must reproduce the tested environment exactly:
+#     pip install -r requirements-lock.txt
+#
+# Test and browser-test tooling lives in requirements-dev.txt.
+pandas>=2.3,<4
+numpy>=1.26,<3
+flask>=3.1,<4
+openpyxl>=3.1,<4
+pyarrow>=23,<27
+matplotlib>=3.10,<4
