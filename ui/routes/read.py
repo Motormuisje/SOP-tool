@@ -62,6 +62,10 @@ def create_read_blueprint(
         # zonder (actief) masterrecord — de juni-2026-fout-klasse.
         response['master_consistency'] = list(
             getattr(current_engine.data, 'master_consistency_warnings', None) or [])
+        # Laadwaarschuwingen: sheets en cellen waarvoor de loader op een
+        # standaardwaarde terugviel. Voorheen stond dit alleen in de console.
+        response['load_warnings'] = list(
+            getattr(current_engine.data, 'load_warnings', None) or [])
         return jsonify(response)
 
     @bp.route('/api/value_results')

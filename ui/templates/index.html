@@ -1136,6 +1136,7 @@
                 </div>
                 <div id="uomPlanBanner" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4)" class="mb-2 px-3 py-2 rounded text-sm text-amber-300"></div>
                 <div id="masterConsistencyBanner" style="display:none;background:rgba(59,130,246,0.10);border:1px solid rgba(59,130,246,0.35)" class="mb-2 px-3 py-2 rounded text-sm text-blue-300"></div>
+                <div id="loadWarningsBanner" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4)" class="mb-2 px-3 py-2 rounded text-sm text-amber-300"></div>
                 <div id="planTableScroll" class="overflow-auto" style="max-height:62vh"><table class="data-table w-full"><thead id="planHead" style="position:sticky;top:0;z-index:10"></thead><tbody id="planBody"><tr><td colspan="20" class="text-center p-4 text-slate-500">Run calculations</td></tr></tbody></table></div>
                 <p class="mt-2 text-sm text-slate-400">Rows: <span id="rowCount">0</span></p>
             </div>
@@ -3139,6 +3140,23 @@ async function addMissingToMaster(material) {
         _entityCache = {};
         const verb = data.action === 'reactivated' ? 'geheractiveerd'
             : (data.action === 'already_active' ? 'stond al actief in de masterdata' : 'toegevoegd aan de masterdata');
+// Banner: waar de loader op een standaardwaarde terugviel (sheet niet
+// leesbaar, lege OEE, onleesbaar getal). De cijfers zijn daardoor niet fout
+// maar rusten op een aanname die de planner moet kennen.
+function _renderLoadWarningsBanner() {
+    const banner = document.getElementById('loadWarningsBanner');
+    if (!banner) return;
+    const warnings = state.loadWarnings || [];
+    if (!warnings.length) { banner.style.display = 'none'; return; }
+    const line = w => `<b>${escapeHtml(w.source || '')}:</b> ${escapeHtml(w.message || '')}`;
+    const shown = warnings.slice(0, 5).map(line).join('<br>');
+    const rest = warnings.length > 5
+        ? `<div class="mt-1 text-xs" title="${escapeHtml(warnings.slice(5).map(w => `${w.source}: ${w.message}`).join('\n'))}">en nog ${warnings.length - 5} waarschuwing(en) &#9432;</div>`
+        : '';
+    banner.innerHTML = `&#9888; <b>Bij het inlezen:</b><div class="mt-1 text-xs">${shown}</div>${rest}`;
+    banner.style.display = '';
+}
+
         notify(`${material} ${verb}${data.version ? ' (versie ' + data.version + ')' : ''}. Vul prijs/inrichting aan in de masterdata-grid en herbereken om het door te voeren.`, 'info', 7000);
         // Banner meteen bijwerken: dit materiaal is afgehandeld.
         state.masterConsistency = (state.masterConsistency || []).filter(w => w.material !== material);
@@ -3387,6 +3405,7 @@ async function loadResults() {
     loadComments();
 }
 
+    state.loadWarnings = data.load_warnings || [];
 /* ===== VALUE PLANNING ===== */
 async function loadValueResults() {
     try {
@@ -9229,6 +9248,7 @@ function renderPlanningTable(results, periods) {
                 ? ` data-tt-orig="${esc(ttOrig)}" data-tt-new="${esc(ttNew)}" data-tt-delta="${esc(ttDelta)}"`
                 : '';
             if (!manualEdit && key in previousValues) {
+    _renderLoadWarningsBanner();
                 const prevV = Number(previousValues[key] || 0);
                 if (Math.abs(val - prevV) > 0.0001) {
                     const cascDir = val > prevV ? 'up' : 'down';
