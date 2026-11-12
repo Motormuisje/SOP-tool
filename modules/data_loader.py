@@ -91,7 +91,12 @@ class DataLoader:
         # to materials the master does not (actively) know. Populated by
         # _check_master_consistency() on every load.
         self.master_consistency_warnings: List[dict] = []
-        
+        # Data-quality findings from loading that used to reach the console
+        # only: a sheet that could not be read, a cell that fell back to a
+        # default. Recording them changes no number; the planner now sees on
+        # which assumptions the run rests (BUGS.md L4).
+        self.load_warnings: List[dict] = []
+
         # Financial data (NEW)
         self.sales_prices: Dict[str, SalesPriceItem] = {}
         self.material_costs: Dict[str, RawMaterialCost] = {}
@@ -268,6 +273,24 @@ class DataLoader:
             self.sap_number_warnings.append((context, text))
             return default
 
+    def _warn_load(self, source: str, message: str, echo: bool = True) -> None:
+        """Record a load warning for the UI and echo it to the console.
+
+        `source` names the sheet or dataset, `message` is user-facing Dutch.
+        Recording never changes a number: every caller keeps the fallback it
+        already had.
+        """
+        # getattr: loaders built without __init__ (store hydration, tests)
+        # must not fail on the very path that reports a problem.
+        warnings = getattr(self, 'load_warnings', None)
+        if warnings is None:
+            warnings = self.load_warnings = []
+        entry = {'source': source, 'message': message}
+        if entry not in warnings:
+            warnings.append(entry)
+        if echo:
+            print(f"  >> WAARSCHUWING [{source}]: {message}")
+
     def _report_sap_number_warnings(self, where: str):
         if not self.sap_number_warnings:
             return
@@ -275,6 +298,10 @@ class DataLoader:
               f"treated as 0 — check the export formatting:")
         for ctx, raw in self.sap_number_warnings[:5]:
             print(f"    {ctx}: {raw!r}")
+        examples = ', '.join(f"{ctx} = {raw!r}" for ctx, raw in self.sap_number_warnings[:3])
+        self._warn_load(where, (
+            f"{len(self.sap_number_warnings)} getalcel(len) niet leesbaar en als 0 gerekend "
+            f"(bijv. {examples}). Controleer de opmaak van de export."))
 
     def _load_config(self):
         try:
@@ -322,9 +349,15 @@ class DataLoader:
             if self.purchased_and_produced:
                 print(f"  PurchasedAndProduced: {self.purchased_and_produced}")
         except Exception as e:
-            print(f"  Config warning: {e}")
-            self.config = PlanningConfig(initial_date=datetime(2025, 12, 1))
-            self.periods = self.config.get_periods()
+            # The Config sheet fixes the site, the start month and the forecast
+            # anchor. The old fallback (December 2025, NLX1) never produced a
+            # run on this path anyway: it left forecast_actuals_months unset
+            # and the engine died on an AttributeError (BUGS.md M2). Say what
+            # is wrong instead of planning on invented anchors.
+            raise ValueError(
+                "Config-sheet ontbreekt of is onleesbaar; zonder site, startmaand en "
+                f"ForecastActualsMonths kan er niet gerekend worden ({type(e).__name__}: {e})"
+            ) from e
 
     def _apply_config_overrides(self, pap_replace: bool = False):
         """Apply global config overrides on top of what was read from the xlsm Config sheet."""
@@ -425,6 +458,9 @@ class DataLoader:
         except Exception as e:
             print(f"  FTE config warning: {e}")
             self.shift_hours = {'3-shift system': 520}
+            self._warn_load('FTE', (
+                "FTE-sheet niet (volledig) gelezen; ploeguren rekenen met de standaard van "
+                f"520 uur per maand in 3-ploegendienst. Oorzaak: {type(e).__name__}: {e}"))
 
     def _load_materials(self):
         df = pd.read_excel(self.excel_file, sheet_name='Material master')
@@ -654,7 +690,18 @@ class DataLoader:
                         last_avail = avail[ps]
                     else:
                         avail[ps] = last_avail
-            oee = float(row.get('OEE (%)', 0.8))
+            oee_raw = row.get('OEE (%)', 0.8)
+            if pd.notna(oee_raw):
+                oee = float(oee_raw)
+            else:
+                # A blank cell used to load as NaN. Every capacity formula
+                # guards with `oee > 0`, so the hours were already computed as
+                # if OEE were 100% — but the NaN itself reached the machines
+                # JSON (not valid JSON) and the reset baseline. Keep the
+                # numbers, drop the NaN, and tell the planner (BUGS.md M3).
+                oee = 1.0
+                self._warn_load('OEE + Machine groups', (
+                    f"OEE ontbreekt voor machine {mc}; gerekend met 100%."))
             if oee > 1:
                 oee = oee / 100
             mg = str(row.get('Machine group', '')) if pd.notna(row.get('Machine group')) else None
@@ -662,6 +709,15 @@ class DataLoader:
             if mc in self.config.unlimited_capacity_machine:
                 ss = ShiftSystem.UNLIMITED
             mid = str(row.get('MachineID', mc))
+            if mc in self.machines:
+                # Detection only (BUGS.md L5): the last row still wins for the
+                # machine itself and the group still lists the code once per
+                # row, exactly as before. Whether a double row should count
+                # once is a question for the source workbook, not the loader.
+                self._warn_load('OEE + Machine groups', (
+                    f"Machine {mc} staat meer dan één keer in de sheet; de laatste rij "
+                    "bepaalt OEE en beschikbaarheid en de machine telt per rij mee in "
+                    "haar groep. Verwijder de dubbele rij in de bron."))
             self.machines[mc] = Machine(
                 machine_id=mid, machine_code=mc, name=str(row.get('Machine name', mc)),
                 oee=oee, machine_group=mg if mg != 'nan' else None,
@@ -1023,6 +1079,7 @@ class DataLoader:
         print(f"  Safety stock: {len(self.safety_stock)} configs")
 
     def _load_purchase_sheet(self):
+        unreadable: List[str] = []
         try:
             df = pd.read_excel(self.excel_file, sheet_name='Purchase sheet', header=None)
             for i in range(1, len(df)):
@@ -1034,6 +1091,7 @@ class DataLoader:
                     lt_val = int(float(lt)) if pd.notna(lt) else 1
                 except (ValueError, TypeError):
                     lt_val = 1
+                    unreadable.append(f"levertijd {mn} = {lt!r}")
                 self.purchase_lead_times[mn] = lt_val
                 self.purchase_sheet_materials.add(mn)
                 moq = df.iloc[i, 7]
@@ -1041,10 +1099,18 @@ class DataLoader:
                     moq_val = float(moq) if pd.notna(moq) and float(moq) > 0 else 1.0
                 except (ValueError, TypeError):
                     moq_val = 1.0
+                    unreadable.append(f"MOQ {mn} = {moq!r}")
                 self.purchase_moq[mn] = moq_val
             print(f"  Purchase sheet: {len(self.purchase_lead_times)} lead times")
+            if unreadable:
+                self._warn_load('Purchase sheet', (
+                    f"{len(unreadable)} waarde(n) niet leesbaar en op 1 gezet "
+                    f"(bijv. {', '.join(unreadable[:3])})."))
         except Exception as e:
             print(f"  Purchase sheet warning: {e}")
+            self._warn_load('Purchase sheet', (
+                "Sheet niet (volledig) gelezen; ontbrekende levertijden en MOQ-waarden "
+                f"rekenen met de standaardwaarde. Oorzaak: {type(e).__name__}: {e}"))
 
     def get_purchase_moq(self, mat_num: str) -> float:
         return self.purchase_moq.get(mat_num, 1.0)
@@ -1091,6 +1157,9 @@ class DataLoader:
             print(f"  Purchase actuals: {len(self.purchase_actuals)} materials, {len(period_cols)} periods")
         except Exception as e:
             print(f"  Purchase actuals warning: {e}")
+            self._warn_load('Purchase sheet', (
+                "Inkoop-actuals niet (volledig) gelezen; bevroren maanden zonder actual "
+                f"rekenen met 0. Oorzaak: {type(e).__name__}: {e}"))
 
     def _calculate_bom_levels(self):
         parent_to_children = defaultdict(set)
@@ -1150,6 +1219,11 @@ class DataLoader:
             self.bom_cycle_warnings.append(cycle)
             print(f"  >> WAARSCHUWING: BOM-cyclus in werkboek: {' -> '.join(cycle)} "
                   f"— afhankelijke vraag kan onvolledig doorrekenen.")
+            # Via the class: this method is also called on duck-typed data
+            # objects (overlay tests, store hydration) that are not DataLoaders.
+            DataLoader._warn_load(self, 'BOM', (
+                f"BOM-cyclus in het werkboek: {' -> '.join(cycle)}. De afhankelijke vraag "
+                "kan onvolledig doorrekenen; herstel de stuklijst in de bron."), echo=False)
 
     def get_materials_at_level(self, level):
         # DETERMINISM FIX: sort to guarantee stable iteration across runs
