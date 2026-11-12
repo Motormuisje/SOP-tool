@@ -74,7 +74,11 @@ def replay_pending_edits(
         recalculate_fte_results(engine, sess)
         return
 
-    for key, edit in pending.items():
+    # Iterate a copy: apply_volume_change pops the key of an edit that turns
+    # out to equal the fresh engine's value (e.g. once the same value became
+    # master data). On the live dict that raised "dictionary changed size
+    # during iteration" outside the try below and failed the whole rebuild.
+    for key, edit in list(pending.items()):
         try:
             parts = key.split('||')
             if len(parts) != 4:

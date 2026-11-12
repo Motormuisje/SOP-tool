@@ -47,6 +47,33 @@ def derive_override_stores(pending_edits: dict) -> tuple[dict, dict]:
     return capacity, inventory
 
 
+def _scenario_valuation_params(current_engine, global_config: dict) -> dict:
+    """Valuation parameters of the engine a scenario is saved from; the
+    global mirror only when the engine carries none."""
+    vp = getattr(getattr(current_engine, 'data', None), 'valuation_params', None)
+    if vp is None:
+        return {str(k): float(v) for k, v in (global_config.get('valuation_params') or {}).items()}
+    return {
+        '1': float(vp.direct_fte_cost_per_month),
+        '2': float(vp.indirect_fte_cost_per_month),
+        '3': float(vp.overhead_cost_per_month),
+        '4': float(vp.sga_cost_per_month),
+        '5': float(vp.depreciation_per_year),
+        '6': float(vp.net_book_value),
+        '7': float(vp.days_sales_outstanding),
+        '8': float(vp.days_payable_outstanding),
+    }
+
+
+def _scenario_pap(current_engine, global_config: dict, format_pap) -> str:
+    """PAP split of the engine a scenario is saved from, in the config-string
+    form scenarios store; the global mirror only when the engine has none."""
+    pap = getattr(getattr(current_engine, 'data', None), 'purchased_and_produced', None)
+    if not isinstance(pap, dict):
+        return global_config.get('purchased_and_produced', '')
+    return format_pap(pap)
+
+
 def _added_products_warnings(sc: dict, sess: dict) -> list:
     """Dutch warnings when a scenario's dynamic products no longer match the
     session's. Loading does not restore products (that would be a structural
@@ -182,8 +209,14 @@ def create_scenarios_blueprint(
             'value_results': value_snapshot,
             'pending_edits': pending_snapshot,
             'value_aux_overrides': json.loads(json.dumps(active_session.get('value_aux_overrides', {}))),
-            'valuation_params': {str(k): float(v) for k, v in (global_config.get('valuation_params') or {}).items()},
-            'purchased_and_produced': global_config.get('purchased_and_produced', ''),
+            # VP en PAP uit de ENGINE waarvan hierboven de resultaten zijn
+            # vastgelegd, niet uit de globale spiegel: die loopt achter na het
+            # verwijderen van de actieve instantie en na upload+bereken, en
+            # dan bewaarde het scenario de VP/PAP van een ándere instantie
+            # (laden schreef ze vervolgens in deze engine; BUGS.md M14).
+            'valuation_params': _scenario_valuation_params(current_engine, global_config),
+            'purchased_and_produced': _scenario_pap(
+                current_engine, global_config, format_purchased_and_produced),
             # Machine-overrides (OEE, beschikbaarheid, ploeguren) horen bij de
             # scenario-staat: zonder dit veld gaven twee scenario's na een
             # herbouw dezelfde capaciteit, want de overrides bleven van de

@@ -6,6 +6,7 @@ apply_volume_change. This keeps this module as route orchestration only.
 
 import io
 import json
+import math
 import uuid
 from datetime import datetime
 from typing import Callable
@@ -15,6 +16,23 @@ from flask import Blueprint, jsonify, request, send_file
 from modules.models import LineType
 from ui.pending_edits import trim_stack_group_aware
 from ui.volume_change import recalculate_capacity_and_values
+
+
+def _finite_number(value):
+    """float(value), or None when it is not a finite number. A malformed
+    value used to raise inside the route (an HTML 500); NaN or infinity was
+    accepted and ran through the cascade."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _response_status(response) -> int:
+    if isinstance(response, tuple):
+        return int(response[1])
+    return int(getattr(response, 'status_code', 200))
 
 
 def _engine_state_response(current_engine, extra: dict | None = None) -> dict:
@@ -88,7 +106,9 @@ def create_edits_blueprint(
         material_number = data.get('material_number')
         period = data.get('period')
         aux_column = str(data.get('aux_column', '') or '')
-        new_value = float(data.get('new_value', 0))
+        new_value = _finite_number(data.get('new_value', 0))
+        if new_value is None:
+            return jsonify({'error': 'new_value must be a finite number'}), 400
 
         return apply_volume_change(
             sess,
@@ -211,23 +231,60 @@ def create_edits_blueprint(
         """Re-apply a batch of undo/redo entries and return one combined
         response. Single edits keep returning apply_volume_change's own
         response (preserving edit_meta for the caller). Grouped entries
-        defer the whole-plan capacity+value recalc to one final pass."""
+        defer the whole-plan capacity+value recalc to one final pass.
+
+        Returns ``(response, failed)``: the entries apply_volume_change
+        refused (4xx — the row no longer exists after a rebuild or PAP
+        change). The caller keeps those off the opposite stack."""
         if len(entries) == 1:
             e = entries[0]
-            return apply_volume_change(
+            response = apply_volume_change(
                 sess, current_engine,
                 e['line_type'], e['material_number'], e['period'],
                 e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
             )
+            return response, ([e] if _response_status(response) >= 400 else [])
+        failed = []
+        first_error = None
         for e in entries:
-            apply_volume_change(
+            response = apply_volume_change(
                 sess, current_engine,
                 e['line_type'], e['material_number'], e['period'],
                 e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
                 defer_recalc=True,
             )
+            if _response_status(response) >= 400:
+                failed.append(e)
+                first_error = first_error or response
         recalculate_capacity_and_values(current_engine, sess)
-        return jsonify(_engine_state_response(current_engine, {'group_size': len(entries)}))
+        if len(failed) == len(entries):
+            return first_error, failed
+        extra = {'group_size': len(entries)}
+        if failed:
+            extra['skipped'] = len(failed)
+        return jsonify(_engine_state_response(current_engine, extra)), failed
+
+    def _move_group(sess, current_engine, from_stack, to_stack, value_key, forward):
+        """Undo or redo one step. The stacks follow the ENGINE: an entry moves
+        to the opposite stack only once it has really been applied.
+
+        Before, the entry was moved first and applied second, so a refused
+        entry (its row gone after a rebuild) still landed on the opposite
+        stack; redo then failed the same way and moved it back, for ever
+        (BUGS.md M21). A refused entry can never be applied again, so it is
+        dropped and the error is returned; the rest of a bulk group is kept.
+        An unexpected exception leaves both stacks as they were."""
+        entries = _pop_group(from_stack)
+        ordered = list(reversed(entries)) if forward else entries
+        try:
+            response, failed = _apply_entries(sess, current_engine, ordered, value_key)
+        except Exception:
+            from_stack.extend(reversed(entries))
+            raise
+        failed_ids = {id(e) for e in failed}
+        to_stack.extend(e for e in entries if id(e) not in failed_ids)
+        trim_stack_group_aware(to_stack)
+        return response
 
     @bp.route('/api/undo', methods=['POST'])
     def undo_edit():
@@ -239,12 +296,9 @@ def create_edits_blueprint(
         if not undo_stack:
             return jsonify({'error': 'Nothing to undo'}), 400
 
-        entries = _pop_group(undo_stack)
-        redo_stack.extend(entries)
-        trim_stack_group_aware(redo_stack)
         # Reverting applies old_values in stack (reverse) order so cells that
         # share a material unwind to the true pre-bulk state.
-        return _apply_entries(sess, current_engine, entries, 'old_value')
+        return _move_group(sess, current_engine, undo_stack, redo_stack, 'old_value', forward=False)
 
     @bp.route('/api/redo', methods=['POST'])
     def redo_edit():
@@ -256,11 +310,8 @@ def create_edits_blueprint(
         if not redo_stack:
             return jsonify({'error': 'Nothing to redo'}), 400
 
-        entries = _pop_group(redo_stack)
-        undo_stack.extend(entries)
-        trim_stack_group_aware(undo_stack)
         # Reapply in forward (application) order.
-        return _apply_entries(sess, current_engine, list(reversed(entries)), 'new_value')
+        return _move_group(sess, current_engine, redo_stack, undo_stack, 'new_value', forward=True)
 
     @bp.route('/api/update_volume_bulk', methods=['POST'])
     def update_volume_bulk():

@@ -102,9 +102,22 @@ def recalc_one_material(
     override_target_stock_values=None,
     override_initial_stock=None,
     preserve_l05=True,
+    inventory_overrides=None,
 ):
     """Recalculate inventory + BOM for one material. Updates results in-place.
-    Returns {child_mat: child_period_demand} so the caller can cascade further."""
+    Returns {child_mat: child_period_demand} so the caller can cascade further.
+
+    ``inventory_overrides`` is the session's L4 starting-stock store
+    (``{material_number: float}``). A material that carries an edited starting
+    stock keeps it through every later recalculation, whatever triggered it:
+    its own forecast/target/plan edit, a parent's plan, a PAP change. Without
+    it the stock fell back to the workbook value while the cell kept its edit
+    marker (BUGS.md M18). An explicit ``override_initial_stock`` still wins;
+    that is the L4 edit itself, including its revert."""
+    if override_initial_stock is None and inventory_overrides:
+        _stored_stock = inventory_overrides.get(mat)
+        if _stored_stock is not None:
+            override_initial_stock = float(_stored_stock)
     fc_row = next(
         (r for r in current_engine.results.get(LineType.DEMAND_FORECAST.value, [])
          if r.material_number == mat), None
@@ -262,11 +275,13 @@ def recalc_material_subtree(
     root_override_target_stock_values=None,
     override_initial_stock=None,
     preserve_root_l05=True,
+    inventory_overrides=None,
 ):
     """Recalculate one edited material and recursively all impacted descendants.
 
-    ``override_initial_stock`` (scalar) is applied to the ROOT material only —
-    descendants always use their own stock_levels from data.
+    ``override_initial_stock`` (scalar) is applied to the ROOT material only.
+    Descendants use their own starting stock: the edited one from
+    ``inventory_overrides`` when the session has it, else stock_levels.
     """
     from modules.inventory_engine import InventoryEngine
     from modules.bom_engine import BOMEngine
@@ -286,6 +301,7 @@ def recalc_material_subtree(
         override_target_stock_values=root_override_target_stock_values,
         override_initial_stock=override_initial_stock,
         preserve_l05=preserve_root_l05,
+        inventory_overrides=inventory_overrides,
     )
 
     queue = list(root_children.keys())
@@ -303,6 +319,7 @@ def recalc_material_subtree(
             periods_list,
             override_forecast=False,
             preserve_l05=True,
+            inventory_overrides=inventory_overrides,
         )
         queue.extend(gc for gc in grandchildren if gc not in visited)
 
@@ -507,6 +524,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             override_root_forecast=False,
             root_override_target_stock_values=target_stock_values,
             preserve_root_l05=True,
+            inventory_overrides=sess.get('inventory_overrides'),
         )
         if not defer_recalc:
             recalculate_capacity_and_values(current_engine, sess)
@@ -518,6 +536,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             override_root_forecast=True,
             root_override_target_stock=None,
             preserve_root_l05=True,
+            inventory_overrides=sess.get('inventory_overrides'),
         )
         if not defer_recalc:
             recalculate_capacity_and_values(current_engine, sess)
@@ -556,6 +575,10 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
                 for p in periods_list:
                     dep_demand_agg[p] = dep_demand_agg.get(p, 0.0) + r.values.get(p, 0.0)
 
+        _inventory_overrides = sess.get('inventory_overrides') or {}
+        _stored_initial_stock = _inventory_overrides.get(material_number)
+        if _stored_initial_stock is not None:
+            _stored_initial_stock = float(_stored_initial_stock)
         inv_result = inv_eng.calculate_for_material(
             material_number,
             forecast_vals,
@@ -564,6 +587,9 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             override_target_stock_values=dict(l05_row.values) if l05_row else None,
             fixed_production_plan=fixed_manual_values(prod_row),
             fixed_purchase_receipt=fixed_manual_values(purch_row),
+            # An edited starting stock survives a plan edit on the same
+            # material (BUGS.md M18); None keeps the workbook stock.
+            override_initial_stock=_stored_initial_stock,
         )
 
         inv_line_types = [
@@ -644,6 +670,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
                 bom_eng,
                 periods_list,
                 override_forecast=False,
+                inventory_overrides=_inventory_overrides,
             )
             queue.extend(gc for gc in grandchildren if gc not in visited)
 
@@ -671,6 +698,7 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
             material_number,
             override_initial_stock=float(new_value),
             preserve_root_l05=True,
+            inventory_overrides=sess.get('inventory_overrides'),
         )
         if not defer_recalc:
             recalculate_capacity_and_values(current_engine, sess)

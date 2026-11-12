@@ -2,7 +2,19 @@
 
 from flask import Blueprint, jsonify, request
 
+import math
+
 from ui.pending_edits import canonical_pending_edit_key
+
+
+def _finite_number(value):
+    """float(value), or None when it is not a finite number (the route then
+    answers 400 instead of raising a 500)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def create_edit_state_blueprint(
@@ -26,8 +38,10 @@ def create_edit_state_blueprint(
         key = canonical_pending_edit_key(req.get('key', ''))
         if not key:
             return jsonify({'error': 'Cell key required'}), 400
-        original = float(req.get('original', 0))
-        new_value = float(req.get('new_value', 0))
+        original = _finite_number(req.get('original', 0))
+        new_value = _finite_number(req.get('new_value', 0))
+        if original is None or new_value is None:
+            return jsonify({'error': 'original and new_value must be finite numbers'}), 400
         pending = sessions[session_id].setdefault('pending_edits', {})
         if abs(new_value - original) < 0.0001:
             pending.pop(key, None)
@@ -46,11 +60,20 @@ def create_edit_state_blueprint(
         edits = req.get('edits', {})
         if not isinstance(edits, dict):
             return jsonify({'error': 'edits must be an object'}), 400
-        sessions[session_id]['pending_edits'] = {
-            key: {'original': float(value.get('original', 0)), 'new_value': float(value.get('new_value', 0))}
-            for key, value in edits.items()
-            if isinstance(value, dict)
-        }
+        # Validate everything before replacing the store: a half-built dict
+        # must never overwrite the session's edits. Keys go through the same
+        # canonical form as /persist, so one cell cannot end up under two
+        # keys (the stale one resurrected an undone edit after a restart).
+        synced = {}
+        for key, value in edits.items():
+            if not isinstance(value, dict):
+                continue
+            original = _finite_number(value.get('original', 0))
+            new_value = _finite_number(value.get('new_value', 0))
+            if original is None or new_value is None:
+                return jsonify({'error': f'edit "{key}" has a non-numeric value'}), 400
+            synced[canonical_pending_edit_key(key)] = {'original': original, 'new_value': new_value}
+        sessions[session_id]['pending_edits'] = synced
         save_sessions_to_disk()
         return jsonify({'success': True})
 

@@ -240,8 +240,11 @@ def install_clean_engine_baseline(
     _src = getattr(engine, '_resolved_master_source', None)
     if _src is not None:
         _src.apply_to_session(sess)
-    # A fresh calculate invalidates stale machine undo history.
+    # A fresh calculate invalidates stale machine undo AND redo history: a
+    # surviving redo entry re-applied an OEE/availability/shift value from
+    # before the calculate and persisted it as an override (BUGS.md L12).
     sess['machine_undo'] = []
+    sess['machine_redo'] = []
     if clear_machine_overrides:
         sess['machine_overrides'] = {}
         # Actieve combinaties (F2-CF) zijn dezelfde soort wat-als-capaciteit

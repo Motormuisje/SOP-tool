@@ -1,5 +1,6 @@
 """Purchased-and-produced material split routes."""
 
+import math
 from typing import Callable
 
 from flask import Blueprint, jsonify, request
@@ -73,6 +74,11 @@ def create_pap_blueprint(
             fraction = float(fraction)
         except (TypeError, ValueError):
             return jsonify({'error': 'fraction must be a number'}), 400
+        # A share of own production: 0..1. Typing 50 for 50% planned
+        # production at fifty times the need and turned the raw-material cost
+        # negative; NaN ran through the whole plan (BUGS.md L13).
+        if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+            return jsonify({'error': 'fraction must be between 0 and 1 (0.8 = 80% eigen productie)'}), 400
 
         ensure_reset_baseline(sess, current_engine)
         current_engine.data.purchased_and_produced[mat] = fraction

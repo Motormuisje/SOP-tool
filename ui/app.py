@@ -6,6 +6,7 @@ import sys
 import io
 import os
 import contextlib
+import functools
 import threading
 
 from ui.parsers import (
@@ -556,7 +557,18 @@ def _set_active_session_id(session_id):
 # ---- Prod/Purch Split endpoints ----
 
 def _recalc_pap_material(current_engine, material_number):
-    _recalc_pap_material_impl(current_engine, material_number, recalc_one_material)
+    # A PAP change recalculates the material and its BOM subtree. Edited
+    # starting stocks of the session that owns this engine must survive that,
+    # like any other recalculation (BUGS.md M18).
+    owner = next((s for s in sessions.values() if s.get('engine') is current_engine), None)
+    if owner is None:
+        owner = sessions.get(active_session_id) if active_session_id else None
+    inventory_overrides = (owner or {}).get('inventory_overrides') or {}
+    _recalc_pap_material_impl(
+        current_engine,
+        material_number,
+        functools.partial(recalc_one_material, inventory_overrides=inventory_overrides),
+    )
 
 def _finish_pap_recalc(current_engine):
     sess = sessions.get(active_session_id) if active_session_id else None

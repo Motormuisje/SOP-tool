@@ -4,6 +4,7 @@ import contextlib
 from datetime import datetime
 import io
 import json
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -248,6 +249,17 @@ def create_config_blueprint(
             if not isinstance(data['purchased_and_produced'], str):
                 return jsonify({'error': 'purchased_and_produced moet een tekstwaarde zijn.'}), 400
             pap_str = data['purchased_and_produced'].strip()
+            # Zelfde grens als /api/pap en de masterdata-grid: een aandeel
+            # eigen productie ligt tussen 0 en 1. Vóór elke mutatie afkeuren,
+            # anders rekent het hele plan met 50 i.p.v. 0,5 of met NaN.
+            _bad_pap = [
+                f'{mat}:{frac}' for mat, frac in parse_purchased_and_produced(pap_str).items()
+                if not math.isfinite(frac) or not 0.0 <= frac <= 1.0
+            ]
+            if _bad_pap:
+                return jsonify({'error': (
+                    'Aandeel eigen productie moet tussen 0 en 1 liggen (0.8 = 80%): '
+                    + ', '.join(_bad_pap[:5]))}), 400
         vp_parsed = None
         if 'valuation_params' in data:
             try:
