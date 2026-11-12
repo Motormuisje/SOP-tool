@@ -1,0 +1,33 @@
+# Exact runtime environment on which the full test suite (golden numbers and
+# browser tests included) was run: Python 3.10.11 on Windows, 2026-11-12.
+#
+#     pip install -r requirements-lock.txt
+#
+# Use this for an installation that must reproduce the tested environment.
+# requirements.txt gives the supported ranges instead. When a dependency is
+# upgraded: run the full suite on the new set first, then update this file.
+blinker==1.9.0
+click==8.3.2
+colorama==0.4.6
+contourpy==1.3.2
+cycler==0.12.1
+et_xmlfile==2.0.0
+Flask==3.1.3
+fonttools==4.61.1
+itsdangerous==2.2.0
+Jinja2==3.1.6
+kiwisolver==1.4.9
+MarkupSafe==2.1.5
+matplotlib==3.10.8
+numpy==1.26.4
+openpyxl==3.1.5
+packaging==26.0
+pandas==2.3.3
+pillow==12.0.0
+pyarrow==23.0.1
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+pytz==2026.1.post1
+six==1.17.0
+tzdata==2025.3
+Werkzeug==3.1.8

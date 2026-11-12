@@ -11,7 +11,7 @@ scherm ziet kloppen met wat de engines berekend hebben.
 ## 1. Eenmalige installatie
 
 ```powershell
-pip install -r requirements.txt          # bevat playwright + pytest-playwright
+pip install -r requirements-dev.txt      # pytest, playwright en pytest-playwright
 python -m playwright install chromium    # haalt de browser zelf op (~120 MB)
 ```
 

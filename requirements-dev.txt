@@ -1,3 +1,15 @@
-pytest>=8.0.0
-pre-commit>=3.5.0
-pytest-cov>=4.0.0
+# Test tooling. Not needed to run the tool; a planner's machine installs
+# requirements.txt (or requirements-lock.txt) only.
+-r requirements.txt
+
+pytest>=8.0,<10
+pytest-cov>=4.0
+pre-commit>=3.5
+
+# Browser tests (docs/browsertests.md). After installing:
+#     python -m playwright install chromium
+# 1.45 is the first release with page.clock, which the workbench tests use to
+# freeze the browser date.
+playwright>=1.45
+pytest-playwright>=0.5
+requests>=2.31
