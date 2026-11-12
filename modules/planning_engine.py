@@ -163,9 +163,17 @@ class PlanningEngine:
 
         # VBA DefineVariables line 3443 sets end column from ForecastMonths only:
         # PlanningEndForecastClmn = PlanningStartForecastClmn + ForecastMonths - 1
-        total_horizon = self.months_forecast
-        self.data.config.forecast_months = total_horizon
-        print(f"  >> horizon override: {total_horizon} forecast periods")
+        if (self.months_forecast or 0) > 0:
+            total_horizon = self.months_forecast
+            self.data.config.forecast_months = total_horizon
+            print(f"  >> horizon override: {total_horizon} forecast periods")
+        else:
+            # A zero or missing horizon used to overwrite the Config value with
+            # 0 before the fallback below could read it: an empty run with no
+            # error (BUGS.md L1). Without a horizon of its own the run keeps
+            # the ForecastMonths of the Config sheet.
+            print(f"  >> horizon from Config sheet: "
+                  f"{self.data.config.forecast_months} forecast periods")
 
         # Regenerate periods once — after both start-date and length are finalised.
         self.data.periods = self.data.config.get_periods()
@@ -193,7 +201,7 @@ class PlanningEngine:
         # VBA: ForecastStartClmn = ForecastActualStartClmn + ForecastActualsMonths + 1
         # ForecastActualsMonths is always the ORIGINAL Config value — never shifted.
         actuals_months = self.data.forecast_actuals_months
-        forecast_months = self.months_forecast if self.months_forecast > 0 else self.data.config.forecast_months
+        forecast_months = self.months_forecast if (self.months_forecast or 0) > 0 else self.data.config.forecast_months
         print(f"  >> USING: actuals_months={actuals_months}, forecast_months={forecast_months}")
         forecast_engine = ForecastEngine(self.data, actuals_months, forecast_months)
         forecast_rows = forecast_engine.calculate()
