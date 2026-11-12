@@ -760,7 +760,7 @@
                   <div style="font-size:18px;margin-bottom:5px">&#128450;</div>
                   Sleep BOM, Routing, Stock en Forecast bestanden hier samen naartoe
                   <label style="display:block;cursor:pointer;color:#3b82f6;font-size:11px;text-decoration:underline;margin-top:5px">of kies meerdere bestanden
-                    <input type="file" accept=".xlsx,.xlsm,.xls" class="hidden" id="multiAutoFileInput" multiple onchange="handleMultiBrowse(event)">
+                    <input type="file" accept=".xlsx,.xlsm" class="hidden" id="multiAutoFileInput" multiple onchange="handleMultiBrowse(event)">
                   </label>
                   <div id="multiDropFeedback" style="margin-top:6px;font-size:10px;color:#94a3b8">Bestandsnamen worden automatisch gekoppeld. Je kan ze hieronder nog aanpassen.</div>
                 </div>
@@ -777,19 +777,19 @@
               </div>
               <div style="margin-bottom:8px">
                 <label style="display:block;font-size:10px;color:#94a3b8;margin-bottom:3px;font-weight:600">BOM Extract</label>
-                <input type="file" accept=".xlsx,.xlsm,.xls" id="multiBomFile" style="font-size:10px;color:#cbd5e1;width:100%">
+                <input type="file" accept=".xlsx,.xlsm" id="multiBomFile" style="font-size:10px;color:#cbd5e1;width:100%">
               </div>
               <div style="margin-bottom:8px">
                 <label style="display:block;font-size:10px;color:#94a3b8;margin-bottom:3px;font-weight:600">Routing Extract</label>
-                <input type="file" accept=".xlsx,.xlsm,.xls" id="multiRoutingFile" style="font-size:10px;color:#cbd5e1;width:100%">
+                <input type="file" accept=".xlsx,.xlsm" id="multiRoutingFile" style="font-size:10px;color:#cbd5e1;width:100%">
               </div>
               <div style="margin-bottom:8px">
                 <label style="display:block;font-size:10px;color:#94a3b8;margin-bottom:3px;font-weight:600">Stock Extract</label>
-                <input type="file" accept=".xlsx,.xlsm,.xls" id="multiStockFile" style="font-size:10px;color:#cbd5e1;width:100%">
+                <input type="file" accept=".xlsx,.xlsm" id="multiStockFile" style="font-size:10px;color:#cbd5e1;width:100%">
               </div>
               <div style="margin-bottom:8px">
                 <label style="display:block;font-size:10px;color:#94a3b8;margin-bottom:3px;font-weight:600">Forecast Extract</label>
-                <input type="file" accept=".xlsx,.xlsm,.xls" id="multiForecastFile" style="font-size:10px;color:#cbd5e1;width:100%">
+                <input type="file" accept=".xlsx,.xlsm" id="multiForecastFile" style="font-size:10px;color:#cbd5e1;width:100%">
               </div>
               <button onclick="uploadMultiFiles()" style="width:100%;padding:6px;font-size:11px;cursor:pointer;border:none;border-radius:6px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;font-weight:600;margin-top:4px">Upload All</button>
             </div>
@@ -2202,7 +2202,9 @@ document.addEventListener('mouseup', function() {
     }
 });
 
-function log(msg) { const d = document.getElementById('log'); d.innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}\n`; d.scrollTop = d.scrollHeight; }
+// Text, never markup: log lines carry workbook and user strings (material
+// numbers, file and scenario names, server errors).
+function log(msg) { const d = document.getElementById('log'); if (!d) return; d.appendChild(document.createTextNode(`[${new Date().toLocaleTimeString()}] ${msg}\n`)); d.scrollTop = d.scrollHeight; }
 function _markAutoSaved() {
     const badge = document.getElementById('autosave-badge');
     const ts    = document.getElementById('autosave-time');
@@ -2282,8 +2284,11 @@ function updateHorizonDisplay() {
     // Primary: derive start/end from the actual periods array in the loaded results
     let startDate, endDate;
     if (periods && periods.length > 0) {
-        startDate = new Date(periods[0] + '-01');
-        endDate   = new Date(periods[periods.length - 1] + '-01');
+        // Local dates: new Date('YYYY-MM-01') is UTC midnight and shows the
+        // previous month in a timezone west of UTC (BUGS.md L22).
+        const _localMonth = p => { const [y, m] = String(p).split('-').map(Number); return new Date(y, m - 1, 1); };
+        startDate = _localMonth(periods[0]);
+        endDate   = _localMonth(periods[periods.length - 1]);
     } else {
         // Fallback: mathematical derivation from header fields (pmVal guaranteed set here)
         const [yr, mo] = pmVal.split('-').map(Number);
@@ -2806,7 +2811,14 @@ async function runCalc() {
 
     setBusy(true, 'Calculating...');
     log('Starting Python engine...');
-    // Reset client-side edit state before a fresh calculation
+    // Reset client-side edit state before a fresh calculation. Keep what was
+    // there: when Calculate fails the server still holds every edit, and a
+    // badge showing 0 edits would say otherwise (BUGS.md L20).
+    const _editStateBeforeCalc = {
+        cellEdits: state.cellEdits, valueAuxEdits: state.valueAuxEdits,
+        valueRowDeltas: state.valueRowDeltas, demandTurnoverDeltas: state.demandTurnoverDeltas,
+    };
+    const _restoreEditStateAfterFailedCalc = () => { Object.assign(state, _editStateBeforeCalc); updateEditBadge(); };
     state.cellEdits = {};
     state.valueAuxEdits = {};
     state.valueRowDeltas = {};
@@ -2821,7 +2833,7 @@ async function runCalc() {
             body: JSON.stringify({ planning_month: planningMonth, months_actuals: monthsActuals, months_forecast: monthsForecast })
         });
         const data = await res.json();
-        if (data.error) { notify(data.error, 'error', 4200); status('Error'); return; }
+        if (data.error) { _restoreEditStateAfterFailedCalc(); notify(data.error, 'error', 4200); status('Error'); return; }
         // Show engine output in Log tab
         const logEl = document.getElementById('log');
         if (logEl) logEl.innerHTML = '';
@@ -2886,7 +2898,7 @@ function _renderMasterConsistencyBanner() {
     if (missing.length && missing.length <= 10) {
         html += '<div class="mt-1">' + missing.map(w =>
             `<span class="mr-3 text-xs">${escapeHtml(w.material)} <i>(${escapeHtml((w.referenced_in || []).join(', '))})</i>`
-            + ` <button onclick="addMissingToMaster('${escapeHtml(w.material)}')" class="px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Voeg een minimaal masterrecord toe (of heractiveer); vul daarna prijs/inrichting aan in de masterdata-grid en herbereken.">+ masterdata</button></span>`
+            + ` <button onclick="addMissingToMaster('${_jsArg(w.material)}')" class="px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200" title="Voeg een minimaal masterrecord toe (of heractiveer); vul daarna prijs/inrichting aan in de masterdata-grid en herbereken.">+ masterdata</button></span>`
         ).join('') + '</div>';
     } else if (missing.length) {
         html += `<div class="mt-1 text-xs" title="${escapeHtml(missing.map(item).join('\n'))}">Te veel om los te tonen — zie de masterdata-grid. &#9432;</div>`;
@@ -2895,18 +2907,6 @@ function _renderMasterConsistencyBanner() {
     banner.style.display = '';
 }
 
-async function addMissingToMaster(material) {
-    try {
-        const res = await fetch('/api/master_data/materials/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ material })
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) { notify(data.error || 'Toevoegen mislukt.', 'error', 5000); return; }
-        const verb = data.action === 'reactivated' ? 'geheractiveerd'
-            : (data.action === 'already_active' ? 'stond al actief in de masterdata' : 'toegevoegd aan de masterdata');
-        notify(`${material} ${verb}${data.version ? ' (versie ' + data.version + ')' : ''}. Vul prijs/inrichting aan in de masterdata-grid en herbereken om het door te voeren.`, 'info', 7000);
 // Banner: waar de loader op een standaardwaarde terugviel (sheet niet
 // leesbaar, lege OEE, onleesbaar getal). De cijfers zijn daardoor niet fout
 // maar rusten op een aanname die de planner moet kennen.
@@ -2924,6 +2924,18 @@ function _renderLoadWarningsBanner() {
     banner.style.display = '';
 }
 
+async function addMissingToMaster(material) {
+    try {
+        const res = await fetch('/api/master_data/materials/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ material })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) { notify(data.error || 'Toevoegen mislukt.', 'error', 5000); return; }
+        const verb = data.action === 'reactivated' ? 'geheractiveerd'
+            : (data.action === 'already_active' ? 'stond al actief in de masterdata' : 'toegevoegd aan de masterdata');
+        notify(`${material} ${verb}${data.version ? ' (versie ' + data.version + ')' : ''}. Vul prijs/inrichting aan in de masterdata-grid en herbereken om het door te voeren.`, 'info', 7000);
         // Banner meteen bijwerken: dit materiaal is afgehandeld.
         state.masterConsistency = (state.masterConsistency || []).filter(w => w.material !== material);
         _renderMasterConsistencyBanner();
@@ -2938,7 +2950,7 @@ function _renderUomPlanBanner(uomSuspects) {
     if (!banner) return;
     if (!uomSuspects || uomSuspects.size === 0) { banner.style.display = 'none'; return; }
     const names = [...uomSuspects.values()].map(s => s.component_material).join(', ');
-    banner.innerHTML = `&#9878; <b>${uomSuspects.size} component(en) met eenheidsverdenking</b> (kg vs ton): ${names}. `
+    banner.innerHTML = `&#9878; <b>${uomSuspects.size} component(en) met eenheidsverdenking</b> (kg vs ton): ${escapeHtml(names)}. `
         + `De rijen zijn amber gemarkeerd; beoordeel het voorstel onder de regel '03. Total demand'. `
         + `<button onclick="openUomGuardModalFromServer()" class="ml-2 px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">Overzicht &amp; beheer</button>`;
     banner.style.display = '';
@@ -3035,14 +3047,14 @@ function renderUomGuardBody() {
         html += `<div class="mt-4 text-xs text-slate-400 font-semibold">Actieve conversies (worden bij elke import toegepast)</div>`;
         for (const [component, factor] of Object.entries(overrides)) {
             html += `<div class="text-xs text-slate-300 py-0.5">${escapeHtml(component)} &times; ${factor}
-                <button onclick="clearUomOverride('${escapeHtml(component)}')" class="ml-2 px-2 py-0.5 rounded bg-slate-700 hover:bg-red-700 text-slate-300" title="Conversie verwijderen en opnieuw beoordelen bij volgende berekening">verwijderen</button></div>`;
+                <button onclick="clearUomOverride('${_jsArg(component)}')" class="ml-2 px-2 py-0.5 rounded bg-slate-700 hover:bg-red-700 text-slate-300" title="Conversie verwijderen en opnieuw beoordelen bij volgende berekening">verwijderen</button></div>`;
         }
     }
     if (dismissed.length) {
         html += `<div class="mt-4 text-xs text-slate-400 font-semibold">Eerder beoordeeld als correct</div>`;
         for (const s of dismissed) {
             html += `<div class="text-xs text-slate-500 py-0.5">${escapeHtml(s.component_material)} ${escapeHtml(s.component_name || '')} (${_fmtUomRatio(s.max_ratio)} t/t)
-                <button onclick="clearUomOverride('${escapeHtml(s.component_material)}')" class="ml-2 px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300">opnieuw beoordelen</button></div>`;
+                <button onclick="clearUomOverride('${_jsArg(s.component_material)}')" class="ml-2 px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300">opnieuw beoordelen</button></div>`;
         }
     }
     if ((uom.recipe_warnings || []).length) {
@@ -3159,6 +3171,7 @@ async function loadResults() {
     // Master-consistency: transactionele data die naar onbekende of
     // gedeactiveerde materialen verwijst (de juni-2026-fout-klasse).
     state.masterConsistency = data.master_consistency || [];
+    state.loadWarnings = data.load_warnings || [];
     _syncCellEditsFromResults(state.results);
     // Pre-populate previousValues with pre-edit baseline so cascade highlights
     // are visible immediately after a session/instance (re)load.
@@ -3171,13 +3184,12 @@ async function loadResults() {
     loadComments();
 }
 
-    state.loadWarnings = data.load_warnings || [];
 /* ===== VALUE PLANNING ===== */
 async function loadValueResults() {
     try {
         const res = await fetch('/api/value_results');
         const data = await res.json();
-        if (data.error) { log('Value planning: ' + data.error); return; }
+        if (data.error) { log('Value planning: ' + data.error); _clearValuePlanningView(); return; }
         // Fresh dataset/session load: pre-populate VP cascade snapshot from
         // pre-edit baseline so highlights are visible after a session/instance reload.
         previousValuePlanningValues = {};
@@ -3193,7 +3205,42 @@ async function loadValueResults() {
         updateValueKPIs();
         _renderViewOrDefer('values');
         log('Value planning loaded: ' + state.consolidation.length + ' consolidation rows, ' + Object.values(state.valueResults).flat().length + ' total rows');
-    } catch (err) { log('Value planning error: ' + err); }
+    } catch (err) { log('Value planning error: ' + err); _clearValuePlanningView(); }
+}
+
+// This instance has no value results (not calculated, no financial sheets,
+// or the request failed). Leaving the state alone kept the PREVIOUS
+// instance's value table, consolidation and KPIs on screen under the new
+// instance's name (BUGS.md M24).
+function _clearValuePlanningView() {
+    state.valueResults = null;
+    state.valueLineTypes = [];
+    state.consolidation = [];
+    state.scopedConsolidation = null;
+    state.scopedInfo = null;
+    state.valueRowDeltas = {};
+    previousValuePlanningValues = {};
+    _showEmptyTable('vpBody', 'vpHead', 'vpRowCount', 10, 'Geen value planning voor deze instantie');
+    try { updateValueKPIs(); } catch (e) { /* tegels volgen bij de volgende geslaagde load */ }
+}
+
+function _showEmptyTable(bodyId, headId, countId, colspan, message) {
+    const body = document.getElementById(bodyId);
+    if (body) body.innerHTML = `<tr><td colspan="${colspan}" class="text-center p-4 text-slate-500">${escapeHtml(message)}</td></tr>`;
+    const head = document.getElementById(headId);
+    if (head) head.innerHTML = '';
+    const count = document.getElementById(countId);
+    if (count) count.textContent = '0';
+}
+
+// The active instance has no results yet (still warming, or never
+// calculated). Its name is already in the banner, so the previous
+// instance's rows must leave the screen (BUGS.md M23).
+function _showNoResultsYet(message) {
+    _clearTransientTableState();
+    _showEmptyTable('planBody', 'planHead', 'rowCount', 20, message);
+    _showEmptyTable('vpBody', 'vpHead', 'vpRowCount', 10, message);
+    state.dashboardDirty = true;
 }
 
 function loadValuePlanningData() {
@@ -4547,7 +4594,7 @@ function _renderChartAnalysisPanel(model) {
             ? ` <button type="button" onclick="event.stopPropagation();_analysisShowOneInPlanning('${escapeHtml(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button>`
             : '';
         return `
-        <tr ${r.drill ? `class="cursor-pointer hover:bg-slate-800" onclick="_analysisDrillComponent('${escapeHtml(r.drill)}')" title="Klik voor detail"` : ''}>
+        <tr ${r.drill ? `class="cursor-pointer hover:bg-slate-800" onclick="_analysisDrillComponent('${_jsArg(r.drill)}')" title="Klik voor detail"` : ''}>
             <td class="p-1 text-slate-300" style="word-break:break-word">${r.drill ? '▸ ' : ''}${escapeHtml(r.label)}${planBtn}</td>
             <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, model.rowUnit, model.decimals)}</td>
             <td class="p-1 text-right text-slate-400">${pct(r.delta)}</td>
@@ -5233,7 +5280,7 @@ async function _analysisDrillMachineProducts(mcCode, pA, pB) {
             .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
             .slice(0, 10);
         const rows = movers.map(r => `
-            <tr><td class="p-1 text-slate-300" style="word-break:break-word">${escapeHtml(r.label)} <button type="button" onclick="_analysisShowOneInPlanning('${escapeHtml(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button></td>
+            <tr><td class="p-1 text-slate-300" style="word-break:break-word">${escapeHtml(r.label)} <button type="button" onclick="_analysisShowOneInPlanning('${_jsArg(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button></td>
                 <td class="p-1 text-right whitespace-nowrap">${_analysisDeltaCell(r.delta, 'ton', 1)}</td></tr>`).join('');
         tableHost.innerHTML = `
             <button type="button" onclick="_analysisDrillBack()" class="text-xs text-indigo-400 hover:text-indigo-300 mb-2">&#8592; Terug naar grafiekanalyse</button>
@@ -6096,9 +6143,9 @@ function _renderMatGroupMenu() {
             </div>
             ${isActive
                 ? `<button onclick="deactivateMaterialGroup()" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white whitespace-nowrap">Deactiveer</button>`
-                : `<button onclick="activateMaterialGroup('${escapeHtml(g.id)}')" class="px-2 py-0.5 rounded text-xs bg-slate-600 hover:bg-emerald-700 text-white whitespace-nowrap" title="Toon in het hele programma alleen de bijdrage van deze groep">Maak actief</button>`}
-            <button onclick="renameMaterialGroup('${escapeHtml(g.id)}')" class="px-1.5 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300" title="Hernoem">&#9998;</button>
-            <button onclick="deleteMaterialGroup('${escapeHtml(g.id)}')" class="px-1.5 py-0.5 rounded text-xs bg-red-900 hover:bg-red-700 text-red-200" title="Verwijder">&#10005;</button>
+                : `<button onclick="activateMaterialGroup('${_jsArg(g.id)}')" class="px-2 py-0.5 rounded text-xs bg-slate-600 hover:bg-emerald-700 text-white whitespace-nowrap" title="Toon in het hele programma alleen de bijdrage van deze groep">Maak actief</button>`}
+            <button onclick="renameMaterialGroup('${_jsArg(g.id)}')" class="px-1.5 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-300" title="Hernoem">&#9998;</button>
+            <button onclick="deleteMaterialGroup('${_jsArg(g.id)}')" class="px-1.5 py-0.5 rounded text-xs bg-red-900 hover:bg-red-700 text-red-200" title="Verwijder">&#10005;</button>
         </div>`;
     }).join('') || '<div class="px-2 py-2 text-xs text-slate-500">Nog geen groepen — bewaar er een vanuit de grafiek-analyse.</div>';
 }
@@ -6361,7 +6408,7 @@ function openMachineDrilldown(mcCode) {
         <span class="text-xs text-slate-400">Effectieve doorzet instellen</span>
         <input id="drillThroughputInput" type="text" inputmode="decimal" placeholder="doel (huidig ${m.throughput_effective.toFixed(2)})"
                class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm w-32 text-slate-200">
-        <button type="button" onclick="applyDirectThroughput('${escapeHtml(m.code)}')"
+        <button type="button" onclick="applyDirectThroughput('${_jsArg(m.code)}')"
                 class="px-3 py-1 rounded text-sm bg-indigo-700 hover:bg-indigo-600 text-white">Toepassen</button>
         <span class="text-[10px] text-slate-500 italic">Past de OEE evenredig aan om de doeldoorzet te bereiken (automatische herberekening).</span>
     </div>`;
@@ -6425,7 +6472,7 @@ function _renderFinancialDeviation(data) {
             const title = `huidig ${fmtNum(m.current[p])} vs baseline ${fmtNum(m.baseline[p])}`;
             return `<td class="text-right p-1 font-mono ${cls}" title="${title}">${d ? (d > 0 ? '+' : '') + fmtNum(d) : '·'}</td>`;
         }).join('');
-        const onclick = m.source_line_type ? `onclick="drillFinancialMetric('${escapeHtml(m.name)}')"` : '';
+        const onclick = m.source_line_type ? `onclick="drillFinancialMetric('${_jsArg(m.name)}')"` : '';
         return `<tr class="${drillable}" ${onclick} title="${m.source_line_type ? 'Klik voor onderliggende regels' : 'Afgeleide metric'}">
             <td class="p-1 text-slate-300 sticky left-0 bg-slate-800">${escapeHtml(m.name)}${m.source_line_type ? ' <span class="text-[9px] text-indigo-400">▸</span>' : ''}</td>
             <td class="text-center p-1">${trendGlyph(m.trend)}</td>
@@ -8342,6 +8389,7 @@ function renderPlanningTable(results, periods) {
         .map(s => [String(s.component_material), s]));
     _renderUomPlanBanner(uomSuspects);
     _renderMasterConsistencyBanner();
+    _renderLoadWarningsBanner();
     let html = items.map(item => {
         const uomSus = uomSuspects.get(String(item.material_number));
         let isEdit = PLAN_EDITABLE.has(item.line_type);
@@ -8389,7 +8437,6 @@ function renderPlanningTable(results, periods) {
                 ? ` data-tt-orig="${esc(ttOrig)}" data-tt-new="${esc(ttNew)}" data-tt-delta="${esc(ttDelta)}"`
                 : '';
             if (!manualEdit && key in previousValues) {
-    _renderLoadWarningsBanner();
                 const prevV = Number(previousValues[key] || 0);
                 if (Math.abs(val - prevV) > 0.0001) {
                     const cascDir = val > prevV ? 'up' : 'down';
@@ -9017,7 +9064,10 @@ async function _applyServerPayload(data, { prevValueSnapshot = null, deltaSource
 
     if (hasPlanning || hasValues) {
         updateEditBadge();
-        if (!skipDashboard) state.dashboardDirty = true;
+        // Always dirty: skipDashboard only skips the immediate render. Machine
+        // edits pass it, and without the flag the dashboard kept its pre-edit
+        // numbers until some other action marked it (BUGS.md M22).
+        state.dashboardDirty = true;
         await _refreshDerivedViews({
             forceDashboard: !skipDashboard,
             refreshCapacity: hasPlanning,
@@ -9456,7 +9506,7 @@ function openDeltaSummaryModal() {
     ];
 
     // ── Build table rows ─────────────────────────────────────────────────────
-    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const esc = escapeHtml;  // also escapes quotes: used inside title="..."
     const fmt2 = v => {
         const n = Number(v);
         if (!isFinite(n)) return '-';
@@ -9648,7 +9698,7 @@ async function openCompareModal() {
     // Build select options
     const opts = scenarioList.map(sc => {
         const ts = sc.timestamp ? sc.timestamp.slice(0,16).replace('T',' ') : '';
-        return `<option value="${sc.id}">${sc.name} (${ts})</option>`;
+        return `<option value="${escapeHtml(sc.id)}">${escapeHtml(sc.name)} (${escapeHtml(ts)})</option>`;
     }).join('');
 
     // Remove existing modal if any
@@ -9708,7 +9758,7 @@ async function runCompare() {
         const invColor  = totalInvDiff > 0 ? '#4ade80' : totalInvDiff < 0 ? '#f87171' : '#94a3b8';
         summaryEl.innerHTML = `
           <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
-            <span style="color:#94a3b8"><b style="color:#e2e8f0">${s.scenario_a_name}</b> vs <b style="color:#e2e8f0">${s.scenario_b_name}</b></span>
+            <span style="color:#94a3b8"><b style="color:#e2e8f0">${escapeHtml(s.scenario_a_name)}</b> vs <b style="color:#e2e8f0">${escapeHtml(s.scenario_b_name)}</b></span>
             <span>Changed rows: <b style="color:#fbbf24">${s.changed_rows}</b></span>
             <span>Total demand Î”: <b style="color:${demColor}">${totalDemDiff >= 0?'+':''}${totalDemDiff.toLocaleString()}</b></span>
             <span>Inventory Î”: <b style="color:${invColor}">${totalInvDiff >= 0?'+':''}${totalInvDiff.toLocaleString()}</b></span>
@@ -9737,8 +9787,8 @@ async function runCompare() {
             const bg = i % 2 === 0 ? '#1e293b' : '#243044';
             const totalDiff = periods.reduce((a, p) => a + (row.diff[p] || 0), 0);
             tb += `<tr style="background:${bg}">`
-                + `<td style="position:sticky;left:0;z-index:1;background:${bg};padding:5px 10px;font-size:12px;white-space:nowrap">${row.material_number}</td>`
-                + `<td style="padding:5px 10px;font-size:12px;white-space:nowrap;color:#94a3b8">${row.line_type}</td>`;
+                + `<td style="position:sticky;left:0;z-index:1;background:${bg};padding:5px 10px;font-size:12px;white-space:nowrap">${escapeHtml(row.material_number)}</td>`
+                + `<td style="padding:5px 10px;font-size:12px;white-space:nowrap;color:#94a3b8">${escapeHtml(row.line_type)}</td>`;
             periods.forEach(p => { tb += `<td style="padding:5px 10px;text-align:right;font-size:12px">${fmt(row.diff[p] ?? 0)}</td>`; });
             tb += `<td style="padding:5px 10px;text-align:right;font-size:12px;font-weight:700">${fmt(Math.round(totalDiff))}</td></tr>`;
         });
@@ -9776,12 +9826,18 @@ document.addEventListener('keydown', function(e) {
         const cpop = document.getElementById('commentPopover');
         if (cpop && cpop.style.display === 'block') { e.preventDefault(); closeCommentPopover(); return; }
     }
-    if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+    // While typing (search box, session name, an open cell) Ctrl+Z/Ctrl+Y are
+    // the field's own undo. Taking them over reverted the last plan edit on
+    // the server instead of the typing (BUGS.md M25).
+    const _keyTarget = e.target;
+    const _typing = !!_keyTarget && (_keyTarget.isContentEditable
+        || /^(INPUT|TEXTAREA|SELECT)$/.test(_keyTarget.tagName || ''));
+    if (!_typing && e.ctrlKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         if (_activeTabName === 'capacity') undoMachineEdit();
         else undoEdit();
     }
-    if (e.ctrlKey && (e.key === 'y' || e.key === 'Z')) {
+    if (!_typing && e.ctrlKey && (e.key === 'y' || e.key === 'Z')) {
         e.preventDefault();
         if (_activeTabName === 'capacity') redoMachineEdit();
         else redoEdit();
@@ -9814,12 +9870,12 @@ async function openPapModal() {
     function buildRows(pap) {
         if (!Object.keys(pap).length) return '<tr><td colspan="3" class="text-center text-slate-500 p-4">No entries</td></tr>';
         return Object.entries(pap).map(([mat, frac]) => `
-            <tr data-pap-mat="${mat}">
-                <td class="p-2 font-mono text-xs">${mat}</td>
+            <tr data-pap-mat="${escapeHtml(mat)}">
+                <td class="p-2 font-mono text-xs">${escapeHtml(mat)}</td>
                 <td class="p-2"><input type="number" min="0" max="1" step="0.01" value="${frac}" class="pap-frac-input bg-slate-700 rounded px-2 py-1 w-28 text-right" /></td>
                 <td class="p-2 flex gap-2">
-                    <button onclick="savePapRow('${mat}', this)" class="px-2 py-1 rounded text-xs bg-blue-700 hover:bg-blue-600">Save</button>
-                    <button onclick="deletePapRow('${mat}')" class="px-2 py-1 rounded text-xs bg-red-800 hover:bg-red-700">Remove</button>
+                    <button onclick="savePapRow('${_jsArg(mat)}', this)" class="px-2 py-1 rounded text-xs bg-blue-700 hover:bg-blue-600">Save</button>
+                    <button onclick="deletePapRow('${_jsArg(mat)}')" class="px-2 py-1 rounded text-xs bg-red-800 hover:bg-red-700">Remove</button>
                 </td>
             </tr>`).join('');
     }
@@ -9953,8 +10009,8 @@ function renderAddedProductsTable() {
             <td class="p-2 text-xs">${escapeHtml(p.product_family || '')}</td>
             <td class="p-2 text-right">${flat}</td>
             <td class="p-2 text-right whitespace-nowrap">
-                <button onclick="openProductModal('${mn}')" class="px-2 py-1 rounded text-xs bg-blue-700 hover:bg-blue-600 text-white">Bewerken</button>
-                <button onclick="deleteAddedProduct('${mn}')" class="px-2 py-1 rounded text-xs bg-red-800 hover:bg-red-700 text-white ml-1">Verwijderen</button>
+                <button onclick="openProductModal('${_jsArg(mn)}')" class="px-2 py-1 rounded text-xs bg-blue-700 hover:bg-blue-600 text-white">Bewerken</button>
+                <button onclick="deleteAddedProduct('${_jsArg(mn)}')" class="px-2 py-1 rounded text-xs bg-red-800 hover:bg-red-700 text-white ml-1">Verwijderen</button>
             </td>
         </tr>`;
     }).join('');
@@ -11563,6 +11619,14 @@ function escapeHtml(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Tekst als argument in een inline-handler: eerst voor de JS-string
+// (backslash, apostrof), dan voor het HTML-attribuut. Alleen escapeHtml is
+// daar niet genoeg: de entiteit wordt gedecodeerd voordat de handler loopt,
+// dus een apostrof in de waarde beeindigt de string.
+function _jsArg(value) {
+    return escapeHtml(String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
 async function saveMachineEdit(td) {
     if (_machineOpInFlight) {
         td.textContent = td.dataset.currentDisplay || td.dataset._orig || '';
@@ -11663,6 +11727,9 @@ async function undoMachineEdit() {
         _machinesUndoDepth = out.undo_depth || 0;
         _machinesRedoDepth = out.redo_depth || 0;
         _updateMachineButtons();
+        // Nothing was undone (stale counter): the server answers 200 with
+        // success:false. Take over its depths and record no phantom step.
+        if (out.success === false) return;
         const r = out.restored || {};
         const directChange = {
             machine: r.machine || '',
@@ -11692,6 +11759,9 @@ async function redoMachineEdit() {
         _machinesUndoDepth = out.undo_depth || 0;
         _machinesRedoDepth = out.redo_depth || 0;
         _updateMachineButtons();
+        // Nothing was redone (stale counter): the server answers 200 with
+        // success:false. Take over its depths and record no phantom step.
+        if (out.success === false) return;
         const r = out.restored || {};
         const newVal = r.new_value !== undefined ? r.new_value : r.old_value;
         const directChange = {
@@ -11937,7 +12007,7 @@ function renderMoMScatter(scatter, fromPeriod, toPeriod) {
         const delta = ends[i] - starts[i];
         const sign  = delta >= 0 ? '+' : '';
         svg += `<circle cx="${cx}" cy="${cy}" r="6" fill="${col}" opacity="0.85" stroke="rgba(0,0,0,0.3)" stroke-width="0.8">`;
-        svg += `<title>${mats[i]}\n${xLbl}: ${Math.round(starts[i]).toLocaleString()}\n${yLbl}: ${Math.round(ends[i]).toLocaleString()}\nDelta: ${sign}${Math.round(delta).toLocaleString()}</title>`;
+        svg += `<title>${escapeHtml(mats[i])}\n${xLbl}: ${Math.round(starts[i]).toLocaleString()}\n${yLbl}: ${Math.round(ends[i]).toLocaleString()}\nDelta: ${sign}${Math.round(delta).toLocaleString()}</title>`;
         svg += '</circle>';
         svg += `<text x="${cx}" y="${cy-9}" text-anchor="middle" fill="#e2e8f0" font-size="8" style="pointer-events:none">${String(mats[i]).slice(-8)}</text>`;
     }
@@ -12440,10 +12510,10 @@ function handleMultiDrop(e) {
     document.getElementById('multiDropZone').classList.remove('dragover');
     const files = Array.from(e.dataTransfer.files || []).filter(f => {
         const n = f.name.toLowerCase();
-        return n.endsWith('.xlsx') || n.endsWith('.xlsm') || n.endsWith('.xls');
+        return n.endsWith('.xlsx') || n.endsWith('.xlsm');
     });
     if (!files.length) {
-        notify('Sleep Excel-bestanden (.xls, .xlsx of .xlsm) naar deze zone.', 'error');
+        notify('Sleep Excel-bestanden (.xlsx of .xlsm) naar deze zone.', 'error');
         return;
     }
     _applyGuessedMultiFiles(files);
@@ -12653,7 +12723,7 @@ function renderSessionList(groups, activeId) {
             const mName = d.toLocaleString('en', { month: 'short' });
             groupLabel = mName + ' ' + year + (site && site !== 'Unknown' ? ' \u2014 ' + site : '');
         }
-        html += `<div class="session-group-header">${groupLabel}</div>`;
+        html += `<div class="session-group-header">${escapeHtml(groupLabel)}</div>`;
         for (const sess of groups[key]) {
             const isActive = sess.id === activeId;
             const restoreStatus = sess.restore_status || (sess.calculated ? 'ready' : 'pending');
@@ -12764,6 +12834,7 @@ async function switchSession(sessionId) {
         if (cfgTab && !cfgTab.classList.contains('hidden')) loadAddedProducts();
         if (data.restore_status === 'warming' && !data.calculated) {
             state.results = null; state.valueResults = null; state.consolidation = [];
+            _showNoResultsYet('Sessie wordt voorbereid...');
             document.getElementById('exportBtn').disabled = true;
             document.getElementById('exportDbBtn').disabled = true;
             status('Sessie wordt voorbereid...');
@@ -12782,6 +12853,7 @@ async function switchSession(sessionId) {
             status('Switched to: ' + data.filename);
         } else {
             state.results = null; state.valueResults = null; state.consolidation = [];
+            _showNoResultsYet('Deze instantie is nog niet doorgerekend');
             document.getElementById('exportBtn').disabled = true;
             document.getElementById('exportDbBtn').disabled = true;
             status('Switched to: ' + data.filename + ' (not yet calculated)');
@@ -13313,7 +13385,7 @@ function _renderConfigStatus(cfg) {
     if (!el) return;
     if (cfg.master_file_exists) {
         const d = cfg.master_uploaded_at ? new Date(cfg.master_uploaded_at).toLocaleString() : '';
-        el.innerHTML = `<span style="color:#86efac">&#10003; <strong>${cfg.master_filename}</strong></span><span style="color:#64748b;margin-left:8px;font-size:11px">${d}</span>`;
+        el.innerHTML = `<span style="color:#86efac">&#10003; <strong>${escapeHtml(cfg.master_filename)}</strong></span><span style="color:#64748b;margin-left:8px;font-size:11px">${d}</span>`;
     } else {
         el.innerHTML = '<span style="color:#fca5a5">&#9888; Nog geen master data bestand geconfigureerd</span>';
     }
@@ -13474,7 +13546,7 @@ function _renderMasterBadge(cfg) {
     if (cfg.master_store_exists) {
         ok('&#10003; Masterdata: app-beheerd (v' + (cfg.master_store_version ?? '?') + ')');
     } else if (cfg.master_file_exists) {
-        ok('&#10003; Master data: ' + (cfg.master_filename || 'geladen') + ' (legacy bestand)');
+        ok('&#10003; Master data: ' + escapeHtml(cfg.master_filename || 'geladen') + ' (legacy bestand)');
     } else {
         badge.style.background = 'rgba(239,68,68,0.1)';
         badge.style.borderColor = 'rgba(239,68,68,0.3)';
