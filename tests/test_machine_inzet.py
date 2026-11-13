@@ -450,21 +450,21 @@ class TestKosten:
         engine.data.changeover_times = {
             'MA': ChangeoverTime(machine_code='MA', hours_per_changeover=1.5, cost_per_hour=95.5)}
         storeless = _changeovers_from_store(engine, master=None)
-        assert storeless['MA'] == {'hours_per_changeover': 1.5, 'description': '', 'cost_per_hour': 95.5}
+        assert storeless['MA'] == {'hours_per_changeover': 1.5, 'description': '', 'cost_per_hour': 95.5, 'origin': ''}
         master = {'changeover_times': {
             'MA': {'hours_per_changeover': 9, 'cost_per_hour': ''},
             'MB': {'hours_per_changeover': 'abc', 'cost_per_hour': 'nan', 'description': None},
             'MC': 'kapot'},
             'machine_costs': {'MA': {'variable_cost_per_hour': '51.93'}, 'MB': {'variable_cost_per_hour': 'x'}}}
         uit_store = _changeovers_from_store(engine, master=master)
-        assert uit_store['MA'] == {'hours_per_changeover': 9.0, 'description': '', 'cost_per_hour': None}
-        assert uit_store['MB'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None}
+        assert uit_store['MA'] == {'hours_per_changeover': 9.0, 'description': '', 'cost_per_hour': None, 'origin': ''}
+        assert uit_store['MB'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None, 'origin': ''}
         assert 'MC' not in uit_store
         # Negatieve handwaarden zijn geen invoer: uren als 0, tarief als 'geen'.
         master_neg = {'changeover_times': {'MA': {'hours_per_changeover': -1, 'cost_per_hour': -5}},
                       'machine_costs': {'MA': {'variable_cost_per_hour': -50}}}
         neg = _changeovers_from_store(engine, master=master_neg)
-        assert neg['MA'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None}
+        assert neg['MA'] == {'hours_per_changeover': 0.0, 'description': '', 'cost_per_hour': None, 'origin': ''}
         assert _machine_costs_from_store(master_neg) == {}
         assert _machine_costs_from_store(master) == {'MA': 51.93}
         assert _machine_costs_from_store(None) is None

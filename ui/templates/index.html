@@ -1471,6 +1471,7 @@
                         omstellingen is een <b>schatting</b>: producten per maand min &eacute;&eacute;n &mdash; klik het getal rechts om het te overschrijven.
                         Omsteltijd en tarief zijn masterdata (gelden overal); zonder eigen tarief rekent het bord met het machinetarief uit de machinekosten.
                         Kosten = omstellingen &times; omsteltijd &times; tarief.</p>
+                    <div id="inzetPlaceholders" class="hidden mb-3 px-3 py-2 rounded text-sm" style="background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.35)"></div>
                     <div id="inzetKpis" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"></div>
                     <div class="flex gap-4" style="min-height:420px">
                         <div class="rounded-lg p-2 flex flex-col" style="flex:0 0 400px;background:rgba(15,23,42,0.45);border:1px solid rgba(255,255,255,0.08)">
@@ -3092,10 +3093,10 @@ async function runCalc() {
             showTab('planning');
         }
     } catch (err) {
-        notify('Calculation failed: ' + err, 'error', 4800);
         // The request or its response failed: the server may never have
         // seen it, so its edits are what the badge should keep showing.
         _restoreEditStateAfterFailedCalc();
+        notify('Calculation failed: ' + err, 'error', 4800);
         status('Error');
     } finally {
         setBusy(false);
@@ -14923,7 +14924,12 @@ async function loadMachineInzet({ withFte = true } = {}) {
     if (withFte) loadFteWorkbench();
     const mijnLaad = ++_inzetLoadSeq;
     try {
-        const res = await fetch('/api/machine_inzet');
+        // Bord en aannamestatus samen ophalen: een lading is daarmee af als
+        // het bord getekend wordt, zonder een nalopend verzoek erachteraan.
+        const [res, placeholders] = await Promise.all([
+            fetch('/api/machine_inzet'),
+            _fetchInzetPlaceholders(),
+        ]);
         const data = await res.json();
         if (mijnLaad !== _inzetLoadSeq) return;   // er loopt al een nieuwere lading
         if (!res.ok || data.error) {
@@ -14938,9 +14944,97 @@ async function loadMachineInzet({ withFte = true } = {}) {
         document.getElementById('inzetEmpty').classList.add('hidden');
         document.getElementById('inzetBody').classList.remove('hidden');
         renderMachineInzet();
+        _inzetPlaceholders = placeholders;
+        _renderInzetPlaceholders();
     } catch (err) {
         notify('Machine-inzet laden mislukt: ' + err, 'error', 5000);
     }
+}
+
+// ── Aannames voor ontbrekende omsteltijden ─────────────────────────────
+// De klant levert omsteltijden later aan. Tot dan kan de tool per machine een
+// aanname invullen uit een vaste regel (per machinesoort). Een aanname staat
+// als gewone masterdata en is overal te wijzigen; ze blijft herkenbaar tot
+// iemand de waarde aanpast of haar uitdrukkelijk bevestigt.
+let _inzetPlaceholders = null;
+
+// Null bij elke fout of weigering (geen store, andere site): dan geen balk.
+async function _fetchInzetPlaceholders() {
+    try {
+        const res = await fetch('/api/machine_inzet/placeholders');
+        const data = await res.json();
+        return res.ok && !data.error ? data : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+function _renderInzetPlaceholders() {
+    const host = document.getElementById('inzetPlaceholders');
+    const st = _inzetPlaceholders;
+    if (!host) return;
+    if (!st) { host.classList.add('hidden'); return; }
+    const missing = (st.would_add || []).length;
+    const assumed = (st.assumed || []).length;
+    const adjusted = (st.adjusted || []).length;
+    const confirmed = (st.confirmed || []).length;
+    if (!missing && !assumed && !adjusted && !confirmed) { host.classList.add('hidden'); return; }
+    const rules = (st.rules || []).map(r => `${escapeHtml(r.label)} ${_fmtNlNum(r.hours, 1)} u`).join(' · ');
+    const btn = (action, label, title) =>
+        `<button data-inzet-placeholder="${action}" onclick="changeInzetPlaceholders('${action}')" title="${escapeHtml(title)}"
+            class="ml-2 px-2 py-0.5 rounded text-xs bg-slate-700 hover:bg-slate-600 text-slate-200">${label}</button>`;
+    const parts = [];
+    if (assumed) parts.push(`<b class="text-amber-300">${assumed}</b> omsteltijd(en) zijn een <b>aanname</b> van de tool, geen klantwaarde`);
+    if (missing) parts.push(`<b>${missing}</b> machine(s) zonder omsteltijd`);
+    if (adjusted) parts.push(`${adjusted} aanname(s) aangepast door een gebruiker`);
+    if (confirmed) parts.push(`${confirmed} aanname(s) door een gebruiker bevestigd`);
+    host.innerHTML = `<div class="text-amber-200">&#9888; ${parts.join(' &middot; ')}.</div>`
+        + `<div class="text-xs text-slate-400 mt-1">Regel ${escapeHtml(st.ruleset || '')}: ${rules}. `
+        + `Wijzig een waarde op het bord of in Config &rarr; Masterdata-tabellen &rarr; Omsteltijden. Een aangepaste aanname houdt haar herkomst (label &lsquo;aangepast&rsquo;) en wordt niet automatisch verwijderd; zet je haar terug op de oorspronkelijke waarde, dan is het weer een gewone aanname.</div>`
+        + `<div class="mt-1">`
+        + (missing ? btn('apply', `Vul ${missing} aanname(s) in`, 'Vult alleen machines zonder omsteltijd; bestaande waarden blijven staan.') : '')
+        + (assumed ? btn('confirm', 'Bevestig aannames', 'Markeer de ongewijzigde aannames als door jou bevestigd. Ze blijven als aanname herkenbaar (label \'bevestigd\') maar worden nooit automatisch verwijderd.') : '')
+        + (assumed ? btn('remove', 'Verwijder ongewijzigde aannames', 'Haalt alleen aannames weg waarvan de waarde nog gelijk is aan de oorspronkelijke aanname en die geen eigen tarief hebben. Aangepaste en bevestigde regels blijven staan.') : '')
+        + `</div>`;
+    host.classList.remove('hidden');
+}
+
+async function changeInzetPlaceholders(action) {
+    const st = _inzetPlaceholders;
+    if (!st) return;
+    const vragen = {
+        apply: `Voor ${(st.would_add || []).length} machine(s) een aangenomen omsteltijd invullen? Ze blijven als aanname gemarkeerd tot iemand ze wijzigt of bevestigt.`,
+        confirm: `${(st.assumed || []).length} aanname(s) als juist bevestigen?`,
+        remove: `${(st.assumed || []).length} ongewijzigde aanname(s) verwijderen? Aangepaste en bevestigde waarden blijven staan.`,
+    };
+    if (!confirm(vragen[action])) return;
+    try {
+        const res = await fetch('/api/machine_inzet/placeholders', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, base_version: st.version }),
+        });
+        const data = await res.json();
+        if (res.status === 409) {
+            notify('De masterdata is intussen gewijzigd; het tabblad is ververst — probeer opnieuw.', 'warning', 7000);
+            await loadMachineInzet();
+            return;
+        }
+        if (!res.ok || data.error) { notify(data.error || 'Wijziging mislukt.', 'error', 6000); return; }
+        _entityCache = {};
+        const n = (data.changed || []).length;
+        const wat = { apply: 'ingevuld', confirm: 'bevestigd', remove: 'verwijderd' }[action];
+        notify(`${n} omsteltijd(en) ${wat} (masterdata versie ${data.version}).`, 'success', 4000);
+        await loadMachineInzet();
+    } catch (err) {
+        notify('Wijziging mislukt: ' + err, 'error', 6000);
+    }
+}
+
+function _inzetOriginChip(origin) {
+    if (origin === 'aanname') return ` <span class="text-[10px] px-1.5 rounded-full border border-amber-400/50 text-amber-300" title="Aanname van de tool: de klantwaarde ontbreekt nog">aanname</span>`;
+    if (origin === 'aangepast') return ` <span class="text-[10px] px-1.5 rounded-full border border-slate-500 text-slate-300" title="Aanname van de tool, daarna aangepast; geen aangeleverde klantwaarde">aanname, aangepast</span>`;
+    if (origin === 'bevestigd') return ` <span class="text-[10px] px-1.5 rounded-full border border-slate-500 text-slate-300" title="Aanname van de tool die een gebruiker als juist heeft bevestigd; geen aangeleverde klantwaarde">aanname, bevestigd</span>`;
+    return '';
 }
 
 // Na Bereken, Reset, sessiewissel of scenario-laden is de servertoestand
@@ -15097,6 +15191,7 @@ function _renderInzetRail(codes, totaal) {
             const t = machine.total || {};
             const sel = code === _inzetState.selected;
             const noTime = machine.hours_per_changeover === null;
+            const originChip = _inzetOriginChip(machine.hours_origin);
             const bar = noTime
                 ? `<div style="height:8px;border-radius:4px;border:1px dashed rgba(251,191,36,0.5)"></div>`
                 : `<div style="height:8px;border-radius:4px;background:#334155;overflow:hidden"><div style="height:100%;background:#3b82f6;width:${Math.max(1.5, (t.cost || 0) / maxCost * 100)}%"></div></div>`;
@@ -15107,7 +15202,7 @@ function _renderInzetRail(codes, totaal) {
                     : `<span class="font-mono text-amber-300">${_fmtNlNum(t.changeovers || 0, 0)}&times; &middot; geen tarief</span>`);
             return `<button data-inzet-row="${escapeHtml(code)}" onclick="selectInzetMachine('${_jsArg(code)}')"
                 class="w-full text-left rounded ${sel ? 'bg-blue-600/20 ring-1 ring-blue-400/60' : 'hover:bg-slate-700/60'}" style="padding:6px 8px">
-                <div style="display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px"><span class="font-mono font-semibold" style="font-size:13px">${escapeHtml(code)}</span>
+                <div style="display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px"><span class="font-mono font-semibold" style="font-size:13px">${escapeHtml(code)}</span>${originChip}
                     <span class="text-slate-400" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(machine.name || '')}">${escapeHtml(String(machine.name || '').replace(/^Maastricht /, ''))}</span></div>
                 <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><div style="flex:1 1 auto;min-width:0">${bar}</div><div class="text-xs" style="flex:0 0 118px;white-space:nowrap;text-align:right">${right}</div></div></button>`;
         }).join('');
@@ -15255,7 +15350,7 @@ function _renderInzetBoard(code) {
                 <label class="flex flex-col gap-0.5">Omsteltijd (u)
                     <input type="text" value="${hoursPer !== null ? escapeHtml(_fmtNlInput(hoursPer, 3)) : ''}" placeholder="—"
                         data-inzet-machine="${escapeHtml(code)}" class="bg-slate-700 rounded px-2 py-0.5 w-16 text-right text-slate-100 ${hoursPer === null ? 'ring-1 ring-amber-400/60' : ''}"
-                        onchange="saveChangeoverTime(this)"></label>
+                        onchange="saveChangeoverTime(this)">${_inzetOriginChip(machine.hours_origin)}</label>
                 <label class="flex flex-col gap-0.5"><span>Tarief (&euro;/u) <span class="${machine.rate > 0 ? 'text-slate-500' : 'text-amber-300'}">&middot; ${escapeHtml(rateSource)}</span></span>
                     <input type="text" value="${rateOwn !== null && rateOwn !== undefined ? escapeHtml(_fmtNlInput(rateOwn, 2)) : ''}"
                         placeholder="${machine.rate_source === 'machinetarief' ? escapeHtml(_fmtNlInput(machine.rate, 2)) : '—'}"

@@ -968,3 +968,65 @@ def test_reset_ververst_het_bord_via_het_echte_pad(browser_page):
         _zet_sequences(base_url, {})
         _open_inzet(page)
     assert page.js_errors == []
+
+
+def test_aannames_voor_ontbrekende_omsteltijden(browser_page, golden_fixture_path):
+    """Ontbrekende omsteltijden zijn met één knop als AANNAME in te vullen:
+    ze tellen meteen mee in uren en kosten, staan zichtbaar als 'aanname'
+    gemarkeerd, en 'verwijder ongewijzigde aannames' haalt ze weer weg zonder
+    een aangepaste waarde mee te nemen. De test ruimt zelf op: de server
+    wordt gedeeld met tests die juist machines zónder omsteltijd zoeken."""
+    page = browser_page
+    base_url = page.server["base_url"]
+    _ensure_store(base_url, golden_fixture_path)
+    page.on("dialog", lambda dialog: dialog.accept())
+    _open_inzet(page)
+    page.wait_for_selector('#inzetPlaceholders [data-inzet-placeholder="apply"]', timeout=30000)
+    status = requests.get(base_url + "/api/machine_inzet/placeholders", timeout=60).json()
+    missing = status["would_add"]
+    assert missing, status
+    adjusted = None
+    try:
+        with page.expect_response(lambda r: "/api/machine_inzet/placeholders" in r.url
+                                  and r.request.method == "POST" and r.ok):
+            page.click('#inzetPlaceholders [data-inzet-placeholder="apply"]')
+        page.wait_for_function(
+            "(n) => _inzetPlaceholders && (_inzetPlaceholders.assumed || []).length === n",
+            arg=len(missing), timeout=30000)
+        api = _api(base_url)
+        for code in missing:
+            if code in api["machines"]:
+                assert api["machines"][code]["hours_origin"] == "aanname", code
+                assert api["machines"][code]["hours_per_changeover"] is not None
+        chip_count = page.evaluate(
+            "() => [...document.querySelectorAll('#inzetRailList [data-inzet-row]')]"
+            ".filter(b => b.textContent.includes('aanname')).length")
+        assert chip_count == sum(1 for c in missing if c in api["machines"])
+        assert "aanname" in page.inner_text("#inzetPlaceholders")
+
+        # Eén waarde aanpassen op het bord: telt daarna niet meer als aanname.
+        adjusted = next(c for c in sorted(missing) if c in api["machines"])
+        _select(page, adjusted)
+        veld = page.locator(f'input[data-inzet-machine="{adjusted}"]')
+        veld.fill("3,25")
+        with page.expect_response(lambda r: "/api/master_data/changeover_times" in r.url
+                                  and r.request.method == "PATCH" and r.ok):
+            veld.dispatch_event("change")
+        page.wait_for_function(
+            "(m) => (_inzetPlaceholders.adjusted || []).includes(m)", arg=adjusted, timeout=30000)
+
+        with page.expect_response(lambda r: "/api/machine_inzet/placeholders" in r.url
+                                  and r.request.method == "POST" and r.ok):
+            page.click('#inzetPlaceholders [data-inzet-placeholder="remove"]')
+        page.wait_for_function(
+            "() => _inzetPlaceholders && (_inzetPlaceholders.assumed || []).length === 0", timeout=30000)
+        store = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()["value"]
+        assert store[adjusted]["hours_per_changeover"] == pytest.approx(3.25)
+        assert not any(c in store for c in missing if c != adjusted)
+        assert page.js_errors == []
+    finally:
+        record = requests.get(base_url + "/api/master_data/changeover_times", timeout=60).json()
+        value = {k: v for k, v in (record.get("value") or {}).items()
+                 if k not in missing}
+        requests.patch(base_url + "/api/master_data/changeover_times",
+                       json={"value": value, "base_version": record.get("version")}, timeout=60)

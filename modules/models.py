@@ -499,3 +499,11 @@ class ChangeoverTime:
     hours_per_changeover: float = 0.0
     description: str = ''
     cost_per_hour: Optional[float] = None
+    # Herkomst (modules/placeholder_data.py). Leeg = ingevuld door de klant of
+    # de gebruiker. 'aanname' = door de tool gegenereerd omdat de klantwaarde
+    # nog ontbreekt; origin_value is dan de gegenereerde waarde, zodat een
+    # later aangepaste waarde herkenbaar blijft. 'bevestigd' = een aanname die
+    # de gebruiker uitdrukkelijk als juist heeft aangemerkt.
+    origin: str = ''
+    origin_rule: str = ''
+    origin_value: Optional[float] = None

@@ -50,6 +50,13 @@ from typing import Callable, Dict, List, Optional, Tuple
 from flask import Blueprint, jsonify, request
 
 from modules.models import LineType
+from modules.placeholder_data import (
+    apply_placeholders,
+    confirm_placeholders,
+    origin_state,
+    placeholder_status,
+    remove_placeholders,
+)
 from ui.routes.fte import _SITE_MISMATCH, _site_mismatch
 
 _NO_ENGINE = 'Nog geen berekening uitgevoerd.'
@@ -277,6 +284,7 @@ def build_machine_inzet(engine, sess: dict, changeovers: dict,
             'name': info['name'],
             'machine_group': info['machine_group'],
             'hours_per_changeover': hours_per,
+            'hours_origin': (changeover or {}).get('origin', '') if changeover else None,
             'rate': rate['rate'],
             'rate_source': rate['source'],
             'sequence': sequence,
@@ -303,6 +311,11 @@ def build_machine_inzet(engine, sess: dict, changeovers: dict,
     }
 
 
+# Sites waarvoor de tool omsteltijd-aannames mag genereren. Machine-inzet is
+# alleen aan Maastricht verkocht.
+PLACEHOLDER_SITES = {'NLX1'}
+
+
 def _current_master() -> Optional[dict]:
     from ui import master_store
     record = master_store.get_current_master_record()
@@ -316,10 +329,12 @@ def _changeovers_from_store(engine, master: Optional[dict] = None) -> dict:
     op wat de engine (via hydratie) meekreeg. Onleesbare of negatieve uren in
     een handbewerkte store worden als 0 gelezen (een record = ingevuld, nooit
     een crash); een onleesbaar of negatief tarief als 'geen eigen tarief'."""
-    def _norm(hours, description, cost):
+    def _norm(hours, description, cost, record=None):
         h = _num(hours)
         c = _num(cost)
         return {
+            # Herkomst: '' klant/gebruiker, 'aanname', 'aangepast', 'bevestigd'.
+            'origin': origin_state(record) if isinstance(record, dict) else '',
             # Een record = ingevuld; onleesbare of negatieve uren tellen als 0.
             'hours_per_changeover': h if h is not None and h >= 0 else 0.0,
             'description': str(description or ''),
@@ -332,10 +347,14 @@ def _changeovers_from_store(engine, master: Optional[dict] = None) -> dict:
     if master is not None:
         raw = master.get('changeover_times') or {}
         return {str(code): _norm(item.get('hours_per_changeover'), item.get('description'),
-                                 item.get('cost_per_hour'))
+                                 item.get('cost_per_hour'), item)
                 for code, item in raw.items() if isinstance(item, dict)}
     return {str(code): _norm(item.hours_per_changeover, item.description,
-                             getattr(item, 'cost_per_hour', None))
+                             getattr(item, 'cost_per_hour', None),
+                             {'origin': getattr(item, 'origin', ''),
+                              'origin_value': getattr(item, 'origin_value', None),
+                              'hours_per_changeover': item.hours_per_changeover,
+                              'cost_per_hour': getattr(item, 'cost_per_hour', None)})
             for code, item in (getattr(engine.data, 'changeover_times', None) or {}).items()}
 
 
@@ -444,5 +463,81 @@ def create_machine_inzet_blueprint(
         sess['changeover_sequences'] = sequences
         save_sessions_to_disk()
         return jsonify({'success': True, 'sequences': sequences, 'warnings': warnings})
+
+    # -- Aannames voor ontbrekende omsteltijden ------------------------------
+    # Alleen in deze uitgave (het tabblad bestaat alleen hier) en alleen voor
+    # de sites in PLACEHOLDER_SITES: de route weigert zelf, niet alleen de UI.
+
+    def _placeholder_record():
+        from ui import master_store
+        record = master_store.get_current_master_record()
+        if record is None:
+            return None, (jsonify({'error': 'Geen masterdata in de app. Importeer eerst een masterbestand.'}), 400)
+        site = str(((record.get('master') or {}).get('config') or {}).get('site') or '').strip().upper()
+        if site not in PLACEHOLDER_SITES:
+            label = site or 'onbekend'
+            return None, (jsonify({'error': f'Aannames voor omsteltijden zijn niet beschikbaar voor site {label}.'}), 403)
+        return record, None
+
+    @bp.route('/api/machine_inzet/placeholders', methods=['GET'])
+    def get_placeholders():
+        record, err = _placeholder_record()
+        if err:
+            return err
+        return jsonify({'success': True, 'version': record.get('version'),
+                        **placeholder_status(record.get('master') or {})})
+
+    @bp.route('/api/machine_inzet/placeholders', methods=['POST'])
+    def change_placeholders():
+        """apply: vul ontbrekende omsteltijden met een aanname. remove: haal de
+        ONGEWIJZIGDE aannames weg. confirm: markeer ongewijzigde aannames (alle,
+        of `keys`) als bevestigd. Altijd op de versie waarop de client keek."""
+        from ui import master_mirror
+        from ui.routes.master_data import (
+            _VERSION_CONFLICT_ERROR,
+            _save_with_version_check,
+            _validate_dataset_values,
+            _validate_master,
+        )
+
+        record, err = _placeholder_record()
+        if err:
+            return err
+        body = request.get_json(force=True, silent=True) or {}
+        action = body.get('action')
+        base_version = body.get('base_version')
+        if base_version is None:
+            return jsonify({'error': 'base_version ontbreekt: ververs het tabblad en probeer opnieuw.'}), 400
+        if base_version != record.get('version'):
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
+        master = record.get('master') or {}
+        if action == 'apply':
+            candidate, keys = apply_placeholders(master)
+        elif action == 'remove':
+            candidate, keys = remove_placeholders(master)
+        elif action == 'confirm':
+            requested = body.get('keys')
+            if requested is not None and not isinstance(requested, list):
+                return jsonify({'error': '"keys" moet een lijst machinecodes zijn.'}), 400
+            candidate, keys = confirm_placeholders(master, requested)
+        else:
+            return jsonify({'error': 'action moet apply, remove of confirm zijn.'}), 400
+        if not keys:
+            return jsonify({'success': True, 'changed': [], 'version': record.get('version'),
+                            **placeholder_status(master)})
+        error, _warnings = _validate_dataset_values(
+            'changeover_times', candidate['changeover_times'], candidate)
+        if error:
+            return jsonify({'error': f'Wijziging geweigerd: {error}'}), 400
+        try:
+            _validate_master(candidate)
+        except Exception as exc:
+            return jsonify({'error': f'Wijziging geweigerd: {exc}'}), 400
+        new_record = _save_with_version_check(record, candidate, edited=True)
+        if new_record is None:
+            return jsonify({'error': _VERSION_CONFLICT_ERROR}), 409
+        master_mirror.refresh_mirror()
+        return jsonify({'success': True, 'changed': keys, 'version': new_record.get('version'),
+                        **placeholder_status(new_record.get('master') or {})})
 
     return bp
