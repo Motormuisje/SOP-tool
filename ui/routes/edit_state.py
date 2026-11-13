@@ -72,7 +72,15 @@ def create_edit_state_blueprint(
             new_value = _finite_number(value.get('new_value', 0))
             if original is None or new_value is None:
                 return jsonify({'error': f'edit "{key}" has a non-numeric value'}), 400
-            synced[canonical_pending_edit_key(key)] = {'original': original, 'new_value': new_value}
+            canonical = canonical_pending_edit_key(key)
+            if not canonical:
+                return jsonify({'error': 'Cell key required'}), 400
+            entry = {'original': original, 'new_value': new_value}
+            if canonical in synced and synced[canonical] != entry:
+                # Two client keys for one cell with different values: keeping
+                # either would be a guess about which one the user meant.
+                return jsonify({'error': f'conflicting edits for cell "{canonical}"'}), 400
+            synced[canonical] = entry
         sessions[session_id]['pending_edits'] = synced
         save_sessions_to_disk()
         return jsonify({'success': True})

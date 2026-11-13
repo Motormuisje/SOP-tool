@@ -37,7 +37,7 @@ def test_failed_snapshot_write_keeps_the_previous_cycle(tmp_path, monkeypatch):
     monkeypatch.undo()
 
     assert manager.load_previous_cycle()["2025-01"].tolist() == [1.0]
-    assert manager.load_metadata() == {"planning_month": "2025-01"}
+    assert manager.load_metadata()["planning_month"] == "2025-01"
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         CycleManager.META_FILENAME, CycleManager.DEFAULT_FILENAME]
 
@@ -48,7 +48,7 @@ def test_successful_snapshot_write_replaces_both_files(tmp_path):
     manager.save_current_as_previous(_frame(2.0), planning_month="2025-02")
 
     assert manager.load_previous_cycle()["2025-01"].tolist() == [2.0]
-    assert manager.load_metadata() == {"planning_month": "2025-02"}
+    assert manager.load_metadata()["planning_month"] == "2025-02"
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         CycleManager.META_FILENAME, CycleManager.DEFAULT_FILENAME]
 
@@ -89,3 +89,27 @@ def test_raw_need_is_still_recorded_for_months_the_heuristic_decides():
 
     assert set(free["purch_raw_need"]) == {"2025-02", "2025-03"}
     assert all(need > 0 for need in free["purch_raw_need"].values())
+
+
+def test_metadata_of_another_snapshot_is_not_reported(tmp_path):
+    """Two files cannot be swapped as one. Metadata names the snapshot it
+    belongs to; paired with another snapshot (a crash between the swaps) it
+    is ignored rather than reporting the wrong planning month."""
+    manager = CycleManager(str(tmp_path))
+    manager.save_current_as_previous(_frame(1.0), planning_month="2025-01")
+    old_meta = manager._meta_path.read_bytes()
+    manager.save_current_as_previous(_frame(2.0), planning_month="2025-02")
+
+    manager._meta_path.write_bytes(old_meta)  # new snapshot, old metadata
+
+    assert manager.load_previous_cycle()["2025-01"].tolist() == [2.0]
+    assert manager.load_metadata() == {}
+
+
+def test_metadata_without_fingerprint_still_loads(tmp_path):
+    """Snapshots written before this change carry no fingerprint."""
+    manager = CycleManager(str(tmp_path))
+    manager.save_current_as_previous(_frame(1.0), planning_month="2025-01")
+    manager._meta_path.write_text('{"planning_month": "2024-12"}')
+
+    assert manager.load_metadata() == {"planning_month": "2024-12"}

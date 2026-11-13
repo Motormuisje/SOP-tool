@@ -3093,6 +3093,9 @@ async function runCalc() {
         }
     } catch (err) {
         notify('Calculation failed: ' + err, 'error', 4800);
+        // The request or its response failed: the server may never have
+        // seen it, so its edits are what the badge should keep showing.
+        _restoreEditStateAfterFailedCalc();
         status('Error');
     } finally {
         setBusy(false);
@@ -3206,8 +3209,8 @@ function _uomPreviewRow(item, uomSus, periods, esc) {
         + `<td class="font-mono text-xs" style="color:#f59e0b">&#9878;</td>`
         + `<td class="text-xs" style="color:#34d399;font-style:italic;white-space:nowrap">na conversie kg &rarr; ton</td>`
         + `<td colspan="3" style="white-space:nowrap">`
-        + `<button onclick="uomDecideFromTable('${mat}','convert')" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white" title="Bevestig: dit component staat in kg. Hoeveelheden worden gedeeld door 1.000 en de planning wordt herberekend.">&#10003; Goedkeuren</button> `
-        + `<button onclick="uomDecideFromTable('${mat}','dismiss')" class="px-2 py-0.5 rounded text-xs bg-slate-600 hover:bg-slate-700 text-white" title="Afwijzen: de eenheden kloppen zoals ze zijn. Dit wordt onthouden; de cijfers blijven ongewijzigd.">&#10005; Afwijzen</button>`
+        + `<button onclick="uomDecideFromTable('${_jsArg(item.material_number)}','convert')" class="px-2 py-0.5 rounded text-xs bg-emerald-700 hover:bg-emerald-600 text-white" title="Bevestig: dit component staat in kg. Hoeveelheden worden gedeeld door 1.000 en de planning wordt herberekend.">&#10003; Goedkeuren</button> `
+        + `<button onclick="uomDecideFromTable('${_jsArg(item.material_number)}','dismiss')" class="px-2 py-0.5 rounded text-xs bg-slate-600 hover:bg-slate-700 text-white" title="Afwijzen: de eenheden kloppen zoals ze zijn. Dit wordt onthouden; de cijfers blijven ongewijzigd.">&#10005; Afwijzen</button>`
         + `</td>`
         + `<td class="text-right">-</td>`
         + cells + `</tr>`;
@@ -3455,7 +3458,15 @@ function _clearValuePlanningView() {
     state.valueRowDeltas = {};
     previousValuePlanningValues = {};
     _showEmptyTable('vpBody', 'vpHead', 'vpRowCount', 10, 'Geen value planning voor deze instantie');
-    try { updateValueKPIs(); } catch (e) { /* tegels volgen bij de volgende geslaagde load */ }
+    // Consolidation, financial chart and value tiles read the state cleared
+    // above; with an empty consolidation updateValueKPIs and renderFinChart
+    // return early and would leave the previous instance's figures on screen.
+    for (const id of ['vp-turnover', 'vp-ebitda', 'vp-ebit', 'vp-roce']) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '-';
+    }
+    if (typeof finChart !== 'undefined' && finChart) { finChart.destroy(); finChart = null; }
+    renderConsolidation();
 }
 
 function _showEmptyTable(bodyId, headId, countId, colspan, message) {
@@ -4825,7 +4836,7 @@ function _renderChartAnalysisPanel(model) {
         : '−';
     let rowsHtml = model.rows.map(r => {
         const planBtn = r.material
-            ? ` <button type="button" onclick="event.stopPropagation();_analysisShowOneInPlanning('${escapeHtml(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button>`
+            ? ` <button type="button" onclick="event.stopPropagation();_analysisShowOneInPlanning('${_jsArg(r.material)}')" class="text-slate-500 hover:text-indigo-300" title="Toon dit product in de planningstabel">&#9998;</button>`
             : '';
         return `
         <tr ${r.drill ? `class="cursor-pointer hover:bg-slate-800" onclick="_analysisDrillComponent('${_jsArg(r.drill)}')" title="Klik voor detail"` : ''}>
@@ -12159,9 +12170,9 @@ function renderOeeTable() {
                 <td class="text-center text-slate-300">${m.throughput_theoretical.toFixed(2)}</td>
                 ${_renderMachineEditCell(m, 'throughput_eff', m.throughput_effective.toFixed(2), m.throughput_effective.toFixed(2), 'Bewerk effectieve doorzet (past OEE evenredig aan)')}
                 <td class="text-center whitespace-nowrap">
-                    <button data-products-btn="${escapeHtml(m.code)}" onclick="event.stopPropagation();toggleMachineProducts('${escapeHtml(m.code)}', this)" title="Toon producten (volumes) op deze machine" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-emerald-600 text-slate-400 hover:text-white transition-colors">&#9707; Producten</button>
-                    <button onclick="event.stopPropagation();openMachineDrilldown('${escapeHtml(m.code)}')" title="Bekijk detail per periode" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-indigo-600 text-slate-400 hover:text-white transition-colors">&#128269;</button>
-                    ${editBtn(`focusMachineOee('${escapeHtml(m.code)}')`, 'Bewerk OEE van deze machine')}
+                    <button data-products-btn="${escapeHtml(m.code)}" onclick="event.stopPropagation();toggleMachineProducts('${_jsArg(m.code)}', this)" title="Toon producten (volumes) op deze machine" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-emerald-600 text-slate-400 hover:text-white transition-colors">&#9707; Producten</button>
+                    <button onclick="event.stopPropagation();openMachineDrilldown('${_jsArg(m.code)}')" title="Bekijk detail per periode" class="px-1.5 py-0.5 text-xs rounded bg-slate-700 hover:bg-indigo-600 text-slate-400 hover:text-white transition-colors">&#128269;</button>
+                    ${editBtn(`focusMachineOee('${_jsArg(m.code)}')`, 'Bewerk OEE van deze machine')}
                 </td>
             </tr>`;
         });
@@ -12915,7 +12926,7 @@ function _fteKpiSub(id, mode, values) {
         const peak = _ftePeak(values);
         if (peak && peak.value > 0) {
             peakHtml = ` · piek <button class="underline decoration-dotted hover:text-slate-300"
-                onclick="document.getElementById('ftePeriod').value='${escapeHtml(peak.period)}';renderFteWorkbench()">${
+                onclick="document.getElementById('ftePeriod').value='${_jsArg(peak.period)}';renderFteWorkbench()">${
                 _fmtNlNum(peak.value, 2)} (${escapeHtml(peak.period)})</button>`;
         }
     }
@@ -15789,7 +15800,7 @@ function renderMoMScatter(scatter, fromPeriod, toPeriod) {
         svg += `<circle cx="${cx}" cy="${cy}" r="6" fill="${col}" opacity="0.85" stroke="rgba(0,0,0,0.3)" stroke-width="0.8">`;
         svg += `<title>${escapeHtml(mats[i])}\n${xLbl}: ${Math.round(starts[i]).toLocaleString()}\n${yLbl}: ${Math.round(ends[i]).toLocaleString()}\nDelta: ${sign}${Math.round(delta).toLocaleString()}</title>`;
         svg += '</circle>';
-        svg += `<text x="${cx}" y="${cy-9}" text-anchor="middle" fill="#e2e8f0" font-size="8" style="pointer-events:none">${String(mats[i]).slice(-8)}</text>`;
+        svg += `<text x="${cx}" y="${cy-9}" text-anchor="middle" fill="#e2e8f0" font-size="8" style="pointer-events:none">${escapeHtml(String(mats[i]).slice(-8))}</text>`;
     }
 
     // Legend

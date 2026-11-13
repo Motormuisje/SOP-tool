@@ -560,9 +560,10 @@ def _recalc_pap_material(current_engine, material_number):
     # A PAP change recalculates the material and its BOM subtree. Edited
     # starting stocks of the session that owns this engine must survive that,
     # like any other recalculation (BUGS.md M18).
+    # Only the session that owns this engine: an engine that belongs to no
+    # session (detached during a rebuild) recalculates without edited stocks
+    # rather than with another session's.
     owner = next((s for s in sessions.values() if s.get('engine') is current_engine), None)
-    if owner is None:
-        owner = sessions.get(active_session_id) if active_session_id else None
     inventory_overrides = (owner or {}).get('inventory_overrides') or {}
     _recalc_pap_material_impl(
         current_engine,
