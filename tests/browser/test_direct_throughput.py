@@ -30,13 +30,15 @@ def test_direct_throughput_scales_oee_and_moves_effective(browser_page):
     page.fill("#drillThroughputInput", str(target))
     page.click("#machineDrillBody button:has-text('Toepassen')")
 
-    # Wait until the reloaded machine data reflects the raised OEE.
+    # Wait until the reloaded machine data reflects the raised OEE. Compared
+    # with the machine's own starting OEE: a fixed threshold (0.75) was already
+    # met before the edit on a site whose machine starts at 0.8.
     page.wait_for_function(
-        """(code) => {
+        """([code, start]) => {
             const m = (_machinesData && _machinesData.machines || []).find(x => String(x.code) === String(code));
-            return m && m.oee > 0.75;
+            return m && m.oee > start + 1e-6;
         }""",
-        arg=setup["code"],
+        arg=[setup["code"], setup["oee"]],
         timeout=30000,
     )
     after = page.evaluate(
