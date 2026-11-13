@@ -26,9 +26,15 @@ def _mock_planning_row(line_type, aux_column=None):
 
 
 @pytest.fixture
-def edits_mock_app():
+def edits_mock_app(monkeypatch):
     """Synthetic edit route app for route orchestration tests only."""
     from ui.routes.edits import create_edits_blueprint
+
+    # The engine here is a stand-in, not a PlanningEngine: undo/redo take an
+    # engine snapshot before each step (rollback on failure), so give them one
+    # that works on the stand-in. Real snapshots are covered on a real engine
+    # in tests/test_edit_state_consistency.py.
+    monkeypatch.setattr("ui.routes.edits.snapshot_engine_state", lambda engine, lookup: {"stub": True})
 
     engine = SimpleNamespace(
         results={
@@ -64,6 +70,7 @@ def edits_mock_app():
     state = SimpleNamespace(
         clean_engine=engine,
         fail_next_volume_call=False,
+        fail_status=400,
     )
 
     def get_active():
@@ -82,7 +89,7 @@ def edits_mock_app():
         if state.fail_next_volume_call:
             state.fail_next_volume_call = False
             response = jsonify({"error": "injected failure"})
-            response.status_code = 400
+            response.status_code = state.fail_status
             return response
         volume_calls.append({
             "sess": sess,

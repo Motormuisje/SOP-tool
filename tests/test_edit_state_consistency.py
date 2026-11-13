@@ -170,11 +170,12 @@ def test_refused_undo_is_dropped_and_never_reaches_the_redo_stack(edits_mock_app
     older, refused = _stack_entry("MAT-0"), _stack_entry("MAT-1")
     edits_mock_app.sess["undo_stack"] = [older, refused]
     edits_mock_app.sess["redo_stack"] = []
+    edits_mock_app.fail_status = 404  # row gone: can never apply
     edits_mock_app.fail_next_volume_call = True
 
     response = edits_mock_app.client.post("/api/undo")
 
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert edits_mock_app.sess["undo_stack"] == [older]
     assert edits_mock_app.sess["redo_stack"] == []
     assert edits_mock_app.volume_calls == []
@@ -191,13 +192,32 @@ def test_refused_redo_is_dropped_and_never_reaches_the_undo_stack(edits_mock_app
     edits_mock_app.make_session()
     edits_mock_app.sess["undo_stack"] = []
     edits_mock_app.sess["redo_stack"] = [_stack_entry("MAT-1")]
+    edits_mock_app.fail_status = 404  # row gone: can never apply
     edits_mock_app.fail_next_volume_call = True
 
     response = edits_mock_app.client.post("/api/redo")
 
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert edits_mock_app.sess["redo_stack"] == []
     assert edits_mock_app.sess["undo_stack"] == []
+
+
+@pytest.mark.no_fixture
+def test_undo_with_a_non_permanent_error_keeps_the_step(edits_mock_app):  # noqa: F811
+    """Only 403/404 mean 'can never apply'. Any other error leaves the step
+    on the stack it came from, to be tried again."""
+    edits_mock_app.make_session()
+    entry = _stack_entry("MAT-1")
+    edits_mock_app.sess["undo_stack"] = [entry]
+    edits_mock_app.sess["redo_stack"] = []
+    edits_mock_app.fail_status = 400
+    edits_mock_app.fail_next_volume_call = True
+
+    response = edits_mock_app.client.post("/api/undo")
+
+    assert response.status_code == 400
+    assert edits_mock_app.sess["undo_stack"] == [entry]
+    assert edits_mock_app.sess["redo_stack"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -289,3 +309,129 @@ def test_sync_edits_is_all_or_nothing_and_uses_canonical_keys(edit_state_app):  
     assert response.status_code == 200
     assert edit_state_app.sessions[session_id]["pending_edits"] == {
         "01. Demand forecast||MAT-1||150||2025-12": {"original": 1.0, "new_value": 2.0}}
+
+
+# ---------------------------------------------------------------------------
+# Round 2 (review by a second model): bulk undo is all-or-nothing
+# ---------------------------------------------------------------------------
+
+def _forecast_cells(engine, count=3):
+    cells = []
+    for row in engine.results.get(LineType.DEMAND_FORECAST.value, []):
+        period = engine.data.periods[1]
+        if float(row.get_value(period)) > 0:
+            cells.append((row.material_number, row.aux_column, period, float(row.get_value(period))))
+        if len(cells) == count:
+            return cells
+    raise AssertionError("not enough forecast cells with a value")
+
+
+def _snapshot_numbers(engine):
+    from ui.pending_edits import aux_str
+    out = {}
+    for lt, rows in engine.results.items():
+        for r in rows:
+            out.setdefault((lt, str(r.material_number), aux_str(r.aux_column)), []).append(
+                {p: round(float(v), 6) for p, v in r.values.items()})
+    return out
+
+
+def _undo_client(sess, apply_fn):
+    """The real edits blueprint around one live session, with the real
+    engine snapshot/restore (the shared fixture stubs those out)."""
+    from flask import Flask
+
+    from ui.routes.edits import create_edits_blueprint
+    from ui.state_snapshot import restore_engine_state
+
+    def unused(*args, **kwargs):
+        raise AssertionError("not expected in this test")
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    app.config["PROPAGATE_EXCEPTIONS"] = True
+    app.register_blueprint(create_edits_blueprint(
+        lambda: (sess, sess["engine"]), set(), {}, apply_fn,
+        unused, unused, lambda: None, unused,
+        lambda engine, snapshot: restore_engine_state(engine, snapshot, {}),
+        unused, unused, unused,
+    ))
+    return app.test_client()
+
+
+def test_bulk_undo_that_fails_halfway_leaves_engine_and_history_untouched(edit_route_app):
+    """A bulk undo applies its cells one by one. When the third raises, the
+    first two used to stay applied while both stacks were put back: the
+    history then described a plan the engine no longer held."""
+    sess = edit_route_app.make_session()
+    engine = sess["engine"]
+    cells = _forecast_cells(engine)
+    group = "bulk-1"
+    with edit_route_app.app.app_context():
+        for mat, aux, period, value in cells:
+            apply_volume_change(sess, engine, LineType.DEMAND_FORECAST.value, mat, period,
+                                value + 100.0, aux_column=aux)
+    for entry in sess["undo_stack"][-3:]:
+        entry["group_id"] = group
+    before_numbers = _snapshot_numbers(engine)
+    before_pending = dict(sess["pending_edits"])
+    before_undo = [dict(e) for e in sess["undo_stack"]]
+
+    calls = {"n": 0}
+
+    def failing_apply(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("injected failure on the third cell")
+        return apply_volume_change(*args, **kwargs)
+
+    client = _undo_client(sess, failing_apply)
+    with pytest.raises(RuntimeError):
+        client.post("/api/undo")
+    assert calls["n"] == 3
+
+    assert _snapshot_numbers(engine) == before_numbers
+    assert sess["pending_edits"] == before_pending
+    assert [dict(e) for e in sess["undo_stack"]] == before_undo
+    assert sess.get("redo_stack", []) == []
+
+
+def test_bulk_undo_completes_and_moves_the_whole_group(edit_route_app):
+    sess = edit_route_app.make_session()
+    engine = sess["engine"]
+    cells = _forecast_cells(engine)
+    before_numbers = _snapshot_numbers(engine)
+    with edit_route_app.app.app_context():
+        for mat, aux, period, value in cells:
+            apply_volume_change(sess, engine, LineType.DEMAND_FORECAST.value, mat, period,
+                                value + 100.0, aux_column=aux)
+    for entry in sess["undo_stack"][-3:]:
+        entry["group_id"] = "bulk-2"
+
+    response = _undo_client(sess, apply_volume_change).post("/api/undo")
+
+    assert response.status_code == 200, response.get_json()
+    assert len(sess["redo_stack"]) == 3
+    assert sess["pending_edits"] == {}
+    after_numbers = _snapshot_numbers(engine)
+    for key, values in before_numbers.items():
+        if key[0] == LineType.DEMAND_FORECAST.value:
+            assert after_numbers[key] == values, key
+
+
+@pytest.mark.no_fixture
+@pytest.mark.parametrize("edits", [
+    {"": {"original": 1, "new_value": 2}},
+    {"01. Demand forecast||MAT-1||150||2025-12": {"original": 1, "new_value": 2},
+     "01. Demand forecast||MAT-1|| 150 ||2025-12": {"original": 1, "new_value": 3}},
+])
+def test_sync_refuses_empty_or_conflicting_keys(edit_state_app, edits):  # noqa: F811
+    session_id = edit_state_app.add_session()
+    kept = {"01. Demand forecast||MAT-0||||2025-12": {"original": 1.0, "new_value": 2.0}}
+    edit_state_app.sessions[session_id]["pending_edits"] = dict(kept)
+
+    response = edit_state_app.client.post(
+        "/api/sessions/edits/sync", json={"session_id": session_id, "edits": edits})
+
+    assert response.status_code == 400
+    assert edit_state_app.sessions[session_id]["pending_edits"] == kept

@@ -4,6 +4,7 @@ The volume cascade itself stays in ui.app for now and is injected here as
 apply_volume_change. This keeps this module as route orchestration only.
 """
 
+import copy
 import io
 import json
 import math
@@ -15,7 +16,16 @@ from flask import Blueprint, jsonify, request, send_file
 
 from modules.models import LineType
 from ui.pending_edits import trim_stack_group_aware
-from ui.volume_change import recalculate_capacity_and_values
+from ui.state_snapshot import snapshot_engine_state
+from ui.volume_change import SHIFT_HOURS_LOOKUP_FALLBACK, recalculate_capacity_and_values
+
+
+# apply_volume_change statuses that mean "this entry can never apply here".
+_PERMANENT_REFUSALS = {403, 404}
+
+# Session stores an edit cascade writes to; restored with the engine when a
+# bulk undo/redo step fails halfway.
+_EDIT_STATE_KEYS = ('pending_edits', 'capacity_overrides', 'inventory_overrides')
 
 
 def _finite_number(value):
@@ -233,9 +243,11 @@ def create_edits_blueprint(
         response (preserving edit_meta for the caller). Grouped entries
         defer the whole-plan capacity+value recalc to one final pass.
 
-        Returns ``(response, failed)``: the entries apply_volume_change
-        refused (4xx — the row no longer exists after a rebuild or PAP
-        change). The caller keeps those off the opposite stack."""
+        Returns ``(response, refused, other_error)``. ``refused`` are the
+        entries apply_volume_change rejected as permanently inapplicable
+        (403 line type not editable, 404 row gone after a rebuild or PAP
+        change). ``other_error`` is the first response with any other error
+        status; it is not evidence that the entry can never apply."""
         if len(entries) == 1:
             e = entries[0]
             response = apply_volume_change(
@@ -243,9 +255,12 @@ def create_edits_blueprint(
                 e['line_type'], e['material_number'], e['period'],
                 e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
             )
-            return response, ([e] if _response_status(response) >= 400 else [])
-        failed = []
-        first_error = None
+            status = _response_status(response)
+            if status in _PERMANENT_REFUSALS:
+                return response, [e], None
+            return response, [], (response if status >= 400 else None)
+        refused = []
+        first_refusal = None
         for e in entries:
             response = apply_volume_change(
                 sess, current_engine,
@@ -253,16 +268,29 @@ def create_edits_blueprint(
                 e[value_key], aux_column=e.get('aux_column', ''), push_undo=False,
                 defer_recalc=True,
             )
-            if _response_status(response) >= 400:
-                failed.append(e)
-                first_error = first_error or response
+            status = _response_status(response)
+            if status in _PERMANENT_REFUSALS:
+                refused.append(e)
+                first_refusal = first_refusal or response
+            elif status >= 400:
+                return response, refused, response
         recalculate_capacity_and_values(current_engine, sess)
-        if len(failed) == len(entries):
-            return first_error, failed
+        if len(refused) == len(entries):
+            return first_refusal, refused, None
         extra = {'group_size': len(entries)}
-        if failed:
-            extra['skipped'] = len(failed)
-        return jsonify(_engine_state_response(current_engine, extra)), failed
+        if refused:
+            extra['skipped'] = len(refused)
+        return jsonify(_engine_state_response(current_engine, extra)), refused, None
+
+    def _session_edit_state(sess):
+        return {key: copy.deepcopy(sess.get(key)) for key in _EDIT_STATE_KEYS}
+
+    def _restore_session_edit_state(sess, saved):
+        for key, value in saved.items():
+            if value is None:
+                sess.pop(key, None)
+            else:
+                sess[key] = value
 
     def _move_group(sess, current_engine, from_stack, to_stack, value_key, forward):
         """Undo or redo one step. The stacks follow the ENGINE: an entry moves
@@ -271,18 +299,38 @@ def create_edits_blueprint(
         Before, the entry was moved first and applied second, so a refused
         entry (its row gone after a rebuild) still landed on the opposite
         stack; redo then failed the same way and moved it back, for ever
-        (BUGS.md M21). A refused entry can never be applied again, so it is
-        dropped and the error is returned; the rest of a bulk group is kept.
-        An unexpected exception leaves both stacks as they were."""
+        (BUGS.md M21). Now:
+        - a permanently refused entry (403/404) is dropped, the rest of a bulk
+          group is applied and moved;
+        - any other failure (an exception, or another error status) rolls a
+          bulk group back as a whole: the engine and the session's edit stores
+          return to their state before the step and the entries go back on the
+          stack they came from. Without that, entries applied before the
+          failure stayed in the engine while the history said otherwise.
+        The same holds for a single edit: an exception halfway through its
+        cascade can leave part of it applied, so every step is snapshotted.
+        The snapshot is taken BEFORE the step leaves its stack: if taking it
+        fails, nothing has moved yet."""
+        snapshot = snapshot_engine_state(current_engine, SHIFT_HOURS_LOOKUP_FALLBACK)
+        saved_edit_state = _session_edit_state(sess)
         entries = _pop_group(from_stack)
         ordered = list(reversed(entries)) if forward else entries
-        try:
-            response, failed = _apply_entries(sess, current_engine, ordered, value_key)
-        except Exception:
+
+        def _roll_back():
+            restore_engine_state(current_engine, snapshot)
+            _restore_session_edit_state(sess, saved_edit_state)
             from_stack.extend(reversed(entries))
+
+        try:
+            response, refused, other_error = _apply_entries(sess, current_engine, ordered, value_key)
+        except Exception:
+            _roll_back()
             raise
-        failed_ids = {id(e) for e in failed}
-        to_stack.extend(e for e in entries if id(e) not in failed_ids)
+        if other_error is not None:
+            _roll_back()
+            return other_error
+        refused_ids = {id(e) for e in refused}
+        to_stack.extend(e for e in entries if id(e) not in refused_ids)
         trim_stack_group_aware(to_stack)
         return response
 

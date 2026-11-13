@@ -55,13 +55,14 @@ def test_cycle_manager_save_current_as_previous_writes_snapshot_and_metadata(
 
     manager.save_current_as_previous(df, planning_month="2025-12")
 
-    # Written beside the target and swapped in (atomic; BUGS.md L7).
-    assert captured["path"] == manager._path.with_name(manager._path.name + ".tmp")
+    # Written beside the target under a unique name and swapped in (BUGS.md L7).
+    assert captured["path"].parent == manager._path.parent
+    assert captured["path"].name.startswith(manager._path.name + ".")
     assert not captured["path"].exists()
     assert manager._path.read_bytes() == b"parquet"
     assert captured["index"] is False
     assert manager.has_previous_cycle() is True
-    assert manager.load_metadata() == {"planning_month": "2025-12"}
+    assert manager.load_metadata()["planning_month"] == "2025-12"
     assert captured["df"]["material"].iloc[0] == "MAT-1"
     assert pd.isna(captured["df"]["material"].iloc[1])
     assert captured["df"]["mixed"].tolist() == ["{'a': 1}", "text"]
