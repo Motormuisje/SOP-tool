@@ -105,6 +105,9 @@ def scenarios_route_app(tmp_path):
         ),
     )
 
+    # As in the app: a session dict carries its engine.
+    sessions["session-a"]["engine"] = engine
+
     def get_active():
         return sessions.get(active["session_id"]), engine
 

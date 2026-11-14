@@ -435,3 +435,58 @@ def test_sync_refuses_empty_or_conflicting_keys(edit_state_app, edits):  # noqa:
 
     assert response.status_code == 400
     assert edit_state_app.sessions[session_id]["pending_edits"] == kept
+
+
+
+@pytest.mark.no_fixture
+def test_a_number_too_large_for_a_float_is_refused_not_a_500(edit_state_app):  # noqa: F811
+    """json.loads turns a 400-digit literal into a Python int; float() then
+    raises OverflowError, which the first version of the helper did not catch."""
+    session_id = edit_state_app.add_session()
+    body = ('{"session_id": "%s", "key": "01. Demand forecast||MAT-1||||2025-12", '
+            '"original": 1, "new_value": 1%s}') % (session_id, '0' * 400)
+
+    response = edit_state_app.client.post('/api/sessions/edits/persist', data=body,
+                                          content_type='application/json')
+
+    assert response.status_code == 400
+
+
+def test_failed_bulk_redo_removes_a_store_the_step_created(edit_route_app):
+    """Mutation test gap: when a store did not exist before the step, the
+    rollback must remove it again. Redo is the path that creates one: it
+    applies a new starting stock, and the starting-stock store comes into
+    being with it (undoing to the original never creates it)."""
+    sess = edit_route_app.make_session()
+    engine = sess["engine"]
+    material = next(r.material_number for r in engine.results[LineType.INVENTORY.value]
+                    if float(r.starting_stock or 0) > 0)
+    original = float(_row(engine, LineType.INVENTORY.value, material).starting_stock)
+    mat, aux, period, value = _forecast_cells(engine, count=1)[0]
+    sess.pop("inventory_overrides", None)
+    sess["undo_stack"] = []
+    # _pop_group takes the top entry first and redo replays in reverse, so the
+    # stack's bottom entry runs first: the starting stock, then the forecast.
+    sess["redo_stack"] = [
+        {"line_type": LineType.INVENTORY.value, "material_number": material, "aux_column": "",
+         "period": "starting_stock", "old_value": original, "new_value": original + 500.0, "group_id": "g"},
+        {"line_type": LineType.DEMAND_FORECAST.value, "material_number": mat, "aux_column": aux,
+         "period": period, "old_value": value, "new_value": value + 100.0, "group_id": "g"},
+    ]
+    applied = []
+    calls = {"n": 0}
+
+    def failing_apply(*args, **kwargs):
+        calls["n"] += 1
+        applied.append(args[2])
+        if calls["n"] == 2:
+            raise RuntimeError("injected failure on the second cell")
+        return apply_volume_change(*args, **kwargs)
+
+    with pytest.raises(RuntimeError):
+        _undo_client(sess, failing_apply).post("/api/redo")
+
+    # The store was created by the first step; the test is only meaningful if so.
+    assert applied == [LineType.INVENTORY.value, LineType.DEMAND_FORECAST.value]
+    assert "inventory_overrides" not in sess
+    assert _row(engine, LineType.INVENTORY.value, material).starting_stock == pytest.approx(original)

@@ -1,50 +1,50 @@
-"""Aannames voor klantdata die nog ontbreekt (Maastricht-uitgave).
+"""Assumptions for client data that is still missing (Maastricht edition).
 
-De klant levert een aantal invoerwaarden pas later aan; de informatie-uitvraag
-van 9 november 2026 zegt voor die gevallen uitdrukkelijk: "een eerste
-indicatie volstaat, het is een instelling die jullie later zelf aanpassen".
-Deze module vult zulke gaten met een AANNAME: een getal uit een vaste,
-gedocumenteerde regel, dat in de masterdata staat als elk ander getal en daar
-gewoon te wijzigen is.
+The client delivers some inputs later; the information request of
+9 November 2026 says so explicitly for these cases: "a first indication is
+enough; it is a setting you adjust yourselves later". This module fills such
+gaps with an ASSUMPTION: a number from a fixed, documented rule, stored in the
+master data like any other number and editable there.
 
-Wat een aanname onderscheidt van klantdata, staat in het record zelf:
+What tells an assumption apart from client data is in the record itself:
 
-- ``origin = 'aanname'``, ``origin_rule`` (welke regel, welke versie) en
-  ``origin_value`` (de gegenereerde waarde). Een record waarvan de waarde nog
-  gelijk is aan ``origin_value`` is een ongewijzigde aanname; wijkt de waarde
-  af, dan heeft iemand hem aangepast en blijft hij altijd staan.
-- ``origin = 'bevestigd'``: de gebruiker heeft de aanname uitdrukkelijk als
-  juist aangemerkt. Ook die blijft altijd staan.
-- de toelichting begint met "Aanname", zodat het in het masterdata-grid en in
-  het masterwerkboek zichtbaar is zonder kolom erbij.
+- ``origin = 'aanname'``, ``origin_rule`` (which rule, which version) and
+  ``origin_value`` (the generated value). A record whose value still equals
+  ``origin_value`` is an unchanged assumption; once the value differs,
+  somebody adjusted it and it is never removed automatically.
+- ``origin = 'bevestigd'``: a user explicitly marked the assumption as
+  correct. Also never removed automatically.
+- the description starts with "Aanname", so it shows in the master-data grid
+  and the master workbook without an extra column.
 
-Bewust NIET gegenereerd:
+Deliberately NOT generated:
 
-- bemensingsnormen en loontarieven: de motor heeft daar al een werkende
-  terugval (de Line-12-coëfficiënt, het 'default'-tarief). Een kopie van die
-  terugval als record zou haar bevriezen en een later aangeleverde
-  klantwaarde maskeren.
-- doorzet-overrides en MES/PEER-benchmarks: dat zijn metingen of
-  gezaghebbende klantgetallen; een verzonnen meting misleidt.
+- staffing norms and labour rates: the engine already has a working fallback
+  there (the Line 12 coefficient, the 'default' rate). Copying that fallback
+  into records would freeze it and hide a client value delivered later.
+- throughput overrides and MES/PEER benchmarks: measurements or authoritative
+  client figures; an invented measurement misleads.
 
-Alleen de Maastricht-uitgave kent omsteltijden; de site-uitgaven bevatten
-deze module niet.
+Only the Maastricht edition has changeover times; the site editions do not
+contain this module. The origin values ('aanname', 'bevestigd') and the
+generated descriptions are Dutch: they are shown in the UI.
 """
 
 from __future__ import annotations
 
 import copy
-import math
 from typing import Dict, List, Optional, Tuple
+
+from modules.numeric import finite_float as _as_float
 
 ORIGIN_ASSUMED = 'aanname'
 ORIGIN_CONFIRMED = 'bevestigd'
 
-# Regelset voor omsteltijden, op het SAP-machinecodeprefix (de naamgeving van
-# de klant: PML maalinstallatie, PBA afvul-/zakmachine, PSS breker, PWP zeef,
-# PPM menging/voorbereiding). Uren per omstelling; een orde van grootte, geen
-# meting. Wie de regel wijzigt, verhoogt de versie: bestaande aannames houden
-# hun eigen origin_value en worden dus nooit stil 'aangepast'.
+# Changeover rule set, by SAP machine-code prefix (the client's naming: PML
+# mill, PBA bagging, PSS crusher, PWP sieve, PPM mixing/preparation). Hours per
+# changeover; an order of magnitude, not a measurement. Changing the rule means
+# a new version: existing assumptions keep their own origin_value and so never
+# silently turn into 'aangepast'.
 CHANGEOVER_RULESET = 'omstel-v1'
 CHANGEOVER_RULES: List[Tuple[str, float, str]] = [
     ('PML', 2.0, 'maalinstallatie'),
@@ -103,25 +103,15 @@ def changeover_placeholders(master: dict) -> Dict[str, dict]:
     return out
 
 
-def _as_float(value) -> Optional[float]:
-    """A finite float, else None. NaN compares unequal to everything, so a
-    NaN value would otherwise slip through the equality checks below."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
 def origin_state(record: dict) -> str:
-    """'' (klant/gebruiker), 'aanname' (ongewijzigd), 'aangepast' (een aanname
-    waarvan de waarde gewijzigd is) of 'bevestigd'.
+    """'' (client/user), 'aanname' (unchanged), 'aangepast' (an assumption
+    whose value was changed) or 'bevestigd'.
 
-    De toestand volgt uit de HUIDIGE waarde, niet uit de bewerkgeschiedenis:
-    wie een aanname wijzigt en daarna precies terugzet, heeft weer een
-    ongewijzigde aanname (die dus ook weer te verwijderen is). Een record met
-    een ongeldige waarde (leeg, NaN, oneindig) telt als aangepast: verwijderen
-    of bevestigen mag nooit op een waarde berusten die niet te vergelijken is."""
+    The state follows the CURRENT value, not the edit history: changing an
+    assumption and setting it back exactly gives an unchanged assumption again
+    (which can therefore be removed again). A record with an unreadable value
+    (blank, NaN, infinite) counts as adjusted: removing or confirming must
+    never rest on a value that cannot be compared."""
     origin = str((record or {}).get('origin') or '')
     if origin == ORIGIN_CONFIRMED:
         return ORIGIN_CONFIRMED
@@ -132,7 +122,7 @@ def origin_state(record: dict) -> str:
     if current is None or generated is None or abs(current - generated) > 1e-9:
         return 'aangepast'
     if (record or {}).get('cost_per_hour') not in (None, ''):
-        # Een eigen tarief toegevoegd: iemand heeft deze regel bewust aangevuld.
+        # An own rate was added: somebody deliberately completed this record.
         return 'aangepast'
     return ORIGIN_ASSUMED
 

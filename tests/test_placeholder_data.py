@@ -282,3 +282,34 @@ def test_two_simultaneous_saves_on_one_version_only_one_wins(ph_app):
     assert record['version'] == version + 1
     assert all(origin_state(r) == 'aanname'
                for r in record['master']['changeover_times'].values() if r.get('origin'))
+
+
+
+def test_confirming_a_record_without_a_rule_names_the_current_ruleset():
+    """A mutation test showed the description's fallback was untested."""
+    master, _ = apply_placeholders(_master())
+    master['changeover_times']['PML01']['origin_rule'] = ''
+
+    confirmed, _ = confirm_placeholders(master, ['PML01'])
+
+    assert f'regel {CHANGEOVER_RULESET}' in confirmed['changeover_times']['PML01']['description']
+
+
+def test_route_confirms_only_the_requested_machines(ph_app):
+    """Mutation test gap: the route's `keys` selection was never exercised."""
+    ph_app.seed()
+    version = ph_app.client.get('/api/machine_inzet/placeholders').get_json()['version']
+    applied = ph_app.client.post('/api/machine_inzet/placeholders',
+                                 json={'action': 'apply', 'base_version': version}).get_json()
+    first = applied['assumed'][0]
+
+    bad = ph_app.client.post('/api/machine_inzet/placeholders',
+                             json={'action': 'confirm', 'keys': first, 'base_version': applied['version']})
+    assert bad.status_code == 400
+
+    body = ph_app.client.post('/api/machine_inzet/placeholders',
+                              json={'action': 'confirm', 'keys': [first],
+                                    'base_version': applied['version']}).get_json()
+    assert body['changed'] == [first]
+    assert body['confirmed'] == [first]
+    assert first not in body['assumed'] and len(body['assumed']) == len(applied['assumed']) - 1

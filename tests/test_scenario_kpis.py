@@ -286,3 +286,75 @@ def test_older_scenarios_take_the_current_unlimited_list_and_say_so(scenarios_ro
 
     assert body['columns'][0]['unlimited_assumed'] is True
     assert body['columns'][1]['unlimited_assumed'] is False
+
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11: defects found in this module by review, each pinned here
+# ---------------------------------------------------------------------------
+
+class TestAuditFindings:
+    def test_recorded_horizon_wins_over_a_sparse_first_row(self):
+        results, values = _synthetic()
+        results[LineType.DEMAND_FORECAST.value] = [
+            _row(LineType.DEMAND_FORECAST.value, {'2026-01': 1.0}, material='SPARSE')]
+        assert compute_kpis(results, values, periods=P)['periods'] == P
+        # Without a recorded horizon the union of the rows is used, not the first row.
+        results[LineType.DEMAND_FORECAST.value].append(
+            _row(LineType.DEMAND_FORECAST.value, dict(zip(P, (1.0, 1.0, 1.0))), material='FULL'))
+        assert compute_kpis(results, values)['periods'] == P
+
+    @pytest.mark.parametrize('bad', [[], 'abc', [1, 2], None, ['2026-01', '']])
+    def test_an_invalid_recorded_horizon_falls_back_to_the_rows(self, bad):
+        results, values = _synthetic()
+        assert compute_kpis(results, values, periods=bad)['periods'] == P
+
+    def test_unreadable_figures_are_unknown_not_zero(self):
+        results, values = _synthetic()
+        values[LineType.CONSOLIDATION.value][0]['aux_2_column'] = 'n/a'
+        results[LineType.TOTAL_DEMAND.value][0]['values']['2026-02'] = 'abc'
+        results[LineType.FTE_REQUIREMENTS.value][0]['values']['2026-03'] = float('nan')
+        out = compute_kpis(results, values)
+        assert out['kpis']['ebit'] is None
+        assert out['kpis']['total_demand'] is None
+        assert out['kpis']['fte_avg'] is None
+        # A blank aux_2 is the engine's way of writing 0 and stays 0.
+        assert out['kpis']['roce'] == 0.0
+
+    def test_unknown_figures_give_no_delta(self):
+        a_res, a_val = _synthetic()
+        b_res, b_val = _synthetic()
+        b_val[LineType.CONSOLIDATION.value][0]['aux_2_column'] = 'n/a'
+        out = compare([{'name': 'A', 'results': a_res, 'value_results': a_val},
+                       {'name': 'B', 'results': b_res, 'value_results': b_val}])
+        assert out['columns'][1]['deltas']['ebit'] is None
+
+    def test_only_the_charted_series_is_sent(self):
+        out = compute_kpis(*_synthetic())
+        assert set(out['series']) == {'ebit'}
+
+
+
+@pytest.mark.no_fixture
+def test_older_scenarios_are_ranked_without_the_current_unlimited_machines(scenarios_route_app):  # noqa: F811
+    """Mutation test gap: the earlier test checked the flag, not that the
+    fallback list is actually used. PBA99 runs at exactly 100 % (unlimited);
+    with the fallback it must not top the ranking of an older scenario."""
+    from types import SimpleNamespace
+
+    app = scenarios_route_app
+    app.engine.data.config = SimpleNamespace(unlimited_capacity_machine=['PBA99'])
+    sid = app.client.post('/api/scenarios/save', json={'name': 'Nieuw'}).get_json()['scenario_id']
+    util = LineType.UTILIZATION_RATE.value
+    rows = [_row(util, dict(zip(P, (1.0, 1.0, 1.0))), material='Z_M9', name='PBA99'),
+            _row(util, dict(zip(P, (0.4, 0.5, 0.6))), material='Z_M1', name='PML01')]
+    for scenario_id in (sid,):
+        app.scenarios[scenario_id]['results'][util] = rows
+    old = dict(app.scenarios[sid], name='Oud')
+    old.pop('unlimited_machines')
+    app.scenarios['old'] = old
+
+    body = app.client.post('/api/scenarios/kpis', json={'scenario_ids': ['old', sid]}).get_json()
+
+    for column in body['columns']:
+        assert [m['machine'] for m in column['exceptions']['top_machines']] == ['PML01'], column['name']

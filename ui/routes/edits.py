@@ -7,7 +7,6 @@ apply_volume_change. This keeps this module as route orchestration only.
 import copy
 import io
 import json
-import math
 import uuid
 from datetime import datetime
 from typing import Callable
@@ -16,6 +15,8 @@ from flask import Blueprint, jsonify, request, send_file
 
 from ui.serializers import row_payload
 from modules.models import LineType
+# A malformed, non-finite or overflowing number is refused with a 400.
+from modules.numeric import finite_float as _finite_number
 from ui.pending_edits import trim_stack_group_aware
 from ui.state_snapshot import snapshot_engine_state
 from ui.volume_change import SHIFT_HOURS_LOOKUP_FALLBACK, recalculate_capacity_and_values
@@ -27,17 +28,6 @@ _PERMANENT_REFUSALS = {403, 404}
 # Session stores an edit cascade writes to; restored with the engine when a
 # bulk undo/redo step fails halfway.
 _EDIT_STATE_KEYS = ('pending_edits', 'capacity_overrides', 'inventory_overrides')
-
-
-def _finite_number(value):
-    """float(value), or None when it is not a finite number. A malformed
-    value used to raise inside the route (an HTML 500); NaN or infinity was
-    accepted and ran through the cascade."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def _response_status(response) -> int:

@@ -311,8 +311,8 @@ def build_machine_inzet(engine, sess: dict, changeovers: dict,
     }
 
 
-# Sites waarvoor de tool omsteltijd-aannames mag genereren. Machine-inzet is
-# alleen aan Maastricht verkocht.
+# Sites for which the tool may generate changeover assumptions. Machine-inzet
+# was sold to Maastricht only.
 PLACEHOLDER_SITES = {'NLX1'}
 
 
@@ -333,7 +333,7 @@ def _changeovers_from_store(engine, master: Optional[dict] = None) -> dict:
         h = _num(hours)
         c = _num(cost)
         return {
-            # Herkomst: '' klant/gebruiker, 'aanname', 'aangepast', 'bevestigd'.
+            # Provenance: '' client/user, 'aanname', 'aangepast', 'bevestigd'.
             'origin': origin_state(record) if isinstance(record, dict) else '',
             # Een record = ingevuld; onleesbare of negatieve uren tellen als 0.
             'hours_per_changeover': h if h is not None and h >= 0 else 0.0,
@@ -464,9 +464,9 @@ def create_machine_inzet_blueprint(
         save_sessions_to_disk()
         return jsonify({'success': True, 'sequences': sequences, 'warnings': warnings})
 
-    # -- Aannames voor ontbrekende omsteltijden ------------------------------
-    # Alleen in deze uitgave (het tabblad bestaat alleen hier) en alleen voor
-    # de sites in PLACEHOLDER_SITES: de route weigert zelf, niet alleen de UI.
+    # -- Assumptions for missing changeover times ----------------------------
+    # Only in this edition (the tab exists only here) and only for the sites in
+    # PLACEHOLDER_SITES: the route itself refuses, not just the UI.
 
     def _placeholder_record():
         from ui import master_store
@@ -489,9 +489,10 @@ def create_machine_inzet_blueprint(
 
     @bp.route('/api/machine_inzet/placeholders', methods=['POST'])
     def change_placeholders():
-        """apply: vul ontbrekende omsteltijden met een aanname. remove: haal de
-        ONGEWIJZIGDE aannames weg. confirm: markeer ongewijzigde aannames (alle,
-        of `keys`) als bevestigd. Altijd op de versie waarop de client keek."""
+        """apply: fill missing changeover times with an assumption. remove:
+        take out the UNCHANGED assumptions. confirm: mark unchanged assumptions
+        (all, or `keys`) as confirmed. Always against the version the client
+        looked at."""
         from ui import master_mirror
         from ui.routes.master_data import (
             _VERSION_CONFLICT_ERROR,

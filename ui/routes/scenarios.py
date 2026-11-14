@@ -106,16 +106,16 @@ def snapshot_engine_results(engine) -> tuple:
 
 
 def _engine_master_version(engine):
-    """De masterdataversie waaruit DEZE engine is berekend (niet de versie die
-    nu in de store staat). None zonder app-masterdata of bij een engine die
-    van vóór deze registratie stamt."""
+    """The master-data version THIS engine was calculated from (not the one
+    in the store now). None without app master data, or for an engine built
+    before this was recorded."""
     source = getattr(engine, '_resolved_master_source', None)
     return getattr(source, 'version', None)
 
 
 def _engine_unlimited_machines(engine) -> list:
-    """Machines met onbeperkte capaciteit (Config MachineUnlimitedCapacity):
-    hun benutting staat altijd op 1,0 en hoort niet in de ranglijst."""
+    """Machines with unlimited capacity (Config MachineUnlimitedCapacity):
+    their utilization is always 1.0 and does not belong in the ranking."""
     config = getattr(getattr(engine, 'data', None), 'config', None)
     return sorted(str(m) for m in (getattr(config, 'unlimited_capacity_machine', None) or []))
 
@@ -215,9 +215,9 @@ def create_scenarios_blueprint(
             'session_id': active_session_id,
             'timestamp': datetime.now().isoformat(),
             'edit_count': total_edits,
-            # Horizon en masterdataversie waarop dit scenario berekend is: de
-            # vergelijking toont deltas alleen bij dezelfde horizon, en kan zo
-            # zeggen of een scenario op oudere masterdata rust.
+            # Horizon and master-data version this scenario was calculated on:
+            # the comparison shows deltas only for the same horizon, and can
+            # say whether a scenario rests on older master data.
             'periods': list(getattr(getattr(current_engine, 'data', None), 'periods', None) or []),
             'master_version': _engine_master_version(current_engine),
             'unlimited_machines': _engine_unlimited_machines(current_engine),
@@ -225,11 +225,11 @@ def create_scenarios_blueprint(
             'value_results': value_snapshot,
             'pending_edits': pending_snapshot,
             'value_aux_overrides': json.loads(json.dumps(active_session.get('value_aux_overrides', {}))),
-            # VP en PAP uit de ENGINE waarvan hierboven de resultaten zijn
-            # vastgelegd, niet uit de globale spiegel: die loopt achter na het
-            # verwijderen van de actieve instantie en na upload+bereken, en
-            # dan bewaarde het scenario de VP/PAP van een ándere instantie
-            # (laden schreef ze vervolgens in deze engine; BUGS.md M14).
+            # VP and PAP from the ENGINE whose results are recorded above, not
+            # from the global mirror: the mirror lags after deleting the active
+            # instance and after upload+calculate, and the scenario then stored
+            # another instance's VP/PAP (loading wrote them into this engine;
+            # BUGS.md M14).
             'valuation_params': _scenario_valuation_params(current_engine, global_config),
             'purchased_and_produced': _scenario_pap(
                 current_engine, global_config, format_purchased_and_produced),
@@ -447,8 +447,9 @@ def create_scenarios_blueprint(
 
     @bp.route('/api/scenarios/kpis', methods=['POST'])
     def scenario_kpis():
-        """Kerncijfers van tot vier kolommen naast elkaar: opgeslagen scenario's
-        van de actieve sessie en/of de huidige stand. De eerste kolom is de basis."""
+        """Key figures of up to four columns side by side: saved scenarios of
+        the active session and/or its current plan. The first column is the
+        base."""
         from ui.locks import engine_rebuild_lock
         from ui.scenario_kpis import compare
 
@@ -473,7 +474,12 @@ def create_scenarios_blueprint(
             return jsonify({'error': f'Maximaal {MAX_COMPARE_COLUMNS} kolommen, de huidige stand meegeteld.'}), 400
         if len(set(ids)) != len(ids):
             return jsonify({'error': 'Elk scenario mag maar één keer voorkomen.'}), 400
+        # One session for the whole request. A session switch does not take
+        # the rebuild lock, so asking "which session is active?" again later
+        # could pair this session's scenarios with another session's live
+        # plan. The session is read once and addressed directly from here on.
         active_session_id = get_active_session_id()
+        sess = sessions.get(active_session_id) if active_session_id else None
         columns = []
         for sid in ids:
             sc = scenarios.get(sid)
@@ -482,12 +488,13 @@ def create_scenarios_blueprint(
             if sc.get('session_id') != active_session_id:
                 return jsonify({'error': 'Scenarios belong to a different session'}), 403
             columns.append({**sc, 'id': sid})
+        engine_now = (sess or {}).get('engine')
         if include_current:
-            # Onder de rebuild-lock en de engine BINNEN de lock opgehaald: rijen
-            # en sessie-invoer komen zo uit één afgeronde berekening. Daarbuiten
-            # kon een herbouw de engine vervangen tussen ophalen en lezen.
+            # Under the rebuild lock: a rebuild of this session cannot swap its
+            # engine while the rows and inputs are read.
             with engine_rebuild_lock:
-                sess, current_engine = get_active()
+                current_engine = (sess or {}).get('engine')
+                engine_now = current_engine
                 if current_engine is None:
                     return jsonify({'error': 'De huidige stand is nog niet doorgerekend.'}), 400
                 results, values, edits = snapshot_engine_results(current_engine)
@@ -509,10 +516,9 @@ def create_scenarios_blueprint(
                 columns.insert(0, live)
             else:
                 columns.append(live)
-        # Scenario's van vóór de registratie van onbeperkte machines: de lijst
-        # van de huidige configuratie is de beste beschikbare (en staat zelden
-        # anders); zonder engine geen lijst.
-        _, engine_now = get_active()
+        # Scenarios saved before the unlimited-capacity machines were recorded:
+        # this session's current list is the best available (it rarely
+        # changes); without an engine there is none.
         fallback_unlimited = _engine_unlimited_machines(engine_now) if engine_now is not None else []
         for column in columns:
             if 'unlimited_machines' not in column:

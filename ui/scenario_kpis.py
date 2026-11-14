@@ -1,48 +1,57 @@
-"""Scenariovergelijking: kerncijfers per scenario, naast elkaar.
+"""Scenario comparison: key figures per scenario, side by side.
 
-Leest alleen wat de motor al heeft berekend en in een scenario-snapshot staat
-(``results`` en ``value_results`` als lijsten van rij-dicts). Er wordt niets
-herberekend en er is geen nieuwe bedrijfslogica:
+Reads what the engine already calculated and a scenario snapshot stores
+(``results`` and ``value_results`` as lists of row dicts). Nothing is
+recalculated, but the module does apply its own aggregation rules, listed
+here so they can be checked:
 
-- **Financieel**: het horizongetal van elke consolidatieregel staat in
-  ``aux_2_column`` en is precies wat de VBA daar zet (SOM voor stromen als
-  omzet en EBIT, GEMIDDELDE voor saldi als voorraadwaarde en werkkapitaal,
-  voor de voorraadwaarde inclusief de beginvoorraad; ROCE = totale EBIT /
-  gemiddeld geïnvesteerd vermogen). Dit module telt die regels niet zelf op.
-- **Volume**: sommen over materiaalregels (ton), eindvoorraad = laatste periode.
-- **Uitzonderingen**: materiaal-maanden met voorraad onder het minimumdoel
-  (Line 04 < Line 05, alleen materialen mét een doelregel) en met negatieve
-  voorraad. Een uitzonderingstelling, geen servicegraad.
-- **Capaciteit**: Line 10 (benuttingsgraad per machine, 1,0 = 100 %).
-  Overbelast = boven 100 %. Machines met onbeperkte capaciteit (Config
-  MachineUnlimitedCapacity, door de motor altijd op 1,0 gezet) tellen niet
-  mee in de top; welke dat zijn staat in het scenario zelf.
-- **FTE**: Line 12 (de VBA-FTE), per maand opgeteld en dan gemiddeld.
+- **Financial**: the horizon figure of each consolidation row is its
+  ``aux_2_column``, which the engine sets as the VBA does (SUM for flows such
+  as turnover and EBIT, AVERAGE for balances such as inventory value and
+  working capital, the inventory value including the starting stock; ROCE =
+  total EBIT / average capital investment). A blank aux_2 is the engine's
+  way of writing 0; a value that cannot be read is reported as unknown.
+- **Volume**: sums over the material rows (tonnes); ending inventory is the
+  last period. A missing period counts as 0 (the engine's default); a value
+  that cannot be read makes the figure unknown.
+- **Exceptions**: material-months with inventory below the minimum target
+  (Line 04 < Line 05, only materials that have a target row) and with
+  negative inventory. A count of exceptions, not a service level.
+- **Capacity**: Line 10 (utilization per machine, 1.0 = 100 %). Overloaded =
+  above 100 %. Machines with unlimited capacity (Config
+  MachineUnlimitedCapacity, always 1.0 in the engine) are left out of the
+  ranking. Planned hours on a machine with zero available capacity are
+  counted separately: the engine reports utilization 0 there.
+- **FTE**: Line 12 (the VBA FTE), summed per month, averaged over the horizon.
 
-Deltas worden alleen berekend als de horizon gelijk is aan die van de basis;
-anders zou een horizongetal (ROCE, een som) twee verschillende periodes
-vergelijken.
+The horizon is the one a scenario recorded when it was saved; it is inferred
+from the rows only for scenarios saved before that was recorded. Deltas are
+computed only when a column has the same horizon as the base.
+
+Labels are Dutch: they are UI copy.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Dict, Iterable, List, Optional
 
-LT_DEMAND_FORECAST = '01. Demand forecast'
-LT_TOTAL_DEMAND = '03. Total demand'
-LT_INVENTORY = '04. Inventory'
-LT_MIN_TARGET = '05. Minimum target stock'
-LT_PRODUCTION = '06. Production plan'
-LT_PURCHASE_RECEIPT = '06. Purchase receipt'
-LT_CAPACITY_UTILIZATION = '07. Capacity utilization'
-LT_AVAILABLE_CAPACITY = '09. Available capacity'
-LT_UTILIZATION = '10. Utilization rate'
-LT_FTE = '12. FTE requirements'
-LT_CONSOLIDATION = '13. Consolidation'
+from modules.models import LineType
+from modules.numeric import finite_float as _num
 
-# (sleutel, consolidatieregel, label, eenheid, richting). Richting: +1 hoger is
-# beter, -1 lager is beter, 0 neutraal (hoger is niet vanzelf beter of slechter).
+LT_DEMAND_FORECAST = LineType.DEMAND_FORECAST.value
+LT_TOTAL_DEMAND = LineType.TOTAL_DEMAND.value
+LT_INVENTORY = LineType.INVENTORY.value
+LT_MIN_TARGET = LineType.MIN_TARGET_STOCK.value
+LT_PRODUCTION = LineType.PRODUCTION_PLAN.value
+LT_PURCHASE_RECEIPT = LineType.PURCHASE_RECEIPT.value
+LT_CAPACITY_UTILIZATION = LineType.CAPACITY_UTILIZATION.value
+LT_AVAILABLE_CAPACITY = LineType.AVAILABLE_CAPACITY.value
+LT_UTILIZATION = LineType.UTILIZATION_RATE.value
+LT_FTE = LineType.FTE_REQUIREMENTS.value
+LT_CONSOLIDATION = LineType.CONSOLIDATION.value
+
+# (key, consolidation row, label, unit, direction). Direction: +1 higher is
+# better, -1 lower is better, 0 neutral (higher is not better or worse as such).
 FINANCIAL_KPIS = [
     ('turnover', 'ZZZZZZ_TURNOVER', 'Omzet', 'EUR', 0),
     ('cost_of_goods', 'ZZZZZZ_COST OF GOODS', 'Kostprijs omzet', 'EUR', 0),
@@ -55,7 +64,7 @@ FINANCIAL_KPIS = [
     ('roce', 'ZZZZZZ_ROCE', 'ROCE', 'ratio', 1),
 ]
 
-# Wat de vergelijking standaard toont; de rest staat achter 'meer cijfers'.
+# What the comparison shows by default; the rest is behind 'meer cijfers'.
 HEADLINE_KPIS = ['ebit', 'operational_cashflow', 'inventory_value', 'ending_inventory',
                  'stock_negative', 'overloaded_machine_months', 'no_capacity_months']
 
@@ -79,12 +88,18 @@ KPI_META.update({key: {'label': label, 'unit': unit, 'direction': direction}
 KPI_ORDER = HEADLINE_KPIS + [k for k in KPI_META if k not in HEADLINE_KPIS]
 
 
-def _num(value) -> Optional[float]:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+class _Unreadable(Exception):
+    """A value that is present but not a finite number."""
+
+
+def _value(raw) -> float:
+    """A cell value: missing is 0 (the engine's default), unreadable raises."""
+    if raw is None or raw == '':
+        return 0.0
+    number = _num(raw)
+    if number is None:
+        raise _Unreadable(raw)
+    return number
 
 
 def _rows(snapshot: dict, line_type: str) -> List[dict]:
@@ -92,55 +107,63 @@ def _rows(snapshot: dict, line_type: str) -> List[dict]:
 
 
 def snapshot_periods(results: dict) -> List[str]:
-    """The horizon of a snapshot: the period keys of its demand rows."""
+    """The horizon of a snapshot that did not record one: the union of the
+    period keys of its demand rows (a sparse first row must not shorten it)."""
     for line_type in (LT_DEMAND_FORECAST, LT_TOTAL_DEMAND, LT_INVENTORY):
+        keys = set()
         for row in _rows(results, line_type):
-            values = row.get('values') or {}
-            if values:
-                return sorted(values)
+            keys.update(str(p) for p in (row.get('values') or {}))
+        if keys:
+            return sorted(keys)
     return []
 
 
-def _sum_rows(rows: Iterable[dict], periods: List[str]) -> float:
-    total = 0.0
-    for row in rows:
-        values = row.get('values') or {}
-        for p in periods:
-            total += _num(values.get(p)) or 0.0
-    return total
+def _valid_periods(periods) -> Optional[List[str]]:
+    if isinstance(periods, list) and periods and all(isinstance(p, str) and p for p in periods):
+        return list(periods)
+    return None
+
+
+def _sum_rows(rows: Iterable[dict], periods: List[str]) -> Optional[float]:
+    try:
+        return sum(_value((row.get('values') or {}).get(p)) for row in rows for p in periods)
+    except _Unreadable:
+        return None
 
 
 def _consolidation(value_results: dict) -> Dict[str, dict]:
     return {str(r.get('material_number')): r for r in _rows(value_results, LT_CONSOLIDATION)}
 
 
-def compute_kpis(results: dict, value_results: dict, unlimited_machines=()) -> dict:
-    """Kerncijfers, per-periodereeksen en uitzonderingslijsten van één snapshot.
-    ``unlimited_machines``: machinecodes met onbeperkte capaciteit."""
+def compute_kpis(results: dict, value_results: dict, unlimited_machines=(), periods=None) -> dict:
+    """Key figures, the EBIT series and exception lists of one snapshot.
+    ``unlimited_machines``: machine codes with unlimited capacity.
+    ``periods``: the recorded horizon; inferred from the rows when absent."""
     unlimited_codes = {str(m).strip().upper() for m in (unlimited_machines or ())}
-    periods = snapshot_periods(results)
+    periods = _valid_periods(periods) or snapshot_periods(results)
     consol = _consolidation(value_results or {})
     kpis: Dict[str, Optional[float]] = {}
-    series: Dict[str, Dict[str, float]] = {}
+    series: Dict[str, Dict[str, Optional[float]]] = {}
 
     for key, row_name, _label, _unit, _direction in FINANCIAL_KPIS:
         row = consol.get(row_name)
         if row is None:
             kpis[key] = None
             continue
-        horizon = _num(row.get('aux_2_column'))
-        # De motor laat aux_2 leeg als het horizongetal 0 is (zie ROCE).
-        kpis[key] = horizon if horizon is not None else 0.0
-        series[key] = {p: _num((row.get('values') or {}).get(p)) or 0.0 for p in periods}
+        try:
+            kpis[key] = _value(row.get('aux_2_column'))
+        except _Unreadable:
+            kpis[key] = None
+        if key == 'ebit':  # the only series the comparison charts
+            series[key] = {p: _num((row.get('values') or {}).get(p)) for p in periods}
 
     kpis['total_demand'] = _sum_rows(_rows(results, LT_TOTAL_DEMAND), periods)
     kpis['production'] = _sum_rows(_rows(results, LT_PRODUCTION), periods)
     kpis['purchase_receipts'] = _sum_rows(_rows(results, LT_PURCHASE_RECEIPT), periods)
-    kpis['ending_inventory'] = _sum_rows(_rows(results, LT_INVENTORY), periods[-1:]) if periods else 0.0
+    kpis['ending_inventory'] = _sum_rows(_rows(results, LT_INVENTORY), periods[-1:]) if periods else None
 
-    targets = {}
-    for row in _rows(results, LT_MIN_TARGET):
-        targets[str(row.get('material_number'))] = row.get('values') or {}
+    targets = {str(row.get('material_number')): row.get('values') or {}
+               for row in _rows(results, LT_MIN_TARGET)}
     below, negative, eligible = [], [], 0
     for row in _rows(results, LT_INVENTORY):
         material = str(row.get('material_number'))
@@ -166,25 +189,24 @@ def compute_kpis(results: dict, value_results: dict, unlimited_machines=()) -> d
     overloaded, peaks = [], []
     for row in _rows(results, LT_UTILIZATION):
         values = {p: _num((row.get('values') or {}).get(p)) for p in periods}
-        present = [v for v in values.values() if v is not None]
-        if not present:
-            continue
+        present = {p: v for p, v in values.items() if v is not None}
         machine = str(row.get('material_name') or row.get('material_number'))
-        unlimited = machine.strip().upper() in unlimited_codes
-        for p, v in values.items():
-            if v is not None and v > 1.0 + 1e-9 and not unlimited:
+        if not present or machine.strip().upper() in unlimited_codes:
+            continue
+        for p, v in present.items():
+            if v > 1.0 + 1e-9:
                 overloaded.append({'machine': machine, 'group': row.get('product_family') or '',
                                    'period': p, 'utilization': v})
-        if not unlimited:
-            peak_period = max((p for p in values if values[p] is not None), key=lambda p: values[p])
-            peaks.append({'machine': machine, 'group': row.get('product_family') or '',
-                          'period': peak_period, 'utilization': values[peak_period]})
+        peak_period = max(present, key=present.get)
+        peaks.append({'machine': machine, 'group': row.get('product_family') or '',
+                      'period': peak_period, 'utilization': present[peak_period]})
     peaks.sort(key=lambda item: (-item['utilization'], item['machine']))
     kpis['overloaded_machine_months'] = float(len(overloaded))
+    kpis['peak_utilization'] = peaks[0]['utilization'] if peaks else None
 
-    # Geplande uren op een machine zonder beschikbare capaciteit (Line 09 = 0).
-    # De motor zet de benutting dan op 0 (geen deling door nul), zodat zo'n
-    # maand in de benutting juist rustig lijkt; deze telling maakt hem zichtbaar.
+    # Planned hours on a machine with no available capacity (Line 09 = 0). The
+    # engine sets utilization to 0 there (no division by zero), so such a month
+    # looks quiet in Line 10; this count makes it visible.
     machine_hours = {str(r.get('material_number')): r.get('values') or {}
                      for r in _rows(results, LT_CAPACITY_UTILIZATION)
                      if r.get('product_type') == 'Machine'}
@@ -203,12 +225,13 @@ def compute_kpis(results: dict, value_results: dict, unlimited_machines=()) -> d
                                     'period': p, 'hours': planned})
     no_capacity.sort(key=lambda item: (-item['hours'], item['machine'], item['period']))
     kpis['no_capacity_months'] = float(len(no_capacity))
-    kpis['peak_utilization'] = peaks[0]['utilization'] if peaks else None
 
     fte_rows = _rows(results, LT_FTE)
-    monthly_fte = {p: sum(_num((r.get('values') or {}).get(p)) or 0.0 for r in fte_rows) for p in periods}
-    kpis['fte_avg'] = (sum(monthly_fte.values()) / len(periods)) if periods else None
-    series['fte'] = monthly_fte
+    try:
+        monthly_fte = [sum(_value((r.get('values') or {}).get(p)) for r in fte_rows) for p in periods]
+        kpis['fte_avg'] = sum(monthly_fte) / len(periods) if periods else None
+    except _Unreadable:
+        kpis['fte_avg'] = None
 
     below.sort(key=lambda item: (-item['shortfall'], item['material'], item['period']))
     negative.sort(key=lambda item: (item['stock'], item['material'], item['period']))
@@ -238,7 +261,8 @@ def _input_summary(scenario: dict) -> dict:
 
 
 def input_changes(scenario: dict, base: dict) -> List[str]:
-    """Welke opgeslagen invoer van dit scenario afwijkt van die van de basis."""
+    """Which saved inputs of this scenario differ from those of the base
+    (Dutch: shown in the UI)."""
     mine, theirs = _input_summary(scenario), _input_summary(base)
     changes = []
     if (scenario.get('pending_edits') or {}) != (base.get('pending_edits') or {}):
@@ -253,12 +277,12 @@ def input_changes(scenario: dict, base: dict) -> List[str]:
 
 
 def compare(columns: List[dict]) -> dict:
-    """``columns``: scenario-dicts (results, value_results, naam, ...). De
-    eerste is de basis. Deltas alleen bij dezelfde horizon als de basis."""
+    """``columns``: scenario dicts (results, value_results, name, ...). The
+    first is the base. Deltas only for columns with the base's horizon."""
     computed = []
     for column in columns:
         data = compute_kpis(column.get('results') or {}, column.get('value_results') or {},
-                            column.get('unlimited_machines') or ())
+                            column.get('unlimited_machines') or (), column.get('periods'))
         computed.append((column, data))
     base_column, base = computed[0]
     out = []
@@ -276,13 +300,14 @@ def compare(columns: List[dict]) -> dict:
             'is_current': bool(column.get('is_current')),
             'master_version': column.get('master_version'),
             'compatibility': 'gelijk' if comparable else 'andere horizon',
-            # Bekend = het scenario legde vast uit welke masterdataversie het is
-            # berekend. Verschilt die van de basis, dan meldt de UI dat.
+            # Known = the scenario recorded the master-data version it was
+            # calculated on. The UI says so when it differs from the base.
             'master_version_known': column.get('master_version') is not None,
             'master_version_differs': (index > 0 and column.get('master_version') is not None
                                        and base_column.get('master_version') is not None
                                        and column.get('master_version') != base_column.get('master_version')),
             'unlimited_assumed': bool(column.get('unlimited_assumed')),
+            'horizon_recorded': _valid_periods(column.get('periods')) is not None,
             'input_changes': input_changes(column, base_column) if index > 0 else [],
             **data,
             'deltas': deltas,
