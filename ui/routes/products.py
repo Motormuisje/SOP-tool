@@ -9,6 +9,7 @@ from typing import Callable
 
 from flask import Blueprint, current_app, jsonify, request
 
+from ui.serializers import row_payload
 from modules.product_overlay import normalize_material_number, validate_added_product
 from ui.locks import engine_rebuild_lock
 
@@ -94,7 +95,7 @@ def create_products_blueprint(
             'added_products': _current_products(sess, rebuilt),
             'periods': list(getattr(rebuilt.data, 'periods', []) or []),
             'results': {
-                lt: [row.to_dict() for row in rows]
+                lt: [row_payload(row) for row in rows]
                 for lt, rows in (getattr(rebuilt, 'results', {}) or {}).items()
             },
         }

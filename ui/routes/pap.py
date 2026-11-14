@@ -5,6 +5,7 @@ from typing import Callable
 
 from flask import Blueprint, jsonify, request
 
+from ui.serializers import row_payload
 from modules.models import LineType
 
 
@@ -34,15 +35,15 @@ def create_pap_blueprint(
 
     def _pap_response(current_engine):
         results_dict = {
-            line_type: [row.to_dict() for row in rows]
+            line_type: [row_payload(row) for row in rows]
             for line_type, rows in current_engine.results.items()
         }
         value_results_dict = {
-            line_type: [row.to_dict() for row in rows]
+            line_type: [row_payload(row) for row in rows]
             for line_type, rows in current_engine.value_results.items()
         }
         consolidation = [
-            row.to_dict()
+            row_payload(row)
             for row in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
         ]
         return jsonify({
