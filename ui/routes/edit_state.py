@@ -2,19 +2,8 @@
 
 from flask import Blueprint, jsonify, request
 
-import math
-
+from modules.numeric import finite_float as _finite_number
 from ui.pending_edits import canonical_pending_edit_key
-
-
-def _finite_number(value):
-    """float(value), or None when it is not a finite number (the route then
-    answers 400 instead of raising a 500)."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def create_edit_state_blueprint(

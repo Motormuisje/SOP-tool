@@ -250,9 +250,9 @@ def create_config_blueprint(
             if not isinstance(data['purchased_and_produced'], str):
                 return jsonify({'error': 'purchased_and_produced moet een tekstwaarde zijn.'}), 400
             pap_str = data['purchased_and_produced'].strip()
-            # Zelfde grens als /api/pap en de masterdata-grid: een aandeel
-            # eigen productie ligt tussen 0 en 1. Vóór elke mutatie afkeuren,
-            # anders rekent het hele plan met 50 i.p.v. 0,5 of met NaN.
+            # Same bound as /api/pap and the master-data grid: a share of own
+            # production lies between 0 and 1. Refused before any mutation,
+            # otherwise the whole plan computes with 50 instead of 0.5, or NaN.
             _bad_pap = [
                 f'{mat}:{frac}' for mat, frac in parse_purchased_and_produced(pap_str).items()
                 if not math.isfinite(frac) or not 0.0 <= frac <= 1.0

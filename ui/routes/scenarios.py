@@ -208,11 +208,11 @@ def create_scenarios_blueprint(
             'value_results': value_snapshot,
             'pending_edits': pending_snapshot,
             'value_aux_overrides': json.loads(json.dumps(active_session.get('value_aux_overrides', {}))),
-            # VP en PAP uit de ENGINE waarvan hierboven de resultaten zijn
-            # vastgelegd, niet uit de globale spiegel: die loopt achter na het
-            # verwijderen van de actieve instantie en na upload+bereken, en
-            # dan bewaarde het scenario de VP/PAP van een ándere instantie
-            # (laden schreef ze vervolgens in deze engine; BUGS.md M14).
+            # VP and PAP from the ENGINE whose results are recorded above, not
+            # from the global mirror: the mirror lags after deleting the active
+            # instance and after upload+calculate, and the scenario then stored
+            # another instance's VP/PAP (loading wrote them into this engine;
+            # BUGS.md M14).
             'valuation_params': _scenario_valuation_params(current_engine, global_config),
             'purchased_and_produced': _scenario_pap(
                 current_engine, global_config, format_purchased_and_produced),

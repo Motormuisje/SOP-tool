@@ -126,6 +126,11 @@ multi-user isolation); export files accumulate; `redirect_stdout` is process-glo
 | N4 | `ui/templates/index.html`, `ui/routes/edit_state.py` | After every undo/redo the client rebuilds its edit list from the results and replaces the server's `pending_edits` wholesale: replay order becomes results order instead of edit order. | open |
 | N5 | `ui/routes/config.py` | In master-store mode the settings route still accepts `valuation_params` and applies them to the live engine, although every rebuild takes them from the store. API-only today. | open |
 | N8 | `main.py` | `python main.py --test` printed 'Test file not found' and exited 0: a self-test that could not run looked like one that passed. | fixed 2026-11 (exit code 2) |
+| N9 | `ui/routes/edit_state.py` | `/api/sessions/edits/sync` accepted an empty key, and two client keys for one cell silently overwrote each other. | fixed 2026-11 (both refused with 400; the store is only replaced when every entry is valid) |
+| N10 | `ui/app.py` | The PAP recalculation took the active session's edited starting stocks when the engine's own session could not be found. | fixed 2026-11 (only the owning session; a detached engine recalculates without edited stocks) |
+| N11 | `ui/volume_change.py` `recalc_one_material` | For a material WITHOUT an edited target, `preserve_l05` puts the previous Line 05 values back on screen after a recalculation, while the plan used the freshly computed targets. For a moving-average target that means the cell shows a target the plan no longer uses. Predates 2026-11; no material in the Maastricht store uses a moving-average target. | open |
+| N12 | `modules/cycle_manager.py`, `ui/routes/edits.py`, `ui/routes/edit_state.py`, `modules/numeric.py` | Found by an audit of the 2026-11 work itself: a 400-digit JSON number gave a 500 (`float()` raises OverflowError); `load_metadata` returned non-object JSON. | fixed 2026-11 |
+| N13 | `ui/volume_change.py` `apply_volume_change` | Pending-edit identity is repaired at edit time (keys with a display-only aux are treated as one cell). A stable cell identity without the aux, with a one-time migration of stored keys, would remove that repair logic. | open (refactor) |
 
 ## Decisions needed before these can be fixed
 

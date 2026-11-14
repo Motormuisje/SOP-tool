@@ -306,11 +306,11 @@ def create_sessions_blueprint(
         del sessions[session_id]
         if get_active_session_id() == session_id:
             set_active_session_id(next(iter(sessions), None))
-            # De opgeschoven instantie is nu actief zonder dat er een switch
-            # liep: trek haar staat in de globale spiegel, anders toont en
-            # bewaart het Config-tabblad de PAP en forecast-defaults van de
-            # zojuist verwijderde instantie (BUGS.md M14). Zonder engine
-            # (koud) is er niets te spiegelen; de switch bij opwarmen doet het.
+            # The promoted instance is now active without a switch having run:
+            # pull its state into the global mirror, or the Config tab shows and
+            # saves the PAP and forecast defaults of the instance just deleted
+            # (BUGS.md M14). Without an engine (cold) there is nothing to
+            # mirror; the switch on warmup does it.
             promoted = sessions.get(get_active_session_id())
             if promoted is not None:
                 sync_global_config_from_engine(promoted.get('engine'))

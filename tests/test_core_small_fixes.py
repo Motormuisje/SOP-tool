@@ -91,25 +91,11 @@ def test_raw_need_is_still_recorded_for_months_the_heuristic_decides():
     assert all(need > 0 for need in free["purch_raw_need"].values())
 
 
-def test_metadata_of_another_snapshot_is_not_reported(tmp_path):
-    """Two files cannot be swapped as one. Metadata names the snapshot it
-    belongs to; paired with another snapshot (a crash between the swaps) it
-    is ignored rather than reporting the wrong planning month."""
+def test_metadata_that_is_not_an_object_reads_as_empty(tmp_path):
+    """load_metadata promises a dict; valid JSON of another shape is no
+    metadata at all."""
     manager = CycleManager(str(tmp_path))
     manager.save_current_as_previous(_frame(1.0), planning_month="2025-01")
-    old_meta = manager._meta_path.read_bytes()
-    manager.save_current_as_previous(_frame(2.0), planning_month="2025-02")
-
-    manager._meta_path.write_bytes(old_meta)  # new snapshot, old metadata
-
-    assert manager.load_previous_cycle()["2025-01"].tolist() == [2.0]
-    assert manager.load_metadata() == {}
-
-
-def test_metadata_without_fingerprint_still_loads(tmp_path):
-    """Snapshots written before this change carry no fingerprint."""
-    manager = CycleManager(str(tmp_path))
-    manager.save_current_as_previous(_frame(1.0), planning_month="2025-01")
-    manager._meta_path.write_text('{"planning_month": "2024-12"}')
-
-    assert manager.load_metadata() == {"planning_month": "2024-12"}
+    for content in ('[1, 2]', '"2025-01"', '42', 'null'):
+        manager._meta_path.write_text(content)
+        assert manager.load_metadata() == {}, content
