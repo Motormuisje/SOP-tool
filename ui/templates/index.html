@@ -10677,8 +10677,8 @@ function openScenarioBuilder() {
           <span id="sbMaterialLabel">Materiaal</span>
           <span id="sbMaterialWrap"><input id="sbMaterial" list="sbMaterialList" placeholder="materiaalnummer" style="${field};width:220px" oninput="_sbRender()">
             <datalist id="sbMaterialList">${demandRows.map(r => opt(r.material_number, `${r.material_number} ${r.material_name || ''}`)).join('')}</datalist></span>
-          <span>Verandering</span>
-          <span><input id="sbPct" type="text" value="10" style="${field};width:90px;text-align:right" oninput="_sbRender()"> % van de huidige vraag</span>
+          <span>Verhogen / verlagen</span>
+          <span><input id="sbPct" type="text" value="10" style="${field};width:90px;text-align:right" oninput="_sbRender()"> % &nbsp;<span style="color:#94a3b8;font-size:12px">10 = 10 % meer vraag, −10 = 10 % minder, −100 = geen vraag</span></span>
         </div>
         <div id="sbMachine" style="display:none;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center;font-size:13px">
           <span>Machine</span>
@@ -10707,9 +10707,9 @@ function _sbType() {
 
 function _sbPeriods() {
     const periods = state.periods || [];
-    const from = document.getElementById('sbFrom').value;
-    const to = document.getElementById('sbTo').value;
-    return periods.filter(p => p >= from && p <= to);
+    const from = periods.indexOf(document.getElementById('sbFrom').value);
+    const to = periods.indexOf(document.getElementById('sbTo').value);
+    return from < 0 || to < 0 || from > to ? [] : periods.slice(from, to + 1);
 }
 
 // De cellen die de aanpassing raakt, met hun nieuwe waarde. Cellen waarvan de
@@ -10721,7 +10721,7 @@ function _sbPlan() {
     if (_sbType() === 'demand') {
         const pct = parseLocaleNumber(document.getElementById('sbPct').value);
         if (!Number.isFinite(pct)) return { error: 'Vul een percentage in.' };
-        if (pct <= -100) return { error: 'Een vraag kan niet onder nul: kies meer dan -100 %.' };
+        if (pct < -100) return { error: 'Meer dan 100 % verlagen zou negatieve vraag geven; −100 % zet de vraag op nul.' };
         const scope = document.getElementById('sbScope').value;
         const family = document.getElementById('sbFamily').value;
         const material = String(document.getElementById('sbMaterial').value || '').trim();
@@ -10736,6 +10736,9 @@ function _sbPlan() {
             for (const p of periods) {
                 const old = Number((row.values || {})[p] || 0);
                 const nv = old * (1 + pct / 100);
+                if (!Number.isFinite(old) || !Number.isFinite(nv)) {
+                    return { error: `Geen geldig getal voor ${row.material_number} in ${p}; kies een kleiner percentage.` };
+                }
                 before += old; after += nv;
                 if (Math.abs(nv - old) > 1e-9) {
                     cells.push({ line_type: SB_DEMAND, material_number: String(row.material_number),
@@ -10787,7 +10790,9 @@ function _sbRender() {
              (${plan.after >= plan.before ? '+' : '−'}${_fmtNlNum(Math.abs(plan.after - plan.before), 0)} t)</div>
            <div style="color:#94a3b8;font-size:12px">Producten met vraag 0 in een maand blijven 0. Afhankelijke vraag, voorraad, capaciteit en financiën rekenen mee door.</div>${size}`
         : `<div>Machine <b>${escapeHtml(plan.machine)}</b>, ${months}: beschikbaarheid <b>${_fmtNlNum(plan.avail, 0)}%</b> in <b>${plan.cells.length}</b> maand(en).</div>
-           <div style="color:#94a3b8;font-size:12px">De productie blijft gepland; de benutting van de machine en de knelpunten tonen wat de stilstand kost.</div>${size}`;
+           <div style="color:#94a3b8;font-size:12px">Dit verlaagt de capaciteit; de geplande productie blijft staan en wordt niet verplaatst. Lagere beschikbaarheid toont zich als hogere benutting.
+             ${plan.avail === 0 ? '<b style="color:#fbbf24">Bij 0 % zet de berekening de benutting op 0 (geen deling door nul): de machine lijkt dan rustig. De vergelijking toont die maanden als &lsquo;Geplande uren zonder capaciteit&rsquo;.</b>' : ''}
+             Een bedrag voor de gemiste productie berekent de tool niet.</div>${size}`;
 }
 
 async function applyScenarioBuilder() {
@@ -10805,8 +10810,15 @@ async function applyScenarioBuilder() {
         _syncPendingEditsToServer();
         _markAutoSaved();
         document.getElementById('scenarioBuilderModal')?.remove();
-        const failed = (data.failed && data.failed.length) ? `, ${data.failed.length} overgeslagen` : '';
-        notify(`Wat-als toegepast: ${data.applied} cellen${failed}. Sla op als scenario en vergelijk, of maak het met Undo in één keer ongedaan.`, 'success', 7000);
+        const failed = data.failed || [];
+        if (failed.length) {
+            // Niet stil: welke cellen niet zijn aangepast en waarom staat in het
+            // logboek; de melding blijft staan tot de planner hem wegklikt.
+            failed.forEach(f => log(`Wat-als: niet aangepast ${(f.cell || {}).material_number || ''} ${(f.cell || {}).period || ''}: ${f.error || 'onbekend'}`));
+            notify(`Wat-als deels toegepast: ${data.applied} cellen aangepast, ${failed.length} niet (zie het tabblad Log). Undo maakt het toegepaste deel in één keer ongedaan.`, 'warning', 15000);
+        } else {
+            notify(`Wat-als toegepast: ${data.applied} cellen. Sla op als scenario en vergelijk, of maak het met Undo in één keer ongedaan.`, 'success', 7000);
+        }
     } catch (err) {
         notify('Wat-als mislukt: ' + err, 'error', 6000);
     } finally {
@@ -10909,7 +10921,8 @@ function _kpiDeltaHtml(delta, meta) {
     return `<div style="font-size:11px;color:${color}">${txt}</div>`;
 }
 
-const _KPI_DRILL = { below_target: 'below_target', stock_negative: 'stock_negative', overloaded_machine_months: 'overloaded' };
+const _KPI_DRILL = { below_target: 'below_target', stock_negative: 'stock_negative', overloaded_machine_months: 'overloaded',
+                     no_capacity_months: 'no_capacity' };
 
 function _renderKpiCompare() {
     const data = _kpiLast;
@@ -10972,7 +10985,9 @@ function _kpiShowDrill(index, key) {
     if (!col || !host) return;
     const list = ((col.exceptions || {})[_KPI_DRILL[key]] || []);
     const label = ((_kpiLast.kpi_meta || {})[key] || {}).label || key;
-    const row = item => key === 'overloaded_machine_months'
+    const row = item => key === 'no_capacity_months'
+        ? `<tr><td>${escapeHtml(item.machine)}</td><td>${escapeHtml(item.group || '')}</td><td>${escapeHtml(item.period)}</td><td style="text-align:right">${_fmtNlNum(item.hours, 0)} u gepland, 0 beschikbaar</td></tr>`
+        : key === 'overloaded_machine_months'
         ? `<tr><td>${escapeHtml(item.machine)}</td><td>${escapeHtml(item.group || '')}</td><td>${escapeHtml(item.period)}</td><td style="text-align:right">${_fmtNlNum(item.utilization * 100, 0)}%</td></tr>`
         : `<tr><td>${escapeHtml(item.material)}</td><td>${escapeHtml(item.name || '')}</td><td>${escapeHtml(item.period)}</td><td style="text-align:right">${_fmtNlNum(item.stock, 1)} t${item.target !== undefined ? ` (doel ${_fmtNlNum(item.target, 1)})` : ''}</td></tr>`;
     host.innerHTML = `<div style="font-size:12px;color:#cbd5e1;margin-bottom:4px"><b>${escapeHtml(label)}</b> — ${escapeHtml(col.name || '')}${list.length >= 50 ? ' (eerste 50)' : ''}</div>

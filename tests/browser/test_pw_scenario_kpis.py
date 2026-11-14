@@ -156,8 +156,14 @@ def test_whatif_builder_machine_driver_sets_availability_for_the_chosen_months(a
     base_url = page.server["base_url"]
     before = _results(base_url)
     avail_rows = before["09. Available capacity"]
-    row = next(r for r in avail_rows if any((v or 0) > 0 for v in r["values"].values()))
-    periods = sorted(row["values"])[2:4]
+    machine_hours = {r["material_number"]: r["values"] for r in before["07. Capacity utilization"]
+                     if r.get("product_type") == "Machine"}
+    periods = sorted(avail_rows[0]["values"])[2:4]
+    # Een machine die in die maanden echt draait: dan moet de stilstand zichtbaar worden.
+    row = next(r for r in avail_rows
+               if all((r["values"].get(p) or 0) > 0 and (machine_hours.get(r["material_number"], {}).get(p) or 0) > 0
+                      for p in periods))
+    saved = requests.post(base_url + "/api/scenarios/save", json={"name": "Voor stilstand"}, timeout=300).json()
 
     page.click("#scenarioBuildBtn")
     page.check('input[name="sbType"][value="machine"]')
@@ -175,6 +181,15 @@ def test_whatif_builder_machine_driver_sets_availability_for_the_chosen_months(a
                  if r["material_number"] == row["material_number"])
     for p, v in after["values"].items():
         assert v == pytest.approx(0.0 if p in periods else row["values"][p]), p
+
+    # De berekening zet de benutting bij 0 % beschikbaarheid op 0; de
+    # vergelijking moet die maanden als 'geplande uren zonder capaciteit' tonen.
+    body = requests.post(base_url + "/api/scenarios/kpis", json={
+        "scenario_ids": [saved["scenario_id"]], "include_current": True}, timeout=300).json()
+    base_col, live = body["columns"]
+    assert live["deltas"]["no_capacity_months"] >= len(periods), live["kpis"]
+    flagged = {(i["machine"], i["period"]) for i in live["exceptions"]["no_capacity"]}
+    assert {(row["material_name"], p) for p in periods} <= flagged
     requests.post(base_url + "/api/undo", timeout=300)
     assert page.js_errors == []
 
@@ -184,7 +199,7 @@ def test_whatif_builder_refuses_empty_or_impossible_input(app_page):
     page.click("#scenarioBuildBtn")
     page.fill("#sbPct", "-150")
     page.dispatch_event("#sbPct", "input")
-    expect(page.locator("#sbPreview")).to_contain_text("onder nul")
+    expect(page.locator("#sbPreview")).to_contain_text("negatieve vraag")
     assert page.evaluate("() => document.getElementById('sbApply').disabled") is True
     page.fill("#sbPct", "abc")
     page.dispatch_event("#sbPct", "input")

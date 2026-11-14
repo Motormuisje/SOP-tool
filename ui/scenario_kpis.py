@@ -35,6 +35,8 @@ LT_INVENTORY = '04. Inventory'
 LT_MIN_TARGET = '05. Minimum target stock'
 LT_PRODUCTION = '06. Production plan'
 LT_PURCHASE_RECEIPT = '06. Purchase receipt'
+LT_CAPACITY_UTILIZATION = '07. Capacity utilization'
+LT_AVAILABLE_CAPACITY = '09. Available capacity'
 LT_UTILIZATION = '10. Utilization rate'
 LT_FTE = '12. FTE requirements'
 LT_CONSOLIDATION = '13. Consolidation'
@@ -55,7 +57,7 @@ FINANCIAL_KPIS = [
 
 # Wat de vergelijking standaard toont; de rest staat achter 'meer cijfers'.
 HEADLINE_KPIS = ['ebit', 'operational_cashflow', 'inventory_value', 'ending_inventory',
-                 'stock_negative', 'overloaded_machine_months']
+                 'stock_negative', 'overloaded_machine_months', 'no_capacity_months']
 
 OTHER_KPIS = [
     ('total_demand', 'Totale vraag', 't', 0),
@@ -65,6 +67,7 @@ OTHER_KPIS = [
     ('below_target', 'Maanden onder minimumdoel', 'materiaal-maanden', -1),
     ('stock_negative', 'Maanden met negatieve voorraad', 'materiaal-maanden', -1),
     ('overloaded_machine_months', 'Overbelaste machine-maanden (>100 %)', 'machine-maanden', -1),
+    ('no_capacity_months', 'Geplande uren zonder capaciteit', 'machine-maanden', -1),
     ('peak_utilization', 'Hoogste benutting', 'ratio', 0),
     ('fte_avg', 'FTE (Line 12, gem. per maand)', 'FTE', 0),
 ]
@@ -178,6 +181,28 @@ def compute_kpis(results: dict, value_results: dict, unlimited_machines=()) -> d
                           'period': peak_period, 'utilization': values[peak_period]})
     peaks.sort(key=lambda item: (-item['utilization'], item['machine']))
     kpis['overloaded_machine_months'] = float(len(overloaded))
+
+    # Geplande uren op een machine zonder beschikbare capaciteit (Line 09 = 0).
+    # De motor zet de benutting dan op 0 (geen deling door nul), zodat zo'n
+    # maand in de benutting juist rustig lijkt; deze telling maakt hem zichtbaar.
+    machine_hours = {str(r.get('material_number')): r.get('values') or {}
+                     for r in _rows(results, LT_CAPACITY_UTILIZATION)
+                     if r.get('product_type') == 'Machine'}
+    no_capacity = []
+    for row in _rows(results, LT_AVAILABLE_CAPACITY):
+        machine_id = str(row.get('material_number'))
+        machine = str(row.get('material_name') or machine_id)
+        if machine.strip().upper() in unlimited_codes:
+            continue
+        hours = machine_hours.get(machine_id) or {}
+        for p in periods:
+            available = _num((row.get('values') or {}).get(p))
+            planned = _num(hours.get(p)) or 0.0
+            if available is not None and available <= 0 and planned > 1e-9:
+                no_capacity.append({'machine': machine, 'group': row.get('product_family') or '',
+                                    'period': p, 'hours': planned})
+    no_capacity.sort(key=lambda item: (-item['hours'], item['machine'], item['period']))
+    kpis['no_capacity_months'] = float(len(no_capacity))
     kpis['peak_utilization'] = peaks[0]['utilization'] if peaks else None
 
     fte_rows = _rows(results, LT_FTE)
@@ -197,6 +222,7 @@ def compute_kpis(results: dict, value_results: dict, unlimited_machines=()) -> d
             'below_target': below[:50],
             'stock_negative': negative[:50],
             'overloaded': overloaded[:50],
+            'no_capacity': no_capacity[:50],
             'top_machines': peaks[:5],
         },
     }

@@ -92,6 +92,29 @@ class TestExtraction:
         assert out['kpis']['stock_negative'] == 1.0
 
 
+    def test_planned_hours_on_a_machine_without_capacity_are_counted(self):
+        """At 0 % availability the engine reports utilization 0 (no division by
+        zero), so the month looks idle. This count makes it visible."""
+        results, values = _synthetic()
+        results[LineType.AVAILABLE_CAPACITY.value] = [
+            _row(LineType.AVAILABLE_CAPACITY.value, dict(zip(P, (1.0, 0.0, 0.0))), material='Z_M1', name='PML01', family='G1'),
+            _row(LineType.AVAILABLE_CAPACITY.value, dict(zip(P, (0.0, 0.0, 0.0))), material='Z_M9', name='PBA99'),
+        ]
+        machine_hours = _row(LineType.CAPACITY_UTILIZATION.value, dict(zip(P, (10.0, 12.0, 0.0))),
+                             material='Z_M1', name='PML01')
+        machine_hours['product_type'] = 'Machine'
+        material_hours = _row(LineType.CAPACITY_UTILIZATION.value, dict(zip(P, (99.0, 99.0, 99.0))), material='MAT-1')
+        unlimited = _row(LineType.CAPACITY_UTILIZATION.value, dict(zip(P, (5.0, 5.0, 5.0))), material='Z_M9', name='PBA99')
+        unlimited['product_type'] = 'Machine'
+        results[LineType.CAPACITY_UTILIZATION.value] = [machine_hours, material_hours, unlimited]
+
+        out = compute_kpis(results, values, unlimited_machines=['PBA99'])
+
+        assert out['kpis']['no_capacity_months'] == 1.0          # PML01 in 2026-02 only
+        item = out['exceptions']['no_capacity'][0]
+        assert (item['machine'], item['period'], item['hours']) == ('PML01', '2026-02', 12.0)
+
+
 class TestCompare:
     def test_deltas_against_the_first_column(self):
         a_res, a_val = _synthetic()
