@@ -939,3 +939,85 @@ def test_plan_pinned_at_the_workbook_value_stays_pinned(golden_fixture_path, tmp
                             round(f0 * 2, 3))
         return sequence.ops
     _run_and_compare(golden_fixture_path, tmp_path, 'pin the plan at its workbook value', drive)
+
+
+def _cell_pending_keys(sess, line_type, material, period):
+    """Every pending_edits key of one cell, whatever aux it was stored under."""
+    return [
+        key for key in sess.get('pending_edits', {})
+        if len(parts := key.split('||')) == 4
+        and (parts[0], parts[1], parts[3]) == (line_type, material, period)
+    ]
+
+
+def test_l09_cell_set_back_after_its_aux_moved_leaves_no_edit(golden_fixture_path, tmp_path):
+    """L09's aux shows the group shift hours, so a shift-hours edit moves it.
+    Setting the cell back under the moved aux must drop the edit and its
+    capacity override; a stale key would bring the edit back after a restart."""
+    def drive(harness):
+        sequence = _Sequence(harness, 0, 'client')
+        engine = harness.engine
+        period = engine.data.periods[4]
+        machines = engine.data.machines
+        # L09 rows carry the machine id as material number, the code as name.
+        candidates = [(row, str(row.material_name)) for row in _sorted_rows(engine.results[L09])
+                      if str(row.material_name) in machines and row.get_value(period) > 0]
+        _require(bool(candidates), 'no machine with L09 capacity')
+        row, code = candidates[0]
+        material = str(row.material_number)
+        original = float(row.get_value(period))
+        old_aux = aux_str(row.aux_column)
+        hours = SHIFT_HOURS_LOOKUP_FALLBACK(machines[code], engine.data)
+
+        sequence._edit_cell('capacity', L09, row, period, original / 2.0)
+        sequence._machine_edit(code, 'shift_hours', hours + 137.0)
+        current = _row(harness.engine, L09, material)
+        _require(aux_str(current.aux_column) != old_aux, 'the L09 aux did not move')
+        sequence._edit_cell('revert capacity', L09, current, period, original)
+
+        assert _cell_pending_keys(harness.sess, L09, material, period) == []
+        overrides = harness.sess.get('capacity_overrides', {})
+        assert period not in overrides.get(L09, {}).get(material, {})
+        # Move the aux once more before the restart.
+        sequence._machine_edit(code, 'shift_hours', hours + 271.0)
+        return sequence.ops
+    _run_and_compare(golden_fixture_path, tmp_path, 'L09 edit, moved aux, set back', drive)
+
+
+def test_reedited_target_keeps_its_replay_position_and_first_original(golden_fixture_path, tmp_path):
+    """A Line 05 edit moves its aux (the average target), so a re-edit arrives
+    under another key. The cell must keep the replay position of its first
+    edit and the original from before that edit; another month's pin stays."""
+    def drive(harness):
+        sequence = _Sequence(harness, 0, 'client')
+        row = _l05_row_with_values(harness.engine)
+        material = str(row.material_number)
+        first, second = harness.engine.data.periods[3:5]
+        original_first = float(row.get_value(first))
+        original_second = float(row.get_value(second))
+        old_aux = aux_str(row.aux_column)
+
+        sequence._edit_cell('first target', L05, row, first, original_first * 2.0)
+        _require(aux_str(_row(harness.engine, L05, material).aux_column) != old_aux,
+                 'the target edit did not move its aux')
+        sequence._edit_cell('second target', L05, _row(harness.engine, L05, material),
+                            second, original_second * 3.0)
+        sequence._edit_cell('re-edit first target', L05, _row(harness.engine, L05, material),
+                            first, original_first * 4.0)
+
+        keys = list(harness.sess['pending_edits'])
+        first_keys = _cell_pending_keys(harness.sess, L05, material, first)
+        second_keys = _cell_pending_keys(harness.sess, L05, material, second)
+        assert len(first_keys) == 1
+        assert len(second_keys) == 1
+        assert keys.index(first_keys[0]) < keys.index(second_keys[0])
+        assert harness.sess['pending_edits'][first_keys[0]]['original'] == pytest.approx(original_first)
+
+        sequence._edit_cell('set first target back', L05, _row(harness.engine, L05, material),
+                            first, original_first)
+        assert _cell_pending_keys(harness.sess, L05, material, first) == []
+        assert len(_cell_pending_keys(harness.sess, L05, material, second)) == 1
+        assert _row(harness.engine, L05, material).get_value(second) == pytest.approx(original_second * 3.0)
+        return sequence.ops
+    _run_and_compare(golden_fixture_path, tmp_path, 'two target months, re-edit, set back', drive)
+

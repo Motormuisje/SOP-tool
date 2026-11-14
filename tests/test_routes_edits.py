@@ -577,6 +577,37 @@ def test_undo_pops_stack_and_calls_apply_volume_change(edits_mock_app):
 
 
 @pytest.mark.no_fixture
+@pytest.mark.parametrize("direction", ["undo", "redo"])
+def test_failing_snapshot_leaves_the_step_on_its_stack(edits_mock_app, monkeypatch, direction):
+    # The snapshot is taken before the step leaves its stack: if taking it
+    # fails, nothing may have moved, or the history no longer matches the engine.
+    edits_mock_app.make_session()
+    entry = {
+        "line_type": LineType.DEMAND_FORECAST.value,
+        "material_number": "MAT-1",
+        "period": "2025-12",
+        "old_value": 40.0,
+        "new_value": 50.0,
+        "aux_column": "",
+    }
+    edits_mock_app.sess[f"{direction}_stack"] = [entry]
+    other = "redo_stack" if direction == "undo" else "undo_stack"
+    edits_mock_app.sess[other] = []
+
+    def broken_snapshot(engine, lookup):
+        raise RuntimeError("snapshot unavailable")
+
+    monkeypatch.setattr("ui.routes.edits.snapshot_engine_state", broken_snapshot)
+
+    with pytest.raises(RuntimeError, match="snapshot unavailable"):
+        edits_mock_app.client.post(f"/api/{direction}")
+
+    assert edits_mock_app.sess[f"{direction}_stack"] == [entry]
+    assert edits_mock_app.sess[other] == []
+    assert edits_mock_app.volume_calls == []
+
+
+@pytest.mark.no_fixture
 def test_redo_no_engine_returns_400(edits_mock_app):
     edits_mock_app.make_session(engine=None)
 

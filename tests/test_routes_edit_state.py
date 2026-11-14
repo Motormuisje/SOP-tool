@@ -1,10 +1,12 @@
 """Tests for ui/routes/edit_state.py — the three thin persistence routes."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from flask import Flask
 
+from ui.pending_edits import pending_edit_key
 from ui.routes.edit_state import create_edit_state_blueprint
 
 
@@ -239,3 +241,31 @@ def test_sync_edits_coerces_floats(edit_state_app):
     entry = pending["k||a||b||2025-12"]
     assert entry["original"] == pytest.approx(5.0)
     assert entry["new_value"] == pytest.approx(7.5)
+
+
+@pytest.mark.no_fixture
+def test_sync_merges_aliases_of_one_cell_at_the_first_position(edit_state_app):
+    # Replay applies edits in insertion order. Two client keys for one cell
+    # (' 150 ' and '150') with the same values become one entry that keeps
+    # the position of the first, ahead of the edit that came between them.
+    sid = edit_state_app.add_session()
+    canonical = pending_edit_key("01. Demand forecast", "M", "150", "2025-12")
+    alias = "01. Demand forecast||M|| 150 ||2025-12"
+    middle = pending_edit_key("01. Demand forecast", "OTHER", "", "2025-12")
+    edits = {
+        alias: {"original": "1", "new_value": "2"},
+        middle: {"original": 3, "new_value": 4},
+        canonical: {"original": 1.0, "new_value": 2.0},
+    }
+
+    # json.dumps keeps the insertion order whatever Flask's JSON settings are.
+    response = edit_state_app.client.post(
+        "/api/sessions/edits/sync",
+        data=json.dumps({"session_id": sid, "edits": edits}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    synced = edit_state_app.sessions[sid]["pending_edits"]
+    assert list(synced) == [canonical, middle]
+    assert synced[canonical] == {"original": 1.0, "new_value": 2.0}
