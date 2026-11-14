@@ -184,6 +184,38 @@ def test_sap_number_rejects_codes_and_dates(text):
     assert loader.sap_number_warnings == [("ctx", text)]
 
 
+def test_blank_and_boolean_stock_cells_do_not_become_quantities():
+    # bool is an int in Python: without its own guard True would be one unit
+    # of stock. Blank cells are the documented default and are not reported.
+    loader = _loader()
+    loader.sap_number_warnings = []
+    for value in (True, False, None, pd.NA, float("nan"), "", "  NaN  "):
+        assert loader._parse_sap_number(value, -7.5, "stock") == -7.5
+    assert loader.sap_number_warnings == []
+
+
+@pytest.mark.parametrize("text, expected", [("+1.25e3", 1250.0), ("-2E-3", -0.002)])
+def test_plain_numeric_text_bypasses_the_sap_unit_pattern(text, expected):
+    # The unit pattern has no exponent; plain numeric text must not need it.
+    loader = _loader()
+    loader.sap_number_warnings = []
+    assert loader._parse_sap_number(text, -7.5, "stock") == pytest.approx(expected)
+    assert loader.sap_number_warnings == []
+
+
+def test_empty_price_sheet_does_not_report_a_missing_volume_column(monkeypatch):
+    # Nothing to price, so no zero-revenue warning either.
+    loader = _loader()
+    loader.excel_file = SimpleNamespace(sheet_names=["Average sales price"])
+    frame = pd.DataFrame(columns=["ProductId", "PlantCode", "ExWorks Revenue"])
+    monkeypatch.setattr(pd, "read_excel", lambda *a, **k: frame)
+
+    loader._load_avg_sales_price()
+
+    assert loader.sales_prices == {}
+    assert _messages(loader, "Average sales price") == []
+
+
 def test_same_warning_is_recorded_once():
     loader = _loader()
 
