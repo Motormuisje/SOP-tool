@@ -26,7 +26,10 @@ from modules.models import (
 # The minus sign may stand apart from the digits. The whitespace before the unit
 # is mandatory in this pattern: it keeps codes like '054C' (storage location) and
 # dates like '28.01.2027' from being read as numbers.
-_SAP_NUMBER_RE = re.compile(r"^\s*-?\s*[\d,]+(?:\.\d+)?(?:\s+[A-Za-z][A-Za-z0-9]{0,4})?\s*$")
+# The number is taken from the groups, not by stripping letters from the text:
+# a unit may contain a digit ('10 M3'), which stripping glued onto the number.
+_SAP_NUMBER_RE = re.compile(
+    r"^\s*(-?)\s*([\d,]+(?:\.\d+)?)(?:\s+[A-Za-z][A-Za-z0-9]{0,4})?\s*$")
 
 
 class DataLoader:
@@ -279,13 +282,13 @@ class DataLoader:
             return float(text)  # plain numeric string
         except ValueError:
             pass
-        if not _SAP_NUMBER_RE.match(text):
+        match = _SAP_NUMBER_RE.match(text)
+        if not match:
             self.sap_number_warnings.append((context, text))
             return default
-        cleaned = re.sub(r"[A-Za-z]", "", text).replace(",", "")  # drop unit + thousands
-        cleaned = re.sub(r"\s+", "", cleaned)                     # '- 93.72' -> '-93.72'
+        sign, digits = match.groups()
         try:
-            return float(cleaned)
+            return float(sign + digits.replace(",", ""))  # comma = thousands
         except ValueError:
             self.sap_number_warnings.append((context, text))
             return default
@@ -1262,7 +1265,16 @@ class DataLoader:
         
         df = pd.read_excel(self.excel_file, sheet_name=sheet_name)
         site = self.config.site if self.config else None
-        
+        if len(df) and 'Volume 2025' not in df.columns:
+            # The VBA reads this column by name. A sheet that names it after
+            # another year yields no prices and therefore zero revenue; the
+            # numbers stay as they are, but the planner has to know (BUGS N14).
+            volume_like = [str(c) for c in df.columns if str(c).lower().startswith('volume')]
+            found = f" Gevonden: {', '.join(volume_like)}." if volume_like else ""
+            self._warn_load(sheet_name, (
+                "Kolom 'Volume 2025' ontbreekt; zonder volume rekent de tool geen "
+                f"verkoopprijs en wordt de omzet 0.{found}"))
+
         # Accumulate volume and revenue per product
         accum = {}  # product_id -> {volume, revenue, plant_code}
         for _, row in df.iterrows():
