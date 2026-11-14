@@ -124,6 +124,66 @@ def test_unreadable_purchase_sheet_is_reported(monkeypatch):
     assert len(warnings) == 1 and "niet (volledig) gelezen" in warnings[0]
 
 
+def _price_frame(volume_column):
+    return pd.DataFrame(
+        [["MAT-A", "NLX1", 100.0, 2500.0], ["MAT-B", "NLX1", 50.0, 1000.0]],
+        columns=["ProductId", "PlantCode", volume_column, "ExWorks Revenue"])
+
+
+def test_price_sheet_without_the_volume_column_is_reported(monkeypatch):
+    # A newer price sheet that names the column after its own year gave every
+    # material a price of nothing, so revenue became 0 without a word.
+    loader = _loader()
+    loader.excel_file = SimpleNamespace(sheet_names=["Average sales price"])
+    monkeypatch.setattr(pd, "read_excel", lambda *a, **k: _price_frame("Volume 2026"))
+
+    loader._load_avg_sales_price()
+
+    assert loader.sales_prices == {}  # the numbers themselves are unchanged
+    warnings = _messages(loader, "Average sales price")
+    assert len(warnings) == 1
+    assert "Volume 2025" in warnings[0]
+    assert "Volume 2026" in warnings[0]
+
+
+def test_price_sheet_with_the_volume_column_loads_without_warning(monkeypatch):
+    loader = _loader()
+    loader.excel_file = SimpleNamespace(sheet_names=["Average sales price"])
+    monkeypatch.setattr(pd, "read_excel", lambda *a, **k: _price_frame("Volume 2025"))
+
+    loader._load_avg_sales_price()
+
+    assert set(loader.sales_prices) == {"MAT-A", "MAT-B"}
+    assert _messages(loader, "Average sales price") == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    # The shapes documented next to _SAP_NUMBER_RE.
+    ("2833.768 TO", 2833.768),
+    ("15999 PC", 15999.0),
+    ("27.00 M", 27.0),
+    ("2,895,386.20    EUR", 2895386.20),
+    ("- 93.72    EUR", -93.72),
+    # The pattern accepts units with a digit; the digit used to be glued onto
+    # the number ('10 M3' read as 103).
+    ("10 M3", 10.0),
+    ("1,250.5 M2", 1250.5),
+])
+def test_sap_number_text_parses_to_the_number_before_the_unit(text, expected):
+    loader = _loader()
+    loader.sap_number_warnings = []
+    assert loader._parse_sap_number(text, 0.0, "ctx") == pytest.approx(expected)
+    assert loader.sap_number_warnings == []
+
+
+@pytest.mark.parametrize("text", ["054C", "28.01.2027", "veel"])
+def test_sap_number_rejects_codes_and_dates(text):
+    loader = _loader()
+    loader.sap_number_warnings = []
+    assert loader._parse_sap_number(text, 0.0, "ctx") == 0.0
+    assert loader.sap_number_warnings == [("ctx", text)]
+
+
 def test_same_warning_is_recorded_once():
     loader = _loader()
 
