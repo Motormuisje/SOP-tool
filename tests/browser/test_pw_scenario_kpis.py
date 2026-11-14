@@ -104,3 +104,95 @@ def test_compare_needs_two_to_four_columns(app_page):
                              boxes[0].checked = true; boxes[boxes.length - 1].checked = true; _kpiSyncBase(); }""")
     assert page.evaluate("() => document.getElementById('kpiRunBtn').disabled") is False
     assert page.js_errors == []
+
+
+def _results(base_url):
+    return requests.get(base_url + "/api/results", timeout=300).json()["results"]
+
+
+def test_whatif_builder_demand_driver_is_one_undoable_edit(app_page):
+    """+50 % for one product family over three months changes exactly those
+    cells by a factor 1.5; one Undo takes the whole driver back."""
+    page = app_page
+    base_url = page.server["base_url"]
+    before = _results(base_url)
+    periods = sorted(before[DEMAND][0]["values"])[1:4]
+    family = next(r["product_family"] for r in before[DEMAND]
+                  if r.get("product_family") and any((r["values"].get(p) or 0) > 0 for p in periods))
+
+    page.click("#scenarioBuildBtn")
+    page.select_option("#sbScope", "family")
+    page.select_option("#sbFamily", family)
+    page.fill("#sbPct", "50")
+    page.select_option("#sbFrom", periods[0])
+    page.select_option("#sbTo", periods[-1])
+    page.dispatch_event("#sbPct", "input")
+    expect(page.locator("#sbPreview")).to_contain_text("cel(len) veranderen")
+    with page.expect_response(lambda r: "/api/update_volume_bulk" in r.url and r.ok):
+        page.click("#sbApply")
+    expect(page.locator("#scenarioBuilderModal")).to_have_count(0, timeout=60000)
+
+    after = _results(base_url)
+    old = {(r["material_number"], r["aux_column"]): r for r in before[DEMAND]}
+    changed = 0
+    for row in after[DEMAND]:
+        prev = old[(row["material_number"], row["aux_column"])]
+        for p, v in row["values"].items():
+            expected = prev["values"][p] * 1.5 if (row.get("product_family") == family and p in periods) else prev["values"][p]
+            assert v == pytest.approx(expected, rel=1e-9, abs=1e-9), (row["material_number"], p)
+            changed += abs(expected - prev["values"][p]) > 1e-9
+    assert changed > 0
+
+    undo = requests.post(base_url + "/api/undo", timeout=300).json()
+    assert undo.get("success"), undo
+    restored = {(r["material_number"], r["aux_column"]): r["values"] for r in _results(base_url)[DEMAND]}
+    for key, row in old.items():
+        assert restored[key] == pytest.approx(row["values"]), key
+    assert page.js_errors == []
+
+
+def test_whatif_builder_machine_driver_sets_availability_for_the_chosen_months(app_page):
+    page = app_page
+    base_url = page.server["base_url"]
+    before = _results(base_url)
+    avail_rows = before["09. Available capacity"]
+    row = next(r for r in avail_rows if any((v or 0) > 0 for v in r["values"].values()))
+    periods = sorted(row["values"])[2:4]
+
+    page.click("#scenarioBuildBtn")
+    page.check('input[name="sbType"][value="machine"]')
+    page.select_option("#sbMachineSel", str(row["material_number"]))
+    page.fill("#sbAvail", "0")
+    page.select_option("#sbFrom", periods[0])
+    page.select_option("#sbTo", periods[-1])
+    page.dispatch_event("#sbAvail", "input")
+    expect(page.locator("#sbPreview")).to_contain_text("maand(en)")
+    with page.expect_response(lambda r: "/api/update_volume_bulk" in r.url and r.ok):
+        page.click("#sbApply")
+    expect(page.locator("#scenarioBuilderModal")).to_have_count(0, timeout=60000)
+
+    after = next(r for r in _results(base_url)["09. Available capacity"]
+                 if r["material_number"] == row["material_number"])
+    for p, v in after["values"].items():
+        assert v == pytest.approx(0.0 if p in periods else row["values"][p]), p
+    requests.post(base_url + "/api/undo", timeout=300)
+    assert page.js_errors == []
+
+
+def test_whatif_builder_refuses_empty_or_impossible_input(app_page):
+    page = app_page
+    page.click("#scenarioBuildBtn")
+    page.fill("#sbPct", "-150")
+    page.dispatch_event("#sbPct", "input")
+    expect(page.locator("#sbPreview")).to_contain_text("onder nul")
+    assert page.evaluate("() => document.getElementById('sbApply').disabled") is True
+    page.fill("#sbPct", "abc")
+    page.dispatch_event("#sbPct", "input")
+    assert page.evaluate("() => document.getElementById('sbApply').disabled") is True
+    periods = page.evaluate("() => state.periods")
+    page.select_option("#sbFrom", periods[-1])
+    page.select_option("#sbTo", periods[0])
+    page.fill("#sbPct", "10")
+    page.dispatch_event("#sbPct", "input")
+    expect(page.locator("#sbPreview")).to_contain_text("beginmaand ligt na de eindmaand")
+    assert page.js_errors == []

@@ -1096,6 +1096,7 @@
                         <select id="scenarioDrop" onchange="loadScenarioFromDrop(this)" class="bg-slate-700 rounded px-2 py-1 text-sm" title="Load a saved scenario" style="display:none">
                             <option value="">&#8617; Load scenario...</option>
                         </select>
+                        <button id="scenarioBuildBtn" onclick="openScenarioBuilder()" class="px-3 py-1 rounded text-sm bg-sky-700 hover:bg-sky-600 text-white" title="Pas vraag of machinebeschikbaarheid aan voor een groep producten of een machine over een periode — als één bewerking">&#10010; Wat-als</button>
                         <button id="scenarioCompareBtn" onclick="openCompareModal()" class="px-3 py-1 rounded text-sm bg-teal-700 hover:bg-teal-600 text-white" title="Vergelijk scenario's en de huidige stand op kerncijfers" style="display:none">&#9654;&#9654; Vergelijk</button>
                         <button onclick="openSaveInstanceModal()" class="px-3 py-1 rounded text-sm bg-emerald-700 hover:bg-emerald-600 text-white" title="Sla huidige staat op als nieuwe instantie in de sidebar">&#128190; Opslaan als instantie</button>
                         <button onclick="openPapModal()" class="px-3 py-1 rounded text-sm bg-violet-700 hover:bg-violet-600 text-white" title="Manage production/purchase split fractions">&#9881; Prod/Purch Split</button>
@@ -10626,6 +10627,191 @@ async function openCompareModal() {
     // Default B to second scenario
     if (scenarioList.length >= 2) document.getElementById('cmpSelB').value = scenarioList[1].id;
     _kpiSyncBase();
+}
+
+// ── Wat-als bouwen: een stuurknop wordt één bulkbewerking ─────────────────
+// Twee stuurknoppen: de vraag van een groep producten met een percentage
+// verschuiven, of de beschikbaarheid van een machine over een periode zetten
+// (0 % = stilstand). Beide worden gewone celbewerkingen via de bulkroute:
+// één undo-stap, bewaard en herspeeld na een herstart zoals elke bewerking.
+// Daarna: opslaan als scenario en vergelijken met de basis.
+const SB_DEMAND = '01. Demand forecast';
+const SB_AVAILABILITY = '09. Available capacity';
+const SB_MAX_CELLS = 600;
+
+function openScenarioBuilder() {
+    if (!state.results || !(state.periods || []).length) { alert('Voer eerst een berekening uit.'); return; }
+    const periods = state.periods;
+    const demandRows = state.results[SB_DEMAND] || [];
+    const families = [...new Set(demandRows.map(r => r.product_family).filter(Boolean))].sort();
+    const machines = (state.results[SB_AVAILABILITY] || [])
+        .map(r => ({ id: String(r.material_number), code: r.material_name || r.material_number, name: r.product_name || '' }))
+        .sort((a, b) => String(a.code).localeCompare(String(b.code)));
+    const opt = (value, label) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+    const periodOpts = periods.map(p => opt(p, p)).join('');
+    const existing = document.getElementById('scenarioBuilderModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'scenarioBuilderModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.7);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px';
+    const field = 'background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:4px 8px';
+    modal.innerHTML = `
+      <div style="background:#1e293b;border-radius:12px;padding:24px;width:100%;max-width:720px;color:#e2e8f0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h2 style="font-size:18px;font-weight:700">&#10010; Wat-als bouwen</h2>
+          <button onclick="document.getElementById('scenarioBuilderModal').remove()" style="background:#475569;border:none;color:#e2e8f0;padding:4px 10px;border-radius:6px;cursor:pointer">&#10005; Sluiten</button>
+        </div>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:12px">De aanpassing wordt één bewerking op de huidige stand: met Ctrl+Z of Undo in één keer terug te draaien.
+          Sla daarna op als scenario en vergelijk met <b>Vergelijk</b>.</p>
+        <div style="display:flex;gap:16px;margin-bottom:12px;font-size:13px">
+          <label><input type="radio" name="sbType" value="demand" checked onchange="_sbRender()"> Vraag aanpassen</label>
+          <label><input type="radio" name="sbType" value="machine" onchange="_sbRender()"> Machinebeschikbaarheid</label>
+        </div>
+        <div id="sbDemand" style="display:grid;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center;font-size:13px">
+          <span>Welke producten</span>
+          <select id="sbScope" style="${field}" onchange="_sbRender()">
+            <option value="family">Productfamilie</option><option value="material">Eén materiaal</option><option value="all">Alle producten</option>
+          </select>
+          <span id="sbFamilyLabel">Productfamilie</span>
+          <select id="sbFamily" style="${field}" onchange="_sbRender()">${families.map(f => opt(f, f)).join('')}</select>
+          <span id="sbMaterialLabel">Materiaal</span>
+          <span id="sbMaterialWrap"><input id="sbMaterial" list="sbMaterialList" placeholder="materiaalnummer" style="${field};width:220px" oninput="_sbRender()">
+            <datalist id="sbMaterialList">${demandRows.map(r => opt(r.material_number, `${r.material_number} ${r.material_name || ''}`)).join('')}</datalist></span>
+          <span>Verandering</span>
+          <span><input id="sbPct" type="text" value="10" style="${field};width:90px;text-align:right" oninput="_sbRender()"> % van de huidige vraag</span>
+        </div>
+        <div id="sbMachine" style="display:none;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center;font-size:13px">
+          <span>Machine</span>
+          <select id="sbMachineSel" style="${field}" onchange="_sbRender()">${machines.map(m => opt(m.id, `${m.code} — ${m.name}`)).join('')}</select>
+          <span>Beschikbaarheid</span>
+          <span><input id="sbAvail" type="text" value="0" style="${field};width:90px;text-align:right" oninput="_sbRender()"> % (0 = stilstand, 100 = volledig)</span>
+        </div>
+        <div style="display:grid;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center;font-size:13px;margin-top:8px">
+          <span>Periode</span>
+          <span><select id="sbFrom" style="${field}" onchange="_sbRender()">${periodOpts}</select> t/m
+                <select id="sbTo" style="${field}" onchange="_sbRender()">${periodOpts}</select></span>
+        </div>
+        <div id="sbPreview" style="margin-top:14px;font-size:13px;padding:10px;border-radius:8px;background:rgba(15,23,42,0.6)"></div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">
+          <button id="sbApply" onclick="applyScenarioBuilder()" style="background:#0284c7;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px">Toepassen op de huidige stand</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('sbTo').value = periods[periods.length - 1];
+    _sbRender();
+}
+
+function _sbType() {
+    return (document.querySelector('input[name="sbType"]:checked') || {}).value || 'demand';
+}
+
+function _sbPeriods() {
+    const periods = state.periods || [];
+    const from = document.getElementById('sbFrom').value;
+    const to = document.getElementById('sbTo').value;
+    return periods.filter(p => p >= from && p <= to);
+}
+
+// De cellen die de aanpassing raakt, met hun nieuwe waarde. Cellen waarvan de
+// waarde niet verandert (0 + x %, al op de gekozen beschikbaarheid) blijven
+// buiten de bewerking.
+function _sbPlan() {
+    const periods = _sbPeriods();
+    if (!periods.length) return { error: 'De beginmaand ligt na de eindmaand.' };
+    if (_sbType() === 'demand') {
+        const pct = parseLocaleNumber(document.getElementById('sbPct').value);
+        if (!Number.isFinite(pct)) return { error: 'Vul een percentage in.' };
+        if (pct <= -100) return { error: 'Een vraag kan niet onder nul: kies meer dan -100 %.' };
+        const scope = document.getElementById('sbScope').value;
+        const family = document.getElementById('sbFamily').value;
+        const material = String(document.getElementById('sbMaterial').value || '').trim();
+        if (scope === 'material' && !material) return { error: 'Kies een materiaal.' };
+        const rows = (state.results[SB_DEMAND] || []).filter(r =>
+            scope === 'all' || (scope === 'family' && r.product_family === family)
+            || (scope === 'material' && String(r.material_number) === material));
+        if (!rows.length) return { error: 'Geen producten gevonden voor deze keuze.' };
+        const cells = [];
+        let before = 0, after = 0;
+        for (const row of rows) {
+            for (const p of periods) {
+                const old = Number((row.values || {})[p] || 0);
+                const nv = old * (1 + pct / 100);
+                before += old; after += nv;
+                if (Math.abs(nv - old) > 1e-9) {
+                    cells.push({ line_type: SB_DEMAND, material_number: String(row.material_number),
+                                 aux_column: row.aux_column == null ? '' : String(row.aux_column), period: p, new_value: nv });
+                }
+            }
+        }
+        return { cells, rows: rows.length, periods, before, after, kind: 'demand' };
+    }
+    const avail = parseLocaleNumber(document.getElementById('sbAvail').value);
+    if (!Number.isFinite(avail) || avail < 0 || avail > 150) return { error: 'Beschikbaarheid tussen 0 en 150 %.' };
+    const id = document.getElementById('sbMachineSel').value;
+    const row = (state.results[SB_AVAILABILITY] || []).find(r => String(r.material_number) === id);
+    if (!row) return { error: 'Kies een machine.' };
+    const cells = [];
+    for (const p of periods) {
+        const old = Number((row.values || {})[p] || 0);
+        if (Math.abs(old - avail / 100) > 1e-9) {
+            cells.push({ line_type: SB_AVAILABILITY, material_number: String(row.material_number),
+                         aux_column: row.aux_column == null ? '' : String(row.aux_column), period: p, new_value: avail / 100 });
+        }
+    }
+    return { cells, rows: 1, periods, machine: row.material_name || id, kind: 'machine', avail };
+}
+
+function _sbRender() {
+    if (!document.getElementById('scenarioBuilderModal')) return;
+    const type = _sbType();
+    document.getElementById('sbDemand').style.display = type === 'demand' ? 'grid' : 'none';
+    document.getElementById('sbMachine').style.display = type === 'machine' ? 'grid' : 'none';
+    const scope = document.getElementById('sbScope').value;
+    for (const [id, show] of [['sbFamily', scope === 'family'], ['sbFamilyLabel', scope === 'family'],
+                              ['sbMaterialWrap', scope === 'material'], ['sbMaterialLabel', scope === 'material']]) {
+        document.getElementById(id).style.display = show ? '' : 'none';
+    }
+    const plan = _sbPlan();
+    const host = document.getElementById('sbPreview');
+    const btn = document.getElementById('sbApply');
+    const block = !!plan.error || !plan.cells.length || plan.cells.length > SB_MAX_CELLS;
+    btn.disabled = block;
+    btn.style.opacity = block ? '0.5' : '1';
+    if (plan.error) { host.innerHTML = `<span style="color:#fbbf24">${escapeHtml(plan.error)}</span>`; return; }
+    const months = `${plan.periods[0]} t/m ${plan.periods[plan.periods.length - 1]} (${plan.periods.length} mnd)`;
+    const size = plan.cells.length > SB_MAX_CELLS
+        ? `<div style="color:#fbbf24">${plan.cells.length} cellen: meer dan ${SB_MAX_CELLS}. Kies een kleinere groep of periode.</div>` : '';
+    host.innerHTML = plan.kind === 'demand'
+        ? `<div><b>${plan.rows}</b> product(en), ${months}: <b>${plan.cells.length}</b> cel(len) veranderen.</div>
+           <div>Vraag in die periode: ${_fmtNlNum(plan.before, 0)} t &rarr; <b>${_fmtNlNum(plan.after, 0)} t</b>
+             (${plan.after >= plan.before ? '+' : '−'}${_fmtNlNum(Math.abs(plan.after - plan.before), 0)} t)</div>
+           <div style="color:#94a3b8;font-size:12px">Producten met vraag 0 in een maand blijven 0. Afhankelijke vraag, voorraad, capaciteit en financiën rekenen mee door.</div>${size}`
+        : `<div>Machine <b>${escapeHtml(plan.machine)}</b>, ${months}: beschikbaarheid <b>${_fmtNlNum(plan.avail, 0)}%</b> in <b>${plan.cells.length}</b> maand(en).</div>
+           <div style="color:#94a3b8;font-size:12px">De productie blijft gepland; de benutting van de machine en de knelpunten tonen wat de stilstand kost.</div>${size}`;
+}
+
+async function applyScenarioBuilder() {
+    const plan = _sbPlan();
+    if (plan.error || !plan.cells.length || plan.cells.length > SB_MAX_CELLS) return;
+    setBusy(true, `Wat-als toepassen op ${plan.cells.length} cellen...`);
+    try {
+        const res = await fetch('/api/update_volume_bulk', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cells: plan.cells }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) { notify(data.error || 'Toepassen mislukt.', 'error', 6000); return; }
+        await _applyVolumeChangeResult(data);
+        _syncPendingEditsToServer();
+        _markAutoSaved();
+        document.getElementById('scenarioBuilderModal')?.remove();
+        const failed = (data.failed && data.failed.length) ? `, ${data.failed.length} overgeslagen` : '';
+        notify(`Wat-als toegepast: ${data.applied} cellen${failed}. Sla op als scenario en vergelijk, of maak het met Undo in één keer ongedaan.`, 'success', 7000);
+    } catch (err) {
+        notify('Wat-als mislukt: ' + err, 'error', 6000);
+    } finally {
+        setBusy(false);
+    }
 }
 
 // ── Kerncijfers naast elkaar ───────────────────────────────────────────────
