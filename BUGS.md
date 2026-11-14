@@ -115,6 +115,7 @@ multi-user isolation); export files accumulate; `redirect_stdout` is process-glo
 | Q5 | `capacity_engine.py:121,386` | PML18 exception recompute uses different zero-std-time fallback than base calc and ignores DeleteDoubleProcessRows removals. |
 | Q6 | `capacity_engine.py:334,344` | Shift-hour fallbacks inconsistent: 347 for missing machine vs 520 for unknown shift system. |
 | Q7 | `forecast_engine.py:106` | `months_actuals + 1` anchor leaves one month in neither AUX1 nor planning values — documented as verified VBA math; noted for completeness. |
+| Q8 | `capacity_engine.py` `_calculate_utilization_rate` | At 0 % availability Line 10 reports utilization 0 (`used / available if available > 0 else 0.0`), so a machine with planned hours but no capacity looks idle. Since 2026-11 the scenario comparison counts these months separately ("Geplande uren zonder capaciteit"). VBA parity? Should it show the planned hours as overload instead? |
 
 ## New findings from the 2026-11-12 re-verification
 
