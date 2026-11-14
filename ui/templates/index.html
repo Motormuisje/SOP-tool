@@ -1096,7 +1096,7 @@
                         <select id="scenarioDrop" onchange="loadScenarioFromDrop(this)" class="bg-slate-700 rounded px-2 py-1 text-sm" title="Load a saved scenario" style="display:none">
                             <option value="">&#8617; Load scenario...</option>
                         </select>
-                        <button onclick="openCompareModal()" class="px-3 py-1 rounded text-sm bg-teal-700 hover:bg-teal-600 text-white" title="Compare two scenarios" style="display:none">&#9654;&#9654; Compare</button>
+                        <button id="scenarioCompareBtn" onclick="openCompareModal()" class="px-3 py-1 rounded text-sm bg-teal-700 hover:bg-teal-600 text-white" title="Vergelijk scenario's en de huidige stand op kerncijfers" style="display:none">&#9654;&#9654; Vergelijk</button>
                         <button onclick="openSaveInstanceModal()" class="px-3 py-1 rounded text-sm bg-emerald-700 hover:bg-emerald-600 text-white" title="Sla huidige staat op als nieuwe instantie in de sidebar">&#128190; Opslaan als instantie</button>
                         <button onclick="openPapModal()" class="px-3 py-1 rounded text-sm bg-violet-700 hover:bg-violet-600 text-white" title="Manage production/purchase split fractions">&#9881; Prod/Purch Split</button>
                         <button onclick="openUomGuardModalFromServer()" class="px-3 py-1 rounded text-sm bg-slate-600 hover:bg-slate-700 text-white" title="Controleer BOM-eenheden (kg vs ton) en beheer bevestigde conversies">&#9878; UoM-check</button>
@@ -10227,6 +10227,11 @@ async function refreshScenarioDrop() {
             opt.textContent = `${sc.name} (${ts}, ${sc.edit_count} edits)`;
             drop.appendChild(opt);
         });
+        // De vergelijkknop stond altijd verborgen (niets zette hem aan). Eén
+        // opgeslagen scenario volstaat: de vergelijking kan de huidige stand
+        // als tweede kolom nemen.
+        const cmpBtn = document.getElementById('scenarioCompareBtn');
+        if (cmpBtn) cmpBtn.style.display = (data.scenarios || []).length >= 1 ? '' : 'none';
     } catch (err) { log('Scenario list error: ' + err); }
 }
 
@@ -10566,7 +10571,8 @@ async function openCompareModal() {
         const d = await r.json();
         scenarioList = d.scenarios || [];
     } catch (e) { alert('Could not load scenarios: ' + e); return; }
-    if (scenarioList.length < 2) { alert('You need at least 2 saved scenarios to compare.'); return; }
+    if (scenarioList.length < 1) { alert('Sla eerst een scenario op; dan kun je het met de huidige stand vergelijken.'); return; }
+    _cmpScenarioList = scenarioList;
 
     // Build select options
     const opts = scenarioList.map(sc => {
@@ -10584,9 +10590,24 @@ async function openCompareModal() {
     modal.innerHTML = `
       <div style="background:#1e293b;border-radius:12px;padding:24px;width:100%;max-width:1200px;color:#e2e8f0">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <h2 style="font-size:18px;font-weight:700">&#9654;&#9654; Scenario Comparison</h2>
+          <h2 style="font-size:18px;font-weight:700">&#9654;&#9654; Scenario's vergelijken</h2>
           <button onclick="document.getElementById('compareModal').remove()" style="background:#475569;border:none;color:#e2e8f0;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:14px">&#10005; Close</button>
         </div>
+        <div id="kpiCompareSection" style="margin-bottom:22px">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:6px">Kerncijfers naast elkaar</h3>
+          <p style="font-size:12px;color:#94a3b8;margin-bottom:8px">Kies tot ${KPI_MAX_COLUMNS} kolommen. De eerste gekozen kolom is de basis; de andere tonen het verschil daarmee.
+            De financiële cijfers zijn de horizongetallen die de berekening zelf in de consolidatie zet (zoals in Excel). Volumes, uitzonderingen en FTE zijn sommen en tellingen over de rijen van datzelfde scenario. Er wordt niets opnieuw berekend.</p>
+          <div id="kpiPick" style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">${_kpiPickHtml(scenarioList)}</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <label style="font-size:13px">Basis:
+              <select id="kpiBase" style="margin-left:6px;background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:4px 8px"></select>
+            </label>
+            <button id="kpiRunBtn" onclick="runKpiCompare()" style="background:#0d9488;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px">Vergelijk kerncijfers</button>
+          </div>
+          <div id="kpiResult"></div>
+        </div>
+        <div id="cellCompareSection" style="${scenarioList.length >= 2 ? '' : 'display:none'}">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:6px">Celverschillen tussen twee opgeslagen scenario's</h3>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
           <label style="font-size:13px">Scenario A (baseline):
             <select id="cmpSelA" style="margin-left:6px;background:#334155;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:4px 8px">${opts}</select>
@@ -10599,10 +10620,205 @@ async function openCompareModal() {
         </div>
         <div id="cmpSummary" style="margin-bottom:12px"></div>
         <div id="cmpTableWrap" style="overflow-x:auto"></div>
+        </div>
       </div>`;
     document.body.appendChild(modal);
     // Default B to second scenario
     if (scenarioList.length >= 2) document.getElementById('cmpSelB').value = scenarioList[1].id;
+    _kpiSyncBase();
+}
+
+// ── Kerncijfers naast elkaar ───────────────────────────────────────────────
+const KPI_MAX_COLUMNS = 4;
+let _cmpScenarioList = [];
+let _kpiLast = null;
+let _kpiChart = null;
+
+function _kpiPickHtml(list) {
+    // Standaard: het laatst opgeslagen scenario en de huidige stand.
+    const last = list.length ? list[list.length - 1].id : null;
+    const box = (value, label, checked) =>
+        `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" data-kpi-col="${escapeHtml(value)}" ${checked ? 'checked' : ''} onchange="_kpiSyncBase()">${label}</label>`;
+    return list.map(sc => box(sc.id,
+            `${escapeHtml(sc.name)} <span style="color:#64748b">${escapeHtml((sc.timestamp || '').slice(0, 16).replace('T', ' '))}</span>`,
+            sc.id === last)).join('')
+        + box('current', '<b>Huidige stand</b>', true);
+}
+
+function _kpiSelected() {
+    return [...document.querySelectorAll('#kpiPick input[data-kpi-col]')]
+        .filter(el => el.checked).map(el => el.dataset.kpiCol);
+}
+
+function _kpiLabelOf(id) {
+    if (id === 'current') return 'Huidige stand';
+    const sc = _cmpScenarioList.find(s => s.id === id);
+    return sc ? sc.name : id;
+}
+
+function _kpiSyncBase() {
+    const sel = document.getElementById('kpiBase');
+    if (!sel) return;
+    const chosen = _kpiSelected();
+    const keep = sel.value;
+    sel.innerHTML = chosen.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(_kpiLabelOf(id))}</option>`).join('');
+    if (chosen.includes(keep)) sel.value = keep;
+    const btn = document.getElementById('kpiRunBtn');
+    const ok = chosen.length >= 2 && chosen.length <= KPI_MAX_COLUMNS;
+    if (btn) {
+        btn.disabled = !ok;
+        btn.style.opacity = ok ? '1' : '0.5';
+        btn.title = ok ? '' : `Kies 2 tot ${KPI_MAX_COLUMNS} kolommen`;
+    }
+}
+
+async function runKpiCompare() {
+    const chosen = _kpiSelected();
+    const base = document.getElementById('kpiBase').value || chosen[0];
+    const ordered = [base, ...chosen.filter(id => id !== base)];
+    const host = document.getElementById('kpiResult');
+    host.innerHTML = '<span style="color:#94a3b8;font-size:13px">Bezig…</span>';
+    try {
+        const res = await fetch('/api/scenarios/kpis', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scenario_ids: ordered.filter(id => id !== 'current'),
+                include_current: ordered.includes('current'),
+                base: ordered[0] === 'current' ? 'current' : undefined,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) { host.innerHTML = `<span style="color:#f87171">${escapeHtml(data.error || 'Vergelijken mislukt')}</span>`; return; }
+        // Zelfde volgorde als gekozen: de server zet de huidige stand vooraan
+        // of achteraan; de saved scenario's in de gegeven volgorde.
+        _kpiLast = data;
+        _renderKpiCompare();
+    } catch (err) {
+        host.innerHTML = `<span style="color:#f87171">${escapeHtml('Vergelijken mislukt: ' + err)}</span>`;
+    }
+}
+
+function _kpiFmt(value, unit) {
+    if (value === null || value === undefined) return '<span style="color:#64748b">–</span>';
+    if (unit === 'ratio') return _fmtNlNum(value * 100, 1) + '%';
+    if (unit === 'EUR') return '€ ' + _fmtNlNum(value, 0);
+    if (unit === 't') return _fmtNlNum(value, 0) + ' t';
+    if (unit === 'FTE') return _fmtNlNum(value, 1);
+    return _fmtNlNum(value, 0) + (unit ? ` <span style="font-size:11px;color:#64748b">${escapeHtml(unit)}</span>` : '');
+}
+
+function _kpiDeltaHtml(delta, meta) {
+    if (delta === null || delta === undefined) return '';
+    if (Math.abs(delta) < 1e-9) return '<div style="font-size:11px;color:#64748b">gelijk</div>';
+    const sign = delta > 0 ? '+' : '−';
+    const abs = Math.abs(delta);
+    const txt = meta.unit === 'ratio' ? `${sign}${_fmtNlNum(abs * 100, 1)} pp`
+        : meta.unit === 'EUR' ? `${sign}€ ${_fmtNlNum(abs, 0)}`
+        : meta.unit === 't' ? `${sign}${_fmtNlNum(abs, 0)} t`
+        : meta.unit === 'FTE' ? `${sign}${_fmtNlNum(abs, 1)}`
+        : `${sign}${_fmtNlNum(abs, 0)}`;
+    // Kleur alleen waar beter/slechter eenduidig is (meta.direction ≠ 0).
+    const better = meta.direction === 0 ? null : (delta > 0) === (meta.direction > 0);
+    const color = better === null ? '#94a3b8' : better ? '#4ade80' : '#f87171';
+    return `<div style="font-size:11px;color:${color}">${txt}</div>`;
+}
+
+const _KPI_DRILL = { below_target: 'below_target', stock_negative: 'stock_negative', overloaded_machine_months: 'overloaded' };
+
+function _renderKpiCompare() {
+    const data = _kpiLast;
+    const host = document.getElementById('kpiResult');
+    if (!data || !host) return;
+    const cols = data.columns || [];
+    const meta = data.kpi_meta || {};
+    const showAll = !!host.dataset.showAll;
+    const keys = showAll ? data.kpi_order : data.headline;
+    const th = cols.map((c, i) => {
+        const note = c.compatibility !== 'gelijk' && i > 0
+            ? `<div style="font-size:11px;color:#fbbf24" title="Een horizongetal (ROCE, een som) is alleen te vergelijken over dezelfde periodes">andere horizon: geen verschillen</div>` : '';
+        const unknown = c.master_version_differs
+            ? `<div style="font-size:11px;color:#fbbf24" title="Berekend op een andere versie van de masterdata dan de basis: verschillen kunnen ook uit de masterdata komen">masterdata v${escapeHtml(c.master_version)} (basis anders)</div>`
+            : (!c.master_version_known
+                ? `<div style="font-size:11px;color:#94a3b8" title="Opgeslagen voordat de masterdataversie werd vastgelegd, of berekend zonder app-masterdata">masterdataversie onbekend</div>` : '');
+        const changes = (c.input_changes || []).length
+            ? `<div style="font-size:11px;color:#94a3b8">anders: ${escapeHtml(c.input_changes.join(', '))}</div>` : '';
+        const when = (c.is_current ? 'vastgelegd ' : '') + escapeHtml(String(c.timestamp || '').slice(0, 16).replace('T', ' '));
+        const horizon = (c.periods || []).length ? `${escapeHtml(c.periods[0])} – ${escapeHtml(c.periods[c.periods.length - 1])}` : '';
+        return `<th style="text-align:right;padding:6px 10px;vertical-align:bottom;min-width:150px">
+            <div>${i === 0 ? '<span style="color:#5eead4">basis</span> · ' : ''}${escapeHtml(c.name || '')}</div>
+            <div style="font-size:11px;color:#64748b;font-weight:400">${when} · ${horizon}</div>${note}${unknown}${changes}</th>`;
+    }).join('');
+    const rows = keys.map(key => {
+        const m = meta[key] || { label: key, unit: '', direction: 0 };
+        const cells = cols.map((c, i) => {
+            const v = (c.kpis || {})[key];
+            const drill = _KPI_DRILL[key] && v
+                ? ` style="cursor:pointer;text-decoration:underline dotted" onclick="_kpiShowDrill(${i}, '${key}')" title="Toon de regels achter dit getal"` : '';
+            // Bij de hoogste benutting hoort de machine en de maand.
+            const top = key === 'peak_utilization' ? ((c.exceptions || {}).top_machines || [])[0] : null;
+            const where = top ? `<div style="font-size:11px;color:#94a3b8">${escapeHtml(top.machine)} · ${escapeHtml(top.period)}</div>` : '';
+            return `<td style="text-align:right;padding:6px 10px;border-top:1px solid #334155"><span${drill}>${_kpiFmt(v, m.unit)}</span>${where}${i > 0 ? _kpiDeltaHtml((c.deltas || {})[key], m) : ''}</td>`;
+        }).join('');
+        return `<tr data-kpi-row="${escapeHtml(key)}"><td style="padding:6px 10px;border-top:1px solid #334155;white-space:nowrap">${escapeHtml(m.label)}</td>${cells}</tr>`;
+    }).join('');
+    host.innerHTML = `
+        <div style="overflow-x:auto"><table style="width:100%;font-size:13px;border-collapse:collapse">
+          <thead><tr><th style="text-align:left;padding:6px 10px">Kerncijfer</th>${th}</tr></thead>
+          <tbody>${rows}</tbody></table></div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
+          <button onclick="_kpiToggleAll()" style="background:#334155;color:#e2e8f0;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px">${showAll ? 'Minder cijfers' : 'Meer cijfers'}</button>
+          <span style="font-size:11px;color:#64748b">Financiële stromen: totaal over de horizon. Voorraadwaarde en werkkapitaal: gemiddelde. Groen/rood alleen waar hoger eenduidig beter of slechter is.</span>
+        </div>
+        <div id="kpiDrill" style="margin-top:10px"></div>
+        <div style="height:220px;margin-top:12px"><canvas id="kpiChart"></canvas></div>`;
+    _renderKpiChart(cols);
+}
+
+function _kpiToggleAll() {
+    const host = document.getElementById('kpiResult');
+    if (host.dataset.showAll) delete host.dataset.showAll; else host.dataset.showAll = '1';
+    _renderKpiCompare();
+}
+
+function _kpiShowDrill(index, key) {
+    const col = (_kpiLast.columns || [])[index];
+    const host = document.getElementById('kpiDrill');
+    if (!col || !host) return;
+    const list = ((col.exceptions || {})[_KPI_DRILL[key]] || []);
+    const label = ((_kpiLast.kpi_meta || {})[key] || {}).label || key;
+    const row = item => key === 'overloaded_machine_months'
+        ? `<tr><td>${escapeHtml(item.machine)}</td><td>${escapeHtml(item.group || '')}</td><td>${escapeHtml(item.period)}</td><td style="text-align:right">${_fmtNlNum(item.utilization * 100, 0)}%</td></tr>`
+        : `<tr><td>${escapeHtml(item.material)}</td><td>${escapeHtml(item.name || '')}</td><td>${escapeHtml(item.period)}</td><td style="text-align:right">${_fmtNlNum(item.stock, 1)} t${item.target !== undefined ? ` (doel ${_fmtNlNum(item.target, 1)})` : ''}</td></tr>`;
+    host.innerHTML = `<div style="font-size:12px;color:#cbd5e1;margin-bottom:4px"><b>${escapeHtml(label)}</b> — ${escapeHtml(col.name || '')}${list.length >= 50 ? ' (eerste 50)' : ''}</div>
+        <table style="font-size:12px;border-collapse:collapse;width:100%">${list.map(row).join('')}</table>`;
+}
+
+function _renderKpiChart(cols) {
+    const canvas = document.getElementById('kpiChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    if (_kpiChart) { _kpiChart.destroy(); _kpiChart = null; }
+    const periods = (cols[0] || {}).periods || [];
+    const palette = ['#5eead4', '#f59e0b', '#a78bfa', '#f472b6'];
+    _kpiChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: periods,
+            datasets: cols.map((c, i) => ({
+                label: `EBIT · ${c.name}`,
+                data: periods.map(p => ((c.series || {}).ebit || {})[p] ?? null),
+                borderColor: palette[i % palette.length], backgroundColor: 'transparent',
+                borderWidth: 2, pointRadius: 2, tension: 0.2,
+            })),
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#cbd5e1', font: { size: 11 } } }, datalabels: { display: false } },
+            scales: {
+                x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+                y: { ticks: { color: '#94a3b8', callback: v => '€ ' + _fmtNlNum(v, 0) }, grid: { color: 'rgba(148,163,184,0.1)' } },
+            },
+        },
+    });
 }
 
 async function runCompare() {

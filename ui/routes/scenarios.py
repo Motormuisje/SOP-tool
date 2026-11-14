@@ -74,6 +74,55 @@ def _scenario_pap(current_engine, global_config: dict, format_pap) -> str:
     return format_pap(pap)
 
 
+def _row_snapshot(row, with_edits: bool) -> dict:
+    return {
+        'material_number': row.material_number,
+        'material_name': row.material_name,
+        'product_type': row.product_type,
+        'product_family': row.product_family,
+        'spc_product': row.spc_product,
+        'product_cluster': row.product_cluster,
+        'product_name': row.product_name,
+        'line_type': row.line_type,
+        'aux_column': row.aux_column,
+        'aux_2_column': row.aux_2_column,
+        'starting_stock': row.starting_stock,
+        'values': dict(row.values),
+        'manual_edits': ({period: dict(edit) for period, edit in row.manual_edits.items()}
+                         if with_edits else {}),
+    }
+
+
+def snapshot_engine_results(engine) -> tuple:
+    """(results, value_results, manual edit count) of an engine, in the shape
+    a saved scenario stores. Used for saving and for the live column of the
+    scenario comparison, so both are read the same way."""
+    results = {lt: [_row_snapshot(r, True) for r in rows] for lt, rows in engine.results.items()}
+    values = {lt: [_row_snapshot(r, False) for r in rows]
+              for lt, rows in (engine.value_results or {}).items()}
+    edits = sum(len(r.manual_edits) for rows in engine.results.values() for r in rows)
+    return results, values, edits
+
+
+def _engine_master_version(engine):
+    """De masterdataversie waaruit DEZE engine is berekend (niet de versie die
+    nu in de store staat). None zonder app-masterdata of bij een engine die
+    van vóór deze registratie stamt."""
+    source = getattr(engine, '_resolved_master_source', None)
+    return getattr(source, 'version', None)
+
+
+def _engine_unlimited_machines(engine) -> list:
+    """Machines met onbeperkte capaciteit (Config MachineUnlimitedCapacity):
+    hun benutting staat altijd op 1,0 en hoort niet in de ranglijst."""
+    config = getattr(getattr(engine, 'data', None), 'config', None)
+    return sorted(str(m) for m in (getattr(config, 'unlimited_capacity_machine', None) or []))
+
+
+# A comparison shows at most this many columns, the live plan included.
+MAX_COMPARE_COLUMNS = 4
+
+
 def _added_products_warnings(sc: dict, sess: dict) -> list:
     """Dutch warnings when a scenario's dynamic products no longer match the
     session's. Loading does not restore products (that would be a structural
@@ -150,47 +199,7 @@ def create_scenarios_blueprint(
         if not name:
             return jsonify({'error': 'Scenario name is required'}), 400
 
-        results_snapshot = {}
-        total_edits = 0
-        for line_type, rows in current_engine.results.items():
-            results_snapshot[line_type] = []
-            for row in rows:
-                results_snapshot[line_type].append({
-                    'material_number': row.material_number,
-                    'material_name': row.material_name,
-                    'product_type': row.product_type,
-                    'product_family': row.product_family,
-                    'spc_product': row.spc_product,
-                    'product_cluster': row.product_cluster,
-                    'product_name': row.product_name,
-                    'line_type': row.line_type,
-                    'aux_column': row.aux_column,
-                    'aux_2_column': row.aux_2_column,
-                    'starting_stock': row.starting_stock,
-                    'values': dict(row.values),
-                    'manual_edits': {period: dict(edit) for period, edit in row.manual_edits.items()},
-                })
-                total_edits += len(row.manual_edits)
-
-        value_snapshot = {}
-        for line_type, rows in current_engine.value_results.items():
-            value_snapshot[line_type] = []
-            for row in rows:
-                value_snapshot[line_type].append({
-                    'material_number': row.material_number,
-                    'material_name': row.material_name,
-                    'product_type': row.product_type,
-                    'product_family': row.product_family,
-                    'spc_product': row.spc_product,
-                    'product_cluster': row.product_cluster,
-                    'product_name': row.product_name,
-                    'line_type': row.line_type,
-                    'aux_column': row.aux_column,
-                    'aux_2_column': row.aux_2_column,
-                    'starting_stock': row.starting_stock,
-                    'values': dict(row.values),
-                    'manual_edits': {},
-                })
+        results_snapshot, value_snapshot, total_edits = snapshot_engine_results(current_engine)
 
         active_session_id = get_active_session_id()
         active_session = sessions.get(active_session_id, {})
@@ -205,6 +214,12 @@ def create_scenarios_blueprint(
             'session_id': active_session_id,
             'timestamp': datetime.now().isoformat(),
             'edit_count': total_edits,
+            # Horizon en masterdataversie waarop dit scenario berekend is: de
+            # vergelijking toont deltas alleen bij dezelfde horizon, en kan zo
+            # zeggen of een scenario op oudere masterdata rust.
+            'periods': list(getattr(getattr(current_engine, 'data', None), 'periods', None) or []),
+            'master_version': _engine_master_version(current_engine),
+            'unlimited_machines': _engine_unlimited_machines(current_engine),
             'results': results_snapshot,
             'value_results': value_snapshot,
             'pending_edits': pending_snapshot,
@@ -428,6 +443,81 @@ def create_scenarios_blueprint(
             'changed_rows': len(diff_rows),
         }
         return jsonify({'summary': summary, 'rows': diff_rows})
+
+    @bp.route('/api/scenarios/kpis', methods=['POST'])
+    def scenario_kpis():
+        """Kerncijfers van tot vier kolommen naast elkaar: opgeslagen scenario's
+        van de actieve sessie en/of de huidige stand. De eerste kolom is de basis."""
+        from ui.locks import engine_rebuild_lock
+        from ui.scenario_kpis import compare
+
+        req = request.get_json(silent=True)
+        if not isinstance(req, dict):
+            return jsonify({'error': 'Verwacht een JSON-object.'}), 400
+        ids = req.get('scenario_ids', [])
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            return jsonify({'error': 'scenario_ids moet een lijst zijn.'}), 400
+        include_current = req.get('include_current', False)
+        if not isinstance(include_current, bool):
+            return jsonify({'error': 'include_current moet true of false zijn.'}), 400
+        base = req.get('base')
+        if base is not None and base != 'current':
+            return jsonify({'error': 'base mag alleen "current" zijn; anders is het eerste scenario de basis.'}), 400
+        if base == 'current' and not include_current:
+            return jsonify({'error': 'base "current" vraagt include_current: true.'}), 400
+        current_first = base == 'current'
+        if len(ids) + (1 if include_current else 0) < 2:
+            return jsonify({'error': 'Kies minstens twee kolommen om te vergelijken.'}), 400
+        if len(ids) + (1 if include_current else 0) > MAX_COMPARE_COLUMNS:
+            return jsonify({'error': f'Maximaal {MAX_COMPARE_COLUMNS} kolommen, de huidige stand meegeteld.'}), 400
+        if len(set(ids)) != len(ids):
+            return jsonify({'error': 'Elk scenario mag maar één keer voorkomen.'}), 400
+        active_session_id = get_active_session_id()
+        columns = []
+        for sid in ids:
+            sc = scenarios.get(sid)
+            if sc is None:
+                return jsonify({'error': 'Scenario not found'}), 404
+            if sc.get('session_id') != active_session_id:
+                return jsonify({'error': 'Scenarios belong to a different session'}), 403
+            columns.append({**sc, 'id': sid})
+        if include_current:
+            # Onder de rebuild-lock en de engine BINNEN de lock opgehaald: rijen
+            # en sessie-invoer komen zo uit één afgeronde berekening. Daarbuiten
+            # kon een herbouw de engine vervangen tussen ophalen en lezen.
+            with engine_rebuild_lock:
+                sess, current_engine = get_active()
+                if current_engine is None:
+                    return jsonify({'error': 'De huidige stand is nog niet doorgerekend.'}), 400
+                results, values, edits = snapshot_engine_results(current_engine)
+                live = {
+                    'id': 'current', 'name': 'Huidige stand', 'is_current': True,
+                    'timestamp': datetime.now().isoformat(timespec='seconds'),
+                    'edit_count': edits,
+                    'periods': list(getattr(current_engine.data, 'periods', None) or []),
+                    'master_version': _engine_master_version(current_engine),
+                    'unlimited_machines': _engine_unlimited_machines(current_engine),
+                    'results': results, 'value_results': values,
+                    'pending_edits': json.loads(json.dumps((sess or {}).get('pending_edits') or {})),
+                    'machine_overrides': json.loads(json.dumps((sess or {}).get('machine_overrides') or {})),
+                    'valuation_params': _scenario_valuation_params(current_engine, global_config),
+                    'purchased_and_produced': _scenario_pap(
+                        current_engine, global_config, format_purchased_and_produced),
+                }
+            if current_first:
+                columns.insert(0, live)
+            else:
+                columns.append(live)
+        # Scenario's van vóór de registratie van onbeperkte machines: de lijst
+        # van de huidige configuratie is de beste beschikbare (en staat zelden
+        # anders); zonder engine geen lijst.
+        _, engine_now = get_active()
+        fallback_unlimited = _engine_unlimited_machines(engine_now) if engine_now is not None else []
+        for column in columns:
+            if 'unlimited_machines' not in column:
+                column['unlimited_machines'] = fallback_unlimited
+                column['unlimited_assumed'] = True
+        return jsonify(compare(columns))
 
     @bp.route('/api/scenarios/compare/export')
     def export_scenario_comparison():

@@ -147,6 +147,9 @@ def create_workflow_blueprint(
                         master_data=src.master_data,
                     )
                     engine.run()
+                    # Zoals een herbouw (engine_rebuild): de engine weet uit welke
+                    # masterdataversie hij is berekend. Scenario's leggen die vast.
+                    engine._resolved_master_source = src
                     src.apply_to_session(sess)
                     install_clean_engine_baseline(sess, engine)
                     with app_context():
