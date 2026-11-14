@@ -14,6 +14,7 @@ from typing import Callable
 
 from flask import Blueprint, jsonify, request, send_file
 
+from ui.serializers import row_payload
 from modules.models import LineType
 from ui.pending_edits import trim_stack_group_aware
 from ui.state_snapshot import snapshot_engine_state
@@ -52,15 +53,15 @@ def _engine_state_response(current_engine, extra: dict | None = None) -> dict:
     payload = {
         'success': True,
         'results': {
-            lt: [r.to_dict() for r in rows]
+            lt: [row_payload(r) for r in rows]
             for lt, rows in current_engine.results.items()
         },
         'value_results': {
-            lt: [r.to_dict() for r in rows]
+            lt: [row_payload(r) for r in rows]
             for lt, rows in current_engine.value_results.items()
         },
         'consolidation': [
-            r.to_dict()
+            row_payload(r)
             for r in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
         ],
     }
@@ -176,11 +177,11 @@ def create_edits_blueprint(
         save_sessions_to_disk()
 
         value_results_dict = {
-            line_type_key: [row.to_dict() for row in rows_value]
+            line_type_key: [row_payload(row) for row in rows_value]
             for line_type_key, rows_value in current_engine.value_results.items()
         }
         consolidation = [
-            row.to_dict()
+            row_payload(row)
             for row in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
         ]
         delta_pct = round((new_value - original_value) / abs(original_value) * 100, 2) if original_value != 0 else 0.0
@@ -210,11 +211,11 @@ def create_edits_blueprint(
         save_sessions_to_disk()
 
         value_results_dict = {
-            line_type_key: [row.to_dict() for row in rows_value]
+            line_type_key: [row_payload(row) for row in rows_value]
             for line_type_key, rows_value in current_engine.value_results.items()
         }
         consolidation = [
-            row.to_dict()
+            row_payload(row)
             for row in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
         ]
 
@@ -539,15 +540,15 @@ def create_edits_blueprint(
             save_sessions_to_disk()
 
             results_dict = {
-                line_type_key: [row.to_dict() for row in rows]
+                line_type_key: [row_payload(row) for row in rows]
                 for line_type_key, rows in current_engine.results.items()
             }
             value_results_dict = {
-                line_type_key: [row.to_dict() for row in rows]
+                line_type_key: [row_payload(row) for row in rows]
                 for line_type_key, rows in current_engine.value_results.items()
             }
             consolidation = [
-                row.to_dict()
+                row_payload(row)
                 for row in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
             ]
 
@@ -596,15 +597,15 @@ def create_edits_blueprint(
         save_sessions_to_disk()
 
         results_dict = {
-            line_type_key: [row.to_dict() for row in rows]
+            line_type_key: [row_payload(row) for row in rows]
             for line_type_key, rows in engine.results.items()
         }
         value_results_dict = {
-            line_type_key: [row.to_dict() for row in rows]
+            line_type_key: [row_payload(row) for row in rows]
             for line_type_key, rows in engine.value_results.items()
         }
         consolidation = [
-            row.to_dict()
+            row_payload(row)
             for row in engine.value_results.get(LineType.CONSOLIDATION.value, [])
         ]
 

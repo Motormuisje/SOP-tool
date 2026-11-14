@@ -52,6 +52,7 @@ class InventoryEngine:
         dependent_demand_by_parent: Dict[str, Dict[str, float]],
         override_target_stock: Optional[float] = None,
         override_target_stock_values: Optional[Dict[str, float]] = None,
+        pinned_target_values: Optional[Dict[str, float]] = None,
         override_initial_stock: Optional[float] = None,
         override_forecast: Optional[Dict[str, float]] = None,
         fixed_production_plan: Optional[Dict[str, float]] = None,
@@ -104,8 +105,19 @@ class InventoryEngine:
         else:
             target_values = {p: base_target for p in self.periods}
 
+        # Manually edited target months (web UI): those months keep the edited
+        # value, every other month gets the target computed above. Applied on
+        # top of any method, so a moving-average target still follows demand
+        # in the months nobody edited.
+        if pinned_target_values:
+            for p, v in pinned_target_values.items():
+                if p in target_values:
+                    target_values[p] = float(v or 0.0)
+
         # For display: use base_target for aux_column, average of target_values for coverage
-        if override_target_stock_values is not None:
+        # Pinned months count as an override for the display too: the aux shows
+        # the average target the plan used, as when the whole row is passed.
+        if override_target_stock_values is not None or pinned_target_values:
             display_target = sum(target_values.values()) / len(target_values) if target_values else 0.0
         else:
             display_target = base_target if override_target_stock is None else override_target_stock

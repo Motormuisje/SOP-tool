@@ -36,6 +36,7 @@ snapshot/persist/replay for these stores; this module only writes them):
 
 from flask import jsonify
 
+from ui.serializers import row_payload
 from modules.models import LineType
 from ui.pending_edits import aux_str, pending_edit_key, trim_stack_group_aware
 from ui.replay import recalculate_value_results
@@ -51,6 +52,21 @@ EDITABLE_LINE_TYPES = {
     '06. Production plan',
     '06. Purchase receipt',
     '07. Capacity utilization',
+    '09. Available capacity',
+    '11. Shift availability',
+    '12. FTE requirements',
+}
+
+# Editable line types whose aux column is a DISPLAY value (an average, a lot
+# size, 'Machine override', ...) that the app may recalculate, so it is not
+# part of a cell's identity for pending edits. Not here: Line 07, where the
+# aux names the work centre or group and identifies the row.
+AUX_IS_DISPLAY_ONLY = {
+    '01. Demand forecast',
+    '04. Inventory',
+    '05. Minimum target stock',
+    '06. Production plan',
+    '06. Purchase receipt',
     '09. Available capacity',
     '11. Shift availability',
     '12. FTE requirements',
@@ -118,6 +134,21 @@ def recalc_one_material(
         _stored_stock = inventory_overrides.get(mat)
         if _stored_stock is not None:
             override_initial_stock = float(_stored_stock)
+    pinned_targets = None
+    if (preserve_l05 and override_target_stock is None and override_target_stock_values is None):
+        # An edited minimum target (Line 05) is part of the plan, not only of
+        # the display. Before, only the L05 edit itself passed it on; a later
+        # forecast, stock, parent or PAP recalculation planned against the
+        # workbook target while the cell still showed the edit, and a restart
+        # (which replays the L05 edit) gave a different plan. Only the EDITED
+        # months are pinned: the others are recomputed as usual, so a
+        # moving-average target keeps following demand there.
+        _l05_row = next(
+            (r for r in current_engine.results.get(LineType.MIN_TARGET_STOCK.value, [])
+             if r.material_number == mat), None)
+        if _l05_row is not None and getattr(_l05_row, 'manual_edits', None):
+            pinned_targets = {p: _l05_row.values.get(p) for p in _l05_row.manual_edits
+                              if p in _l05_row.values}
     fc_row = next(
         (r for r in current_engine.results.get(LineType.DEMAND_FORECAST.value, [])
          if r.material_number == mat), None
@@ -171,6 +202,8 @@ def recalc_one_material(
         kwargs['fixed_production_plan'] = fixed_prod
     if fixed_purch:
         kwargs['fixed_purchase_receipt'] = fixed_purch
+    if pinned_targets:
+        kwargs['pinned_target_values'] = pinned_targets
     inv_result = inv_eng.calculate_for_material(
         mat, forecast_vals, dep_demand_agg, dep_demand_by_parent, **kwargs
     )
@@ -198,8 +231,13 @@ def recalc_one_material(
          if r.material_number == mat), None
     )
     if new_l05 and preserve_l05:
-        new_l05.values = l05_saved_values
-        new_l05.manual_edits = l05_saved_edits
+        if pinned_targets:
+            # The new row already holds the edited months (pinned) and the
+            # recomputed others: show what the plan used.
+            new_l05.manual_edits = l05_saved_edits
+        else:
+            new_l05.values = l05_saved_values
+            new_l05.manual_edits = l05_saved_edits
 
     # Restore manual_edits markers on the rebuilt L06 rows so the UI can still
     # tell which periods were manually set (edit indicators, undo stack, etc.).
@@ -483,11 +521,44 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
         # can no longer erode a bulk group one oldest-entry at a time.
         trim_stack_group_aware(undo_stack)
 
-    # Update manual_edits tracking
+    # Pending entries of THIS cell. For the line types in
+    # AUX_IS_DISPLAY_ONLY the aux column is a value the app shows and
+    # recalculates (Line 05: the average target; Line 11: 'Machine override'
+    # after a shift edit), not part of the cell's identity: every key with
+    # this line type, material and period is the same cell. Matching on the
+    # exact aux left a stale key behind on a revert, and a restart brought the
+    # edit back. Line 07 is the exception: there the aux names the work centre
+    # (material rows) or the group, which identifies the row even when a
+    # material happens to have only one.
+    _pending = sess.setdefault('pending_edits', {})
+    _edit_key = pending_edit_key(line_type, material_number, aux_column, period)
+    if line_type in AUX_IS_DISPLAY_ONLY and len(material_rows) == 1:
+        _cell_prefix = f'{line_type}||{material_number}||'
+        _cell_suffix = f'||{period}'
+        _cell_keys = [k for k in _pending
+                      if k.startswith(_cell_prefix) and k.endswith(_cell_suffix)
+                      and len(k.split('||')) == 4]
+    else:
+        _cell_keys = [_edit_key] if _edit_key in _pending else []
+    _stored_original = next(
+        (_pending[k].get('original') for k in _cell_keys
+         if isinstance(_pending.get(k), dict) and _pending[k].get('original') is not None),
+        None)
+
+    # Update manual_edits tracking. The original is the value before the
+    # FIRST edit of this cell: from the pending store when it has one (on
+    # replay the fresh engine's value is not that original: an edit that
+    # happened to equal it was taken for a revert and dropped), else the
+    # value now in the cell.
     if period not in target_row.manual_edits:
-        target_row.manual_edits[period] = {'original': old_value, 'new': new_value}
+        _first_original = float(_stored_original) if _stored_original is not None else old_value
+        target_row.manual_edits[period] = {'original': _first_original, 'new': new_value}
     else:
         target_row.manual_edits[period]['new'] = new_value
+        if _stored_original is not None:
+            # One baseline per cell: the marker follows the pending store,
+            # so the revert check below cannot use a different original.
+            target_row.manual_edits[period]['original'] = float(_stored_original)
     # If restored to original, remove the edit tracking entry.
     # Tolerance-based comparison (matching update_value_aux in ui/routes/edits.py)
     # so float round-trips still count as a revert. This single decision drives
@@ -506,15 +577,30 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
 
     # Keep pending_edits in sync server-side so the edit survives a server restart
     # without needing the frontend's separate /api/sessions/edits/persist call.
-    _edit_key = pending_edit_key(line_type, material_number, aux_column, period)
-    _pending = sess.setdefault('pending_edits', {})
+    # Every key of this cell becomes one entry (or none, on a revert), and the
+    # entry keeps the replay position of the cell's first key: replay applies
+    # edits in insertion order, and moving a re-edited cell to the end would
+    # change that order.
     if is_revert:
-        _pending.pop(_edit_key, None)
+        for _k in _cell_keys:
+            _pending.pop(_k, None)
     else:
-        # Preserve the original baseline from any existing entry so repeated edits
-        # of the same cell don't overwrite the true pre-edit value.
-        _baseline = _pending.get(_edit_key, {}).get('original', original_val)
-        _pending[_edit_key] = {'original': _baseline, 'new_value': new_value}
+        # The original is the value before the cell's FIRST edit; with
+        # several (stale) keys for one cell, the earliest key's original.
+        _baseline = _stored_original if _stored_original is not None else original_val
+        _entry = {'original': _baseline, 'new_value': new_value}
+        if _cell_keys == [_edit_key] or not _cell_keys:
+            _pending[_edit_key] = _entry
+        else:
+            _rebuilt = {}
+            for _k, _v in _pending.items():
+                if _k in _cell_keys:
+                    if _edit_key not in _rebuilt:
+                        _rebuilt[_edit_key] = _entry
+                    continue
+                _rebuilt[_k] = _v
+            _pending.clear()
+            _pending.update(_rebuilt)
 
     if line_type == LineType.MIN_TARGET_STOCK.value:
         target_stock_values = dict(target_row.values)
@@ -740,9 +826,9 @@ def apply_volume_change(sess, current_engine, line_type, material_number, period
                 'delta_pct': delta_pct,
             },
         })
-    results_dict = {lt: [r.to_dict() for r in rs] for lt, rs in current_engine.results.items()}
-    value_results_dict = {lt: [r.to_dict() for r in rs] for lt, rs in current_engine.value_results.items()}
-    consolidation = [r.to_dict() for r in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])]
+    results_dict = {lt: [row_payload(r) for r in rs] for lt, rs in current_engine.results.items()}
+    value_results_dict = {lt: [row_payload(r) for r in rs] for lt, rs in current_engine.value_results.items()}
+    consolidation = [row_payload(r) for r in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])]
     return jsonify({
         'success': True,
         'results': results_dict,

@@ -11,6 +11,7 @@ from typing import Callable
 from flask import Blueprint, current_app, jsonify, request
 from werkzeug.utils import secure_filename
 
+from ui.serializers import row_payload
 from modules.data_loader import DataLoader
 
 
@@ -404,7 +405,7 @@ def create_config_blueprint(
         if current_engine is not None and planning_recalculated:
             payload['periods'] = list(getattr(current_engine.data, 'periods', []) or [])
             payload['results'] = {
-                lt: [row.to_dict() for row in rows]
+                lt: [row_payload(row) for row in rows]
                 for lt, rows in (getattr(current_engine, 'results', {}) or {}).items()
             }
             payload.update(moq_warnings_payload(current_engine))
@@ -493,7 +494,7 @@ def create_config_blueprint(
             payload['rebuilt'] = True
             payload['periods'] = list(getattr(current_engine.data, 'periods', []) or [])
             payload['results'] = {
-                lt: [row.to_dict() for row in rows]
+                lt: [row_payload(row) for row in rows]
                 for lt, rows in (getattr(current_engine, 'results', {}) or {}).items()
             }
             payload.update(moq_warnings_payload(current_engine))

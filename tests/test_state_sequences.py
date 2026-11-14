@@ -403,7 +403,7 @@ class _Sequence:
     def _edit_cell(self, label, line_type, row, period, new_value):
         old = row.starting_stock if period == 'starting_stock' else row.get_value(period)
         if period == 'starting_stock':
-            aux_sent = _js_or_empty(row.aux_column)    # index.html:9379
+            aux_sent = _js_or_empty(aux_str(row.aux_column))    # index.html:9379; aux arrives as row_payload's string
         else:
             aux_sent = _js_nullish(row.aux_column)     # index.html:9326
         material = str(row.material_number)
@@ -422,7 +422,7 @@ class _Sequence:
 
     def _persist_like_the_browser(self, line_type, row, material, aux_sent, period, data):
         """index.html _commitPlanEditNow: persist under the cell's data-key."""
-        key = f'{line_type}||{material}||{_js_or_empty(row.aux_column)}||{period}'
+        key = f'{line_type}||{material}||{_js_or_empty(aux_str(row.aux_column))}||{period}'
         row_data = next(
             (r for r in (data.get('results') or {}).get(line_type, [])
              if str(r.get('material_number')) == material
@@ -506,7 +506,7 @@ class _Sequence:
             for row in rows or []:
                 for period, edit in (row.get('manual_edits') or {}).items():
                     key = (f"{row.get('line_type') or line_type}||{row.get('material_number')}"
-                           f"||{_js_or_empty(row.get('aux_column'))}||{period}")
+                           f"||{_js_or_empty(aux_str(row.get('aux_column')))}||{period}")
                     original = float(edit.get('original') or 0)
                     new_value = float(edit['new']) if edit.get('new') is not None else original
                     edits[key] = {'original': original, 'new_value': new_value}
@@ -751,10 +751,10 @@ def _xfail(reason):
 
 
 # 27 and 38 are the first seeds above 16 that draw a machine undo.
-SERVER_SEEDS = {seed: None for seed in (*range(1, 17), 27, 38)}
-SERVER_SEEDS.update({14: L05_AUX_KEY, 16: L05_AUX_KEY, 39: L11_AUX_KEY, 43: L05_DROPPED})
+# 39 and 43 found the L11 aux-key and dropped-L05-target divergences; kept as regressions.
+SERVER_SEEDS = {seed: None for seed in (*range(1, 17), 27, 38, 39, 43)}
 CLIENT_SEEDS = {seed: None for seed in range(1, 11)}
-CLIENT_SEEDS.update({8: N4_ORDER, 16: L05_AUX_KEY, 59: L05_CLIENT_REKEY})
+CLIENT_SEEDS.update({16: None, 59: None})
 
 SEQUENCE_CASES = [
     pytest.param(seed, model, id=f'{model}-seed{seed}', marks=[_xfail(reason)] if reason else [])
@@ -799,7 +799,6 @@ def _l05_row_with_values(engine):
                 if r.aux_column and len(_nonzero_periods(r, periods)) == len(periods))
 
 
-@_xfail(L05_AUX_KEY)
 def test_l05_cell_set_back_to_its_original_stays_reverted(golden_fixture_path, tmp_path):
     """target edit, then type the original back into the same cell."""
     def drive(harness):
@@ -815,7 +814,6 @@ def test_l05_cell_set_back_to_its_original_stays_reverted(golden_fixture_path, t
     _run_and_compare(golden_fixture_path, tmp_path, 'L05 edit, then set back', drive)
 
 
-@_xfail(L05_CLIENT_REKEY)
 def test_l05_edit_undone_with_the_browser_sync_stays_undone(golden_fixture_path, tmp_path):
     """client model: target edit, an unrelated forecast edit, undo, undo."""
     def drive(harness):
@@ -835,7 +833,6 @@ def test_l05_edit_undone_with_the_browser_sync_stays_undone(golden_fixture_path,
                      'L05 edit, forecast edit, undo, undo (browser sync)', drive)
 
 
-@_xfail(L11_AUX_KEY)
 def test_l11_cell_set_back_after_a_shift_hours_edit_stays_reverted(golden_fixture_path, tmp_path):
     """L11 edit, shift hours of a machine in that group, any cell edit (it puts
     the edit markers back on the rebuilt capacity rows), set the L11 cell back."""
@@ -884,7 +881,6 @@ def _l05_edit_that_moves_the_plan(sequence):
     return material
 
 
-@_xfail(L05_DROPPED)
 def test_l05_edit_survives_an_undone_forecast_edit(golden_fixture_path, tmp_path):
     """target edit, forecast edit on the same material, undo."""
     def drive(harness):
@@ -900,7 +896,6 @@ def test_l05_edit_survives_an_undone_forecast_edit(golden_fixture_path, tmp_path
                      'L05 edit, L01 edit (same material), undo', drive)
 
 
-@_xfail(N4_ORDER)
 def test_browser_sync_after_undo_keeps_the_replay_order(golden_fixture_path, tmp_path):
     """client model: target edit, forecast edit on the same material, an
     unrelated forecast edit, undo. Without the browser sync the same sequence
@@ -922,7 +917,6 @@ def test_browser_sync_after_undo_keeps_the_replay_order(golden_fixture_path, tmp
                      'L05, L01 (same material), L01 elsewhere, undo (browser sync)', drive)
 
 
-@_xfail(REPLAY_DROPS_PIN)
 def test_plan_pinned_at_the_workbook_value_stays_pinned(golden_fixture_path, tmp_path):
     """forecast x2 (the plan moves from c0 to c1), pin the plan at c0, set the
     forecast back, forecast x2 again: live keeps c0, a restart shows c1."""

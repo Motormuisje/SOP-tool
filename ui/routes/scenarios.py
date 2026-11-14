@@ -8,6 +8,7 @@ from typing import Callable
 
 from flask import Blueprint, jsonify, request, send_file
 
+from ui.serializers import row_payload
 from modules.models import LineType
 from ui.replay import recalculate_fte_results
 from ui.state_snapshot import apply_machine_overrides, restore_machines_from_snapshot
@@ -348,15 +349,15 @@ def create_scenarios_blueprint(
         recalculate_fte_results(current_engine, sess)
 
         results_dict = {
-            line_type: [row.to_dict() for row in rows]
+            line_type: [row_payload(row) for row in rows]
             for line_type, rows in current_engine.results.items()
         }
         value_results_dict = {
-            line_type: [row.to_dict() for row in rows]
+            line_type: [row_payload(row) for row in rows]
             for line_type, rows in current_engine.value_results.items()
         }
         consolidation = [
-            row.to_dict()
+            row_payload(row)
             for row in current_engine.value_results.get(LineType.CONSOLIDATION.value, [])
         ]
 
