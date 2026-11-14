@@ -298,16 +298,11 @@ def test_12_a_duplicated_instance_computes_the_same_numbers(session):
     session['source_hours'] = source_hours
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    'BESTAANDE BUG, niet uit F2-CF: een instantie die je dupliceert NA het laden '
-    'van een scenario rekent andere Line 07-uren dan zijn bron. Gebisecteerd op '
-    'commit 3235ffe (dus zonder enige F2-CF-wijziging): zonder scenario is de '
-    'kopie exact gelijk (0 afwijkende regels), met scenario wijken er 3 af — '
-    'materiaal 600003822 op PML06 gaat van 73,1 naar 346,0 uur, en daarmee '
-    'machine Z_MACH06 en groep ZZ_GROUP04. Herberekenen zelf is wel idempotent. '
-    'Vermoedelijke oorzaak: scenario-save leidt pending_edits af uit manual_edits '
-    'op de rijen (build_pending_edits_from_results_snapshot), scenario-load zet '
-    'die in capacity_overrides, en de kopie speelt ze bij het opwarmen opnieuw af.'))
+# Was xfail until 2026-11: a duplicate made after a scenario load computed
+# different Line 07 hours than its source (600003822 on PML06: 73.1 -> 346.0 h),
+# because the scenario's pending edits were replayed as capacity overrides when
+# the copy warmed up. It has passed consistently since scenario load rebuilds
+# the override stores (BUGS.md H7), so it is a regression test now.
 def test_12b_a_duplicate_after_a_scenario_load_should_match_its_source(session):
     assert session['duplicate_hours'] == pytest.approx(
         session['source_hours'], rel=1e-6)
